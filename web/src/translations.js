@@ -27,7 +27,9 @@ export const translations = {
       weekend: '周末 (WE)'
     },
     status: {
-      loading: '正在扫描数据归档...'
+      loading: '正在扫描数据归档...',
+      error: '网络联机错误：无法读取数据归档。',
+      retry: '重新尝试'
     },
     summary_stats: {
       peak: '峰值价格',
@@ -58,8 +60,8 @@ export const translations = {
       noRecords: '当前时间周期暂无记录。'
     },
     cta: {
-      message: '发现异常结算行为准则。',
-      button: '运行分析'
+      message: '生成完整事件深度分析报告。',
+      button: '导出数据 (CSV)'
     }
   },
   
@@ -91,7 +93,9 @@ export const translations = {
       weekend: 'WEEKEND'
     },
     status: {
-      loading: 'Consulting archive...'
+      loading: 'Consulting archive...',
+      error: 'Network Instability: Unable to fetch data archive.',
+      retry: 'RETRY CONNECTION'
     },
     summary_stats: {
       peak: 'Peak Price',
@@ -122,8 +126,8 @@ export const translations = {
       noRecords: 'No records for this temporal frame.'
     },
     cta: {
-      message: 'Discover anomalous bidding behaviors.',
-      button: 'RUN ANALYSIS'
+      message: 'Generate comprehensive event analysis report.',
+      button: 'EXPORT DATA (CSV)'
     }
   }
 };

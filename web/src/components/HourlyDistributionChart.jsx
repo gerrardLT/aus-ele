@@ -59,7 +59,7 @@ const HourlyDistributionChart = ({ data, t }) => {
               {data.map((entry, index) => (
                 <Cell 
                   key={`cell-${index}`} 
-                  fill={entry.count >= threshold && entry.count > 0 ? '#0047FF' : '#E5E7EB'} 
+                  fill={entry.count >= threshold && entry.count > 0 ? 'var(--color-primary)' : 'var(--color-border)'} 
                 />
               ))}
             </Bar>
@@ -71,4 +71,4 @@ const HourlyDistributionChart = ({ data, t }) => {
   );
 };
 
-export default HourlyDistributionChart;
+export default React.memo(HourlyDistributionChart);

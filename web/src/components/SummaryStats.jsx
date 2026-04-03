@@ -1,4 +1,6 @@
-export default function SummaryStats({ stats, advancedStats, t }) {
+import { memo } from 'react';
+
+const SummaryStats = ({ stats, advancedStats, t }) => {
   if (!stats || !advancedStats || !t) return null;
 
   const primaryMetrics = [
@@ -8,7 +10,7 @@ export default function SummaryStats({ stats, advancedStats, t }) {
   ];
 
   const secondaryMetrics = [
-    { label: t.negFreq, val: `${advancedStats.neg_ratio}%`, emphasis: true, color: '#0047FF' },
+    { label: t.negFreq, val: `${advancedStats.neg_ratio}%`, emphasis: true, color: advancedStats.neg_avg < -100 ? 'var(--color-error)' : 'var(--color-primary)' },
     { label: t.negMean, val: advancedStats.neg_avg !== null ? `$${advancedStats.neg_avg}` : '--' },
     { label: t.posMean, val: advancedStats.pos_avg !== null ? `$${advancedStats.pos_avg}` : '--' },
     { label: t.posDays, val: advancedStats.days_above_300, unit: ' Days' },
@@ -37,7 +39,7 @@ export default function SummaryStats({ stats, advancedStats, t }) {
       <div className="mt-2 border-t border-[var(--color-border)] pt-8">
         <h3 className="text-[10px] tracking-[0.2em] text-[var(--color-muted)] uppercase font-semibold mb-6 flex items-center justify-between">
           <span>{t.deepDive || 'DEEP DIVE'}</span>
-          <span className="bg-black text-white px-2 py-0.5 rounded text-[8px]">PRO</span>
+          <span className="bg-[var(--color-inverted)] text-[var(--color-inverted-text)] px-2 py-0.5 rounded text-[8px]">PRO</span>
         </h3>
         <div className="grid grid-cols-2 gap-x-4 gap-y-6">
           {secondaryMetrics.map((m, idx) => (
@@ -60,4 +62,6 @@ export default function SummaryStats({ stats, advancedStats, t }) {
       </div>
     </div>
   );
-}
+};
+
+export default memo(SummaryStats);

@@ -1,6 +1,7 @@
+import { memo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-export default function PriceChart({ data, t }) {
+const PriceChart = ({ data, t }) => {
   if (!data || data.length === 0 || !t) {
     return <div className="h-full w-full flex items-center justify-center text-gray-300 font-sans">{t?.noRecords}</div>;
   }
@@ -54,10 +55,10 @@ export default function PriceChart({ data, t }) {
           <Line 
             type="monotone" 
             dataKey="price" 
-            stroke="#0047FF" 
+            stroke="var(--color-primary)" 
             strokeWidth={1.5}
             dot={false}
-            activeDot={{ r: 4, fill: "#0047FF", stroke: "white", strokeWidth: 2 }}
+            activeDot={{ r: 4, fill: "var(--color-primary)", stroke: "var(--color-bg)", strokeWidth: 2 }}
             isAnimationActive={true}
             animationDuration={800}
             animationEasing="ease-out"
@@ -66,4 +67,6 @@ export default function PriceChart({ data, t }) {
       </ResponsiveContainer>
     </div>
   );
-}
+};
+
+export default memo(PriceChart);

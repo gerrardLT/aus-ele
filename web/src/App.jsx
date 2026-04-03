@@ -21,33 +21,63 @@ function App() {
   const [chartData, setChartData] = useState(null);
   const [summaryData, setSummaryData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const t = translations[lang];
 
   // Initial Fetch Setup
-  useEffect(() => {
-    async function fetchInitial() {
-      try {
-        const [yearsRes, summaryRes] = await Promise.all([
-          fetch(`${API_BASE}/years`),
-          fetch(`${API_BASE}/summary`)
-        ]);
-        const yearsData = await yearsRes.json();
-        const sumData = await summaryRes.json();
+  const fetchInitial = async () => {
+    try {
+      setError(false);
+      setLoading(true);
+      const [yearsRes, summaryRes] = await Promise.all([
+        fetch(`${API_BASE}/years`),
+        fetch(`${API_BASE}/summary`)
+      ]);
+      const yearsData = await yearsRes.json();
+      const sumData = await summaryRes.json();
 
-        if (yearsData.years?.length > 0) {
-          setYears(yearsData.years);
-          setSelectedYear(yearsData.years[0]);
-        }
-        if (sumData.tables) {
-          setSummaryData(sumData.tables);
-        }
-      } catch (err) {
-        console.error("Failed to fetch initial data", err);
+      if (yearsData.years?.length > 0) {
+        setYears(yearsData.years);
+        setSelectedYear(yearsData.years[0]);
+      } else {
+        setLoading(false);
       }
+      if (sumData.tables) {
+        setSummaryData(sumData.tables);
+      }
+      if (sumData.last_update) {
+        setLastUpdate(sumData.last_update);
+      }
+    } catch (err) {
+      console.error("Failed to fetch initial data", err);
+      setError(true);
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
     fetchInitial();
   }, []);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`${API_BASE}/sync_data`, { method: 'POST' });
+      if (res.ok) {
+         // Simple alert for now as per requirement
+         alert(lang === 'zh' ? '✅ 数据同步已在后台启动！爬取过程可能需要几分钟的时间。' : '✅ Data sync started in background! This may take a few minutes.');
+      } else {
+         alert('❌ Update failed. Please check server logs.');
+      }
+    } catch(e) {
+      console.error(e);
+      alert('❌ Error triggering update.');
+    }
+    setTimeout(() => setIsSyncing(false), 2000);
+  };
 
   // Fetch metrics when year or region changes
   useEffect(() => {
@@ -69,10 +99,12 @@ function App() {
       .then(res => res.json())
       .then(data => {
         setChartData(data);
+        setError(false);
         setLoading(false);
       })
       .catch(err => {
         console.error(err);
+        setError(true);
         setLoading(false);
       });
   }, [selectedYear, selectedMonth, selectedQuarter, selectedDayType, selectedRegion]);
@@ -80,7 +112,7 @@ function App() {
   return (
     <div className="min-h-screen pb-20">
       {/* 极简无边框导航 Minimal Text-based Nav */}
-      <nav className="w-full border-b border-[var(--color-border)] py-6 mb-12">
+      <nav className="w-full border-b border-[var(--color-border)] py-3 mb-8">
         <div className="grid-container flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Activity size={20} />
@@ -90,9 +122,23 @@ function App() {
           </div>
           <div className="flex items-center space-x-6 text-sm font-sans tracking-wide text-[var(--color-muted)]">
             <span className="hidden md:inline">{t.nav.subtitle}</span>
+            {lastUpdate && <span className="hidden lg:inline text-xs border border-[var(--color-border)] rounded-full px-3 py-1 bg-[var(--color-bg)]">🕒 {lastUpdate}</span>}
             <button
+               onClick={handleSync}
+               disabled={isSyncing}
+               title="Trigger Background Data Sync"
+               className="flex items-center gap-2 px-3 py-1.5 border border-[var(--color-border)] rounded hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)] transition-colors min-h-[44px]"
+            >
+               <svg className={isSyncing ? "animate-spin w-4 h-4" : "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+               </svg>
+               <span className="hidden sm:inline">{lang === 'zh' ? (isSyncing ? '同步中' : '同步数据') : (isSyncing ? 'Syncing' : 'Sync')}</span>
+            </button>
+            <button
+              aria-label="Toggle language"
+              title="Toggle language"
               onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
-              className="px-3 py-1 border border-[var(--color-border)] rounded hover:bg-black hover:text-white transition-colors"
+              className="px-3 py-1.5 border border-[var(--color-border)] rounded hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)] transition-colors min-h-[44px]"
             >
               {t.nav.toggleOptions}
             </button>
@@ -107,18 +153,18 @@ function App() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: "easeOut" }}
-          className="col-span-12 md:col-span-8 mb-16"
+          className="col-span-12 md:col-span-12 mb-6 flex flex-col md:flex-row md:items-end justify-between items-start gap-4"
         >
-          <h1 className="text-5xl md:text-7xl leading-tight mb-6">
-            {t.header.title1} <br />{t.header.title2}
+          <h1 className="text-2xl md:text-3xl font-bold leading-tight">
+            {t.header.title1} {t.header.title2}
           </h1>
-          <p className="text-[var(--color-muted)] font-sans max-w-xl text-lg leading-relaxed">
+          <p className="text-[var(--color-muted)] font-sans max-w-2xl text-sm leading-relaxed mb-1">
             {t.header.description}
           </p>
         </motion.header>
 
         {/* Filters Panel (Black/White minimal controls) */}
-        <div className="col-span-12 border-t border-[var(--color-border)] pt-8 mb-12 flex flex-col gap-8">
+        <div className="col-span-12 border-t border-[var(--color-border)] pt-4 mb-6 flex flex-col gap-6">
 
           {/* Top row: Year & Region */}
           <div className="flex flex-col md:flex-row justify-between gap-8 md:gap-4">
@@ -130,10 +176,10 @@ function App() {
                   <button
                     key={y}
                     onClick={() => setSelectedYear(y)}
-                    className={`px-4 py-2 font-sans text-sm transition-colors
+                    className={`px-4 py-1.5 min-h-[36px] font-sans text-sm transition-colors
                       ${selectedYear === y
-                        ? 'bg-black text-white'
-                        : 'bg-transparent text-[var(--color-text)] hover:bg-gray-100'
+                        ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
+                        : 'bg-transparent text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
                       }`}
                   >
                     {y}
@@ -145,14 +191,14 @@ function App() {
             <div className="flex flex-col gap-3 md:items-end w-full md:w-auto">
               <span className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">{t.filters.regionSelect}</span>
               <div className="flex flex-wrap gap-2 md:justify-end">
-                {['NSW1', 'QLD1', 'VIC1', 'SA1', 'TAS1'].map(r => (
+                {['NSW1', 'QLD1', 'VIC1', 'SA1', 'TAS1', 'WEM'].map(r => (
                   <button
                     key={r}
                     onClick={() => setSelectedRegion(r)}
-                    className={`px-4 py-2 font-sans text-sm transition-colors border-b-2
+                    className={`px-4 py-1.5 min-h-[36px] font-sans text-sm transition-colors border-b-2
                       ${selectedRegion === r
-                        ? 'border-black text-black font-medium'
-                        : 'border-transparent text-[var(--color-muted)] hover:text-black hover:border-black/30'
+                        ? 'border-[var(--color-text)] text-[var(--color-text)] font-medium'
+                        : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-text)]/30'
                       }`}
                   >
                     {r.replace('1', '')}
@@ -173,10 +219,10 @@ function App() {
                   <button
                     key={q}
                     onClick={() => { setSelectedQuarter(q); if (q !== 'ALL') setSelectedMonth('ALL'); }}
-                    className={`px-4 py-1.5 font-sans text-sm transition-colors rounded-full border
+                    className={`px-5 py-2 min-h-[44px] font-sans text-sm transition-colors rounded-full border
                       ${selectedQuarter === q
-                        ? 'bg-black text-white border-black'
-                        : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-black'
+                        ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)] border-[var(--color-inverted)]'
+                        : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]'
                       }`}
                   >
                     {q === 'ALL' ? t.filters.allQuarters : t.filters[q.toLowerCase()]}
@@ -192,10 +238,10 @@ function App() {
                   <button
                     key={d}
                     onClick={() => setSelectedDayType(d)}
-                    className={`px-4 py-1.5 font-sans text-sm transition-colors rounded-full border
+                    className={`px-5 py-2 min-h-[44px] font-sans text-sm transition-colors rounded-full border
                       ${selectedDayType === d
-                        ? 'bg-black text-white border-black'
-                        : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-black'
+                        ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)] border-[var(--color-inverted)]'
+                        : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]'
                       }`}
                   >
                     {d === 'ALL' ? t.filters.allDays : t.filters[d.toLowerCase()]}
@@ -214,10 +260,10 @@ function App() {
                 <button
                   key={m}
                   onClick={() => { setSelectedMonth(m); if (m !== 'ALL') setSelectedQuarter('ALL'); }}
-                  className={`px-4 py-1.5 font-sans text-sm transition-colors rounded-full border
+                  className={`px-5 py-2 min-h-[44px] font-sans text-sm transition-colors rounded-full border
                     ${selectedMonth === m
-                      ? 'bg-black text-white border-black'
-                      : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-black'
+                      ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)] border-[var(--color-inverted)]'
+                      : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]'
                     }`}
                 >
                   {m === 'ALL' ? t.filters.allMonths : m}
@@ -230,7 +276,32 @@ function App() {
 
         {/* Data Presentation Area */}
         <AnimatePresence mode="wait">
-          {loading ? (
+          {error ? (
+            <motion.div
+              key="error"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="col-span-12 h-96 flex flex-col items-center justify-center font-sans"
+            >
+              <div className="text-[var(--color-error)] mb-4">{t.status.error}</div>
+              <button 
+                onClick={() => {
+                  if (!years || years.length === 0) {
+                     fetchInitial();
+                  } else {
+                     setLoading(true);
+                     setError(false);
+                     setSelectedYear((prev) => prev); // trigger effect
+                  }
+                }}
+                className="px-6 py-3 border border-[var(--color-error)] text-[var(--color-error)] uppercase tracking-widest text-xs font-bold hover:bg-[var(--color-error)] hover:text-white transition-colors"
+                aria-label="Retry"
+              >
+                {t.status.retry}
+              </button>
+            </motion.div>
+          ) : loading ? (
             <motion.div
               key="loader"
               initial={{ opacity: 0 }}

@@ -16,6 +16,14 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_status (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+            conn.commit()
             
         # Keep track of initialized tables to avoid redundant PRAGMA and CREATE queries
         self.initialized_tables = set()
@@ -133,3 +141,22 @@ class DatabaseManager:
                          "count": res[2]
                      })
             return {"tables": summary_stats}
+
+    def set_last_update_time(self, timestamp_str: str):
+        """Record the physical time when the latest sync was completed."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO system_status (key, value) 
+                VALUES ('last_update', ?) 
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """, (timestamp_str,))
+            conn.commit()
+
+    def get_last_update_time(self) -> str:
+        """Fetch the physical time of the latest sync."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM system_status WHERE key='last_update'")
+            row = cursor.fetchone()
+            return row[0] if row else None

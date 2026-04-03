@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 import uvicorn
 from contextlib import asynccontextmanager
 import logging
 from typing import Optional
+import datetime
+import subprocess
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from database import DatabaseManager
 
@@ -17,10 +20,17 @@ db = DatabaseManager(DB_PATH)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup actions
-    logger.info("Starting AEMO NEM API server...")
+    logger.info("Starting AEMO NEM API server with built-in Scheduler...")
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_sync_scrapers, 'cron', hour=2, minute=0)
+    scheduler.start()
+    app.state.scheduler = scheduler
+    
     yield
     # Shutdown actions
     logger.info("Shutting down AEMO NEM API server...")
+    if hasattr(app.state, 'scheduler'):
+        app.state.scheduler.shutdown()
 
 app = FastAPI(title="AEMO NEM Data API", lifespan=lifespan)
 
@@ -36,12 +46,43 @@ app.add_middleware(
 
 @app.get("/api/summary")
 def get_summary():
-    """Returns database summary statistics (tables, time ranges, record counts)"""
+    """Returns database summary statistics (tables, time ranges, record counts) and last update time"""
     try:
-        return db.get_summary()
+        summary = db.get_summary()
+        summary["last_update"] = db.get_last_update_time()
+        return summary
     except Exception as e:
         logger.error(f"Error fetching summary: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+def run_sync_scrapers():
+    """Background task to run scrapers and update the database."""
+    try:
+        logger.info("Starting Background Data Syncing Tasks...")
+        # WEM and NEM Sync: Incremental (Last 14 days)
+        two_weeks_ago = (datetime.datetime.now() - datetime.timedelta(days=14)).strftime('%Y-%m-%d')
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        
+        logger.info(f"Running WEM Scraper from {two_weeks_ago} to {today}...")
+        subprocess.run(["python", "aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today], check=True)
+        
+        logger.info("Running NEM Scraper...")
+        start_month = (datetime.datetime.now() - datetime.timedelta(days=14)).strftime('%Y-%m')
+        end_month = datetime.datetime.now().strftime('%Y-%m')
+        subprocess.run(["python", "aemo_nem_scraper.py", "--start", start_month, "--end", end_month], check=True)
+
+        
+        # Record Success Time
+        db.set_last_update_time(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        logger.info("Data Syncing Completed successfully!")
+    except Exception as e:
+        logger.error(f"Error in data sync task: {e}")
+
+@app.post("/api/sync_data")
+def sync_data(background_tasks: BackgroundTasks):
+    """Trigger data scrape manually via background task."""
+    background_tasks.add_task(run_sync_scrapers)
+    return {"status": "Update started in background"}
 
 
 @app.get("/api/years")
