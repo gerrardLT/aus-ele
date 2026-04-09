@@ -2,7 +2,7 @@
 AEMO NEM 澳洲国家电力市场 - 历史交易电价爬取工具
 =================================================
 数据来源: AEMO NEMWEB (http://nemweb.com.au)
-数据内容: 各州(Region)的5分钟交易结算电价 (Trading Price / RRP)
+数据内容: 各州(Region)的5分钟交易结算电价 (Trading Price / RRP) 及 FCAS 调频价格
 覆盖区域: NSW1(新南威尔士), QLD1(昆士兰), VIC1(维多利亚), SA1(南澳), TAS1(塔斯马尼亚)
 时区说明: 所有时间戳为 AEST (UTC+10), 不含夏令时
 
@@ -206,7 +206,20 @@ def parse_mmsdm_csv(text: str, regions: list[str]) -> list[dict]:
       - SETTLEMENTDATE: 结算时间 (AEST, UTC+10)
       - REGIONID: 区域/州代码 (NSW1, QLD1, VIC1, SA1, TAS1)
       - RRP: 区域参考价格 (Regional Reference Price, $/MWh)
+    
+    DISPATCHPRICE 额外 FCAS 字段:
+      - RAISE6SECRRP, RAISE60SECRRP, RAISE5MINRRP, RAISEREGRRP
+      - LOWER6SECRRP, LOWER60SECRRP, LOWER5MINRRP, LOWERREGRRP
     """
+    FCAS_FIELDS = [
+        'RAISE6SECRRP', 'RAISE60SECRRP', 'RAISE5MINRRP', 'RAISEREGRRP',
+        'LOWER6SECRRP', 'LOWER60SECRRP', 'LOWER5MINRRP', 'LOWERREGRRP',
+    ]
+    FCAS_DB_KEYS = [
+        'raise6sec_rrp', 'raise60sec_rrp', 'raise5min_rrp', 'raisereg_rrp',
+        'lower6sec_rrp', 'lower60sec_rrp', 'lower5min_rrp', 'lowerreg_rrp',
+    ]
+
     records = []
     headers = []
     regions_upper = [r.upper() for r in regions]
@@ -243,11 +256,24 @@ def parse_mmsdm_csv(text: str, regions: list[str]) -> list[dict]:
             if settlement_date and rrp:
                 try:
                     price = float(rrp)
-                    records.append({
+                    record = {
                         'settlement_date': settlement_date,
                         'region_id': region_id,
                         'rrp_aud_mwh': round(price, 2),
-                    })
+                    }
+                    
+                    # Extract FCAS prices if present in this CSV
+                    for fcas_field, db_key in zip(FCAS_FIELDS, FCAS_DB_KEYS):
+                        val = row.get(fcas_field, '')
+                        if val:
+                            try:
+                                record[db_key] = round(float(val), 2)
+                            except ValueError:
+                                record[db_key] = None
+                        else:
+                            record[db_key] = None
+                    
+                    records.append(record)
                 except ValueError:
                     pass
 
@@ -323,6 +349,85 @@ def print_summary(records: list[dict]):
     print("=" * 60)
 
 
+def download_and_parse_dispatchprice(year: int, month: int, regions: list[str]) -> list[dict]:
+    """
+    下载单个月份的 MMSDM DISPATCHPRICE 数据并解析。
+    DISPATCHPRICE 包含 5 分钟调度价格 + 8 个 FCAS 调频价格字段。
+    """
+    month_str = f"{month:02d}"
+    data_dir_url = (
+        f"{NEMWEB_MMSDM_BASE}/{year}/MMSDM_{year}_{month_str}/"
+        f"MMSDM_Historical_Data_SQLLoader/DATA/"
+    )
+
+    log(f"[>>] 正在处理 DISPATCHPRICE {year}年{month}月 的 FCAS 数据...")
+
+    # URL candidates for DISPATCHPRICE
+    zip_candidates = [
+        f"{data_dir_url}PUBLIC_ARCHIVE%23DISPATCHPRICE%23FILE01%23{year}{month_str}010000.zip",
+        f"{data_dir_url}PUBLIC_DVD_DISPATCHPRICE_{year}{month_str}010000.CSV.zip",
+        f"{data_dir_url}PUBLIC_DVD_DISPATCHPRICE_{year}{month_str}010000.zip",
+    ]
+
+    actual_zip_url = None
+    resp = None
+
+    for candidate in zip_candidates:
+        resp = fetch_url(candidate, max_retries=1)
+        if resp and resp.status_code == 200:
+            actual_zip_url = candidate
+            fname_display = candidate.split('/')[-1].replace('%23', '#')
+            log(f"  [OK] 找到 DISPATCHPRICE: {fname_display}")
+            break
+
+    # Fallback: scan directory page
+    if not actual_zip_url:
+        log(f"  [..] 扫描目录页查找 DISPATCHPRICE 文件...")
+        resp_dir = fetch_url(data_dir_url, max_retries=1)
+        if resp_dir:
+            dp_pattern = re.compile(
+                r'(PUBLIC_(?:ARCHIVE|DVD)[^"<>\s]*DISPATCHPRICE[^"<>\s]*\.zip)',
+                re.IGNORECASE
+            )
+            matches = dp_pattern.findall(resp_dir.text)
+            if matches:
+                actual_zip_url = data_dir_url + matches[0]
+                log(f"  [OK] 从目录找到: {matches[0]}")
+
+    if not actual_zip_url:
+        log(f"  [X] 未找到 {year}年{month}月 的 DISPATCHPRICE 数据文件")
+        return []
+
+    # Download ZIP
+    if not (resp and resp.status_code == 200):
+        time.sleep(REQUEST_DELAY)
+        resp = fetch_url(actual_zip_url)
+    if not resp:
+        log(f"  [X] 下载失败: {actual_zip_url}")
+        return []
+
+    log(f"  [..] DISPATCHPRICE 下载完成, 大小: {len(resp.content) / 1024:.1f} KB, 解析中...")
+
+    records = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            for fname in zf.namelist():
+                if "DISPATCHPRICE" in fname.upper() and fname.upper().endswith('.CSV'):
+                    log(f"  [..] 解析CSV: {fname}")
+                    with zf.open(fname) as f:
+                        text = f.read().decode('utf-8', errors='replace')
+                        records.extend(parse_mmsdm_csv(text, regions))
+    except zipfile.BadZipFile:
+        log(f"  [i] 文件不是 ZIP 格式，尝试直接解析为 CSV...")
+        text = resp.content.decode('utf-8', errors='replace')
+        records.extend(parse_mmsdm_csv(text, regions))
+
+    # Count how many records have FCAS data
+    fcas_count = sum(1 for r in records if r.get('raise6sec_rrp') is not None)
+    log(f"  [OK] 获取到 {len(records)} 条 DISPATCHPRICE 记录 (其中 {fcas_count} 条含 FCAS 数据)")
+    return records
+
+
 def parse_month_range(start_str: str, end_str: str) -> list[tuple[int, int]]:
     """
     解析月份范围，返回 (year, month) 元组列表。
@@ -379,6 +484,8 @@ def main():
                         help='输出 CSV 文件路径 (选填，若填此项则同时产生大 CSV)')
     parser.add_argument('--db-path', default="aemo_data.db",
                         help='输出 SQLite 数据库库路径 (默认: aemo_data.db)')
+    parser.add_argument('--fcas', action='store_true', default=False,
+                        help='同时抓取 DISPATCHPRICE (含 FCAS 调频价格数据)')
 
     args = parser.parse_args()
 
@@ -414,13 +521,24 @@ def main():
         log(f"[{i}/{len(months)}] 正在处理 {year}-{month:02d}...")
         records = download_and_parse_tradingprice(year, month, regions)
         
-        # 批量入库
+        # 批量入库 TRADINGPRICE
         if records:
             try:
                 db.batch_insert(records)
-                log(f"  [DB] 该月数据已写入/更新至数据库")
+                log(f"  [DB] TRADINGPRICE 该月数据已写入/更新至数据库")
             except Exception as e:
                 log(f"  [DB_ERR] 写入数据库失败: {e}")
+
+        # 如果启用了 FCAS，还需下载 DISPATCHPRICE
+        if args.fcas:
+            time.sleep(REQUEST_DELAY)
+            fcas_records = download_and_parse_dispatchprice(year, month, regions)
+            if fcas_records:
+                try:
+                    db.batch_insert(fcas_records)
+                    log(f"  [DB] DISPATCHPRICE (FCAS) 该月数据已写入/更新至数据库")
+                except Exception as e:
+                    log(f"  [DB_ERR] 写入 FCAS 数据库失败: {e}")
 
         # 内存保留以便生成最后的大 CSV（如果指定了 output_path）
         if output_path and records:
