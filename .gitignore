@@ -44,3 +44,11 @@ package-lock.json
 .vscode/
 *.swp
 .DS_Store
+
+# Runtime outputs & debug logs
+output/
+backtest_output.txt
+backtest_summary.txt
+bess_backtest_results.json
+check_*.txt
+available_skills.md
