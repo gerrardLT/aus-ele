@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, Cell, ReferenceLine, LabelList
 } from 'recharts';
+import { fetchJson } from '../lib/apiClient';
 
 /**
  * BESS P&L Simulator — Waterfall Chart
@@ -21,7 +22,7 @@ const DEFAULT_PARAMS = {
   degradationCost: 5,
 };
 
-export default function BessSimulator({ year, region, apiBase, t, networkFeeDefault }) {
+export default function BessSimulator({ year, region, apiBase, t, networkFeeDefault, scopeNote }) {
   const [params, setParams] = useState({ ...DEFAULT_PARAMS });
   const [spread, setSpread] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -31,8 +32,7 @@ export default function BessSimulator({ year, region, apiBase, t, networkFeeDefa
     if (!year || !region) return;
     setLoading(true);
 
-    fetch(`${apiBase}/peak-analysis?year=${year}&region=${region}&aggregation=yearly`)
-      .then(r => r.json())
+    fetchJson(`${apiBase}/peak-analysis?year=${year}&region=${region}&aggregation=yearly`)
       .then(res => {
         const s = res?.summary;
         if (s) {
@@ -156,6 +156,12 @@ export default function BessSimulator({ year, region, apiBase, t, networkFeeDefa
           FINANCIAL MODEL
         </div>
       </div>
+
+      {scopeNote && (
+        <div className="mb-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
+          {scopeNote}
+        </div>
+      )}
 
       {loading ? (
         <div className="h-64 flex items-center justify-center text-[var(--color-muted)] font-serif text-lg">

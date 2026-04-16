@@ -211,13 +211,17 @@ def parse_mmsdm_csv(text: str, regions: list[str]) -> list[dict]:
       - RAISE6SECRRP, RAISE60SECRRP, RAISE5MINRRP, RAISEREGRRP
       - LOWER6SECRRP, LOWER60SECRRP, LOWER5MINRRP, LOWERREGRRP
     """
-    FCAS_FIELDS = [
-        'RAISE6SECRRP', 'RAISE60SECRRP', 'RAISE5MINRRP', 'RAISEREGRRP',
-        'LOWER6SECRRP', 'LOWER60SECRRP', 'LOWER5MINRRP', 'LOWERREGRRP',
-    ]
-    FCAS_DB_KEYS = [
-        'raise6sec_rrp', 'raise60sec_rrp', 'raise5min_rrp', 'raisereg_rrp',
-        'lower6sec_rrp', 'lower60sec_rrp', 'lower5min_rrp', 'lowerreg_rrp',
+    FCAS_MAPPINGS = [
+        (['RAISE1SECRRP', 'RAISERFFRRP', 'RAISERFF'], 'raise1sec_rrp'),
+        (['RAISE6SECRRP'], 'raise6sec_rrp'),
+        (['RAISE60SECRRP'], 'raise60sec_rrp'),
+        (['RAISE5MINRRP'], 'raise5min_rrp'),
+        (['RAISEREGRRP'], 'raisereg_rrp'),
+        (['LOWER1SECRRP', 'LOWERRFFRRP', 'LOWERRFF'], 'lower1sec_rrp'),
+        (['LOWER6SECRRP'], 'lower6sec_rrp'),
+        (['LOWER60SECRRP'], 'lower60sec_rrp'),
+        (['LOWER5MINRRP'], 'lower5min_rrp'),
+        (['LOWERREGRRP'], 'lowerreg_rrp'),
     ]
 
     records = []
@@ -263,15 +267,16 @@ def parse_mmsdm_csv(text: str, regions: list[str]) -> list[dict]:
                     }
                     
                     # Extract FCAS prices if present in this CSV
-                    for fcas_field, db_key in zip(FCAS_FIELDS, FCAS_DB_KEYS):
-                        val = row.get(fcas_field, '')
-                        if val:
-                            try:
-                                record[db_key] = round(float(val), 2)
-                            except ValueError:
-                                record[db_key] = None
-                        else:
-                            record[db_key] = None
+                    for possible_fields, db_key in FCAS_MAPPINGS:
+                        record[db_key] = None
+                        for fcas_field in possible_fields:
+                            val = row.get(fcas_field, '')
+                            if val:
+                                try:
+                                    record[db_key] = round(float(val), 2)
+                                    break  # found the field, stop trying others
+                                except ValueError:
+                                    pass
                     
                     records.append(record)
                 except ValueError:

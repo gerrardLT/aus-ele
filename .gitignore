@@ -13,6 +13,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+!web/src/lib/
+!web/src/lib/**
 parts/
 sdist/
 var/
@@ -52,3 +54,12 @@ backtest_summary.txt
 bess_backtest_results.json
 check_*.txt
 available_skills.md
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+coverage/
+htmlcov/
+tmp_*.log
+tmp_*.out.log
+tmp_*.err.log

@@ -2,7 +2,9 @@
 AEMO WEM 西澳电力市场 - 交易电价爬取工具
 =================================================
 数据来源: https://data.wa.aemo.com.au
-数据内容: WEM (西澳) 的半小时/5分钟交易结算电价 (Reference Trading Price)
+数据内容: WEM (西澳) 的30分钟交易结算电价 (Reference Trading Price)
+时区说明: 所有时间戳为 AWST (UTC+8), 与 NEM 的 AEST (UTC+10) 相差 2 小时
+         数据存入数据库时保持原始 AWST 时间, 由下游分析层负责对齐
 """
 
 import requests
@@ -12,7 +14,7 @@ import json
 import time
 import argparse
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from database import DatabaseManager
 
@@ -44,45 +46,80 @@ def fetch_url(url: str, max_retries: int = 8) -> requests.Response | None:
                 time.sleep(attempt * 1.5)
     return None
 
+# AWST = UTC+8 (Australian Western Standard Time)
+AWST = timezone(timedelta(hours=8))
+
+
+def _parse_wem_timestamp(raw_interval: str) -> str:
+    """
+    Parse WEM ISO-8601 timestamp and normalize to AWST.
+
+    WEM API returns timestamps like "2023-10-01T08:00:00+08:00".
+    We validate the timezone is AWST, convert if needed, then store
+    as "YYYY-MM-DD HH:MM:SS" in AWST for consistency.
+
+    This is critical: NEM timestamps are AEST (UTC+10). If we blindly
+    strip the timezone, a 2-hour error creeps into any cross-market
+    analysis.
+    """
+    if not raw_interval:
+        return raw_interval
+
+    try:
+        # Python 3.11+ handles the colon in +08:00 natively
+        dt = datetime.fromisoformat(raw_interval)
+    except ValueError:
+        # Fallback: strip timezone suffix and treat as AWST
+        clean = raw_interval.replace("T", " ")[:19]
+        return clean
+
+    # If the timestamp has timezone info, convert to AWST
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(AWST)
+
+    # Store as naive string in AWST
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def process_wem_json(json_data: dict | list, db: DatabaseManager):
-    """Parse JSON payload and batch insert to DB."""
+    """Parse JSON payload and batch insert to DB.
+
+    All WEM timestamps are normalized to AWST before storage.
+    The 30-minute settlement interval is preserved as-is;
+    any upsampling to 5-min is handled in the analysis layer.
+    """
     if isinstance(json_data, list):
         prices = json_data
     else:
         prices = json_data.get('data', {}).get('referenceTradingPrices', [])
-        
+
     if not prices:
         return 0
 
     records_to_insert = []
     for item in prices:
-        # e.g., "2023-10-01T08:00:00+08:00" -> "2023-10-01 08:00:00"
         raw_interval = item.get("tradingInterval", "")
-        # Remove timezone and 'T' to match NEM format in DB
-        # NEM is stored as "YYYY-MM-DD HH:MM:SS"
-        if "T" in raw_interval:
-            clean_date = raw_interval.replace("T", " ")
-            if "+" in clean_date:
-                clean_date = clean_date.split("+")[0]
-            elif "-" in clean_date[10:]: # handling potential negative tz
-                 # A quick and dirty fix, mostly wa string is +08:00
-                 clean_date = clean_date[:19]
-        else:
-            clean_date = raw_interval
+        clean_date = _parse_wem_timestamp(raw_interval)
 
         price = item.get("referenceTradingPrice")
         if price is None:
             continue
 
+        try:
+            price_val = round(float(price), 2)
+        except (ValueError, TypeError):
+            logger.warning(f"Skipping invalid price value: {price}")
+            continue
+
         records_to_insert.append({
-             "settlement_date": clean_date,
-             "region_id": "WEM",
-             "rrp_aud_mwh": float(price)
+            "settlement_date": clean_date,
+            "region_id": "WEM",
+            "rrp_aud_mwh": price_val,
         })
 
     if records_to_insert:
         db.batch_insert(records_to_insert)
-    
+
     return len(records_to_insert)
 
 def scrape_wem_date(target_date: datetime, db: DatabaseManager):

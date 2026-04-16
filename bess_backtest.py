@@ -1,69 +1,66 @@
 """
-BESS 储能套利回测分析工具
-==========================
-功能:
-  1. 每日最大价差统计（日内最高价 - 最低价）
-  2. 负电价频率趋势
-  3. 不同储能时长 (2h/4h/6h) 的理论套利收入回测
-  4. 按月/季度/年度汇总
+BESS arbitrage backtest utilities.
 
-使用方法:
-  python bess_backtest.py --region SA1 --year 2025
-  python bess_backtest.py --region WEM --year 2024
-  python bess_backtest.py --all
+This module keeps the original CLI entrypoints, but the core backtest now
+returns a conservative physical upper bound:
+- optimized hindsight dispatch
+- fixed 50% initial SoC each month
+- terminal SoC forced back to 50%
+- monthly charge-throughput limited by cycles-per-day
 """
 
-import sqlite3
-import json
-import sys
+from __future__ import annotations
+
 import argparse
+import json
 import logging
-from datetime import datetime, timedelta
+import sqlite3
+import sys
 from collections import defaultdict
+from datetime import datetime
+
+import pulp
 
 try:
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
 
 DB_PATH = "aemo_data.db"
 
-# 储能参数
 STORAGE_CONFIGS = {
     "2h": {"duration_hours": 2, "capacity_mwh": 200, "power_mw": 100},
     "4h": {"duration_hours": 4, "capacity_mwh": 400, "power_mw": 100},
     "6h": {"duration_hours": 6, "capacity_mwh": 600, "power_mw": 100},
 }
-ROUND_TRIP_EFFICIENCY = 0.87  # 87%
-CYCLES_PER_DAY = 1  # 保守假设每天 1 个完整循环
+
+ROUND_TRIP_EFFICIENCY = 0.87
+CYCLES_PER_DAY = 1
 
 
 def get_available_tables(conn):
-    """获取所有交易价格表"""
     tables = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%'"
     ).fetchall()
-    return sorted([t[0] for t in tables])
+    return sorted([row[0] for row in tables])
 
 
 def get_available_regions(conn, table):
-    """获取表中的区域列表"""
     regions = conn.execute(
         f"SELECT DISTINCT region_id FROM {table} ORDER BY region_id"
     ).fetchall()
-    return [r[0] for r in regions]
+    return [row[0] for row in regions]
 
 
 def analyze_daily_spreads(conn, region, year):
-    """分析某区域某年的每日价差"""
     table = f"trading_price_{year}"
-    
     try:
-        rows = conn.execute(f"""
-            SELECT 
+        rows = conn.execute(
+            f"""
+            SELECT
                 DATE(settlement_date) as day,
                 MIN(rrp_aud_mwh) as min_price,
                 MAX(rrp_aud_mwh) as max_price,
@@ -74,163 +71,184 @@ def analyze_daily_spreads(conn, region, year):
             WHERE region_id = ?
             GROUP BY DATE(settlement_date)
             ORDER BY day
-        """, (region,)).fetchall()
+            """,
+            (region,),
+        ).fetchall()
     except Exception:
         return []
 
     results = []
-    for row in rows:
-        day, min_p, max_p, avg_p, intervals, neg_count = row
-        spread = max_p - min_p
+    for day, min_price, max_price, avg_price, intervals, neg_count in rows:
+        spread = max_price - min_price
         neg_pct = (neg_count / intervals * 100) if intervals > 0 else 0
-        results.append({
-            "date": day,
-            "min_price": round(min_p, 2),
-            "max_price": round(max_p, 2),
-            "avg_price": round(avg_p, 2),
-            "spread": round(spread, 2),
-            "intervals": intervals,
-            "neg_count": neg_count,
-            "neg_pct": round(neg_pct, 1),
-        })
+        results.append(
+            {
+                "date": day,
+                "min_price": round(min_price, 2),
+                "max_price": round(max_price, 2),
+                "avg_price": round(avg_price, 2),
+                "spread": round(spread, 2),
+                "intervals": intervals,
+                "neg_count": neg_count,
+                "neg_pct": round(neg_pct, 1),
+            }
+        )
     return results
 
 
 def backtest_arbitrage(conn, region, year, storage_config):
-    """回测套利收入：每天找最优充/放电窗口"""
     table = f"trading_price_{year}"
     duration_h = storage_config["duration_hours"]
     capacity_mwh = storage_config["capacity_mwh"]
     power_mw = storage_config["power_mw"]
-    
-    # 获取每天的所有价格数据
+    initial_soc_mwh = capacity_mwh * 0.5
+
     try:
-        rows = conn.execute(f"""
-            SELECT settlement_date, rrp_aud_mwh
-            FROM {table}
-            WHERE region_id = ?
-            ORDER BY settlement_date
-        """, (region,)).fetchall()
+        months_res = conn.execute(
+            f"SELECT DISTINCT substr(settlement_date, 1, 7) FROM {table} WHERE region_id = ?",
+            (region,),
+        ).fetchall()
+        months = sorted([row[0] for row in months_res])
     except Exception:
         return {}
-    
-    # 按天分组
-    daily_prices = defaultdict(list)
-    for ts, price in rows:
-        day = ts[:10]  # YYYY-MM-DD
-        daily_prices[day].append((ts, price))
-    
-    # NEM 是 5 分钟间隔 (12 intervals/hour), WEM 也是 5 分钟
-    intervals_per_hour = 12
-    charge_intervals = duration_h * intervals_per_hour
-    
+
     monthly_revenue = defaultdict(float)
-    daily_results = []
-    
-    for day in sorted(daily_prices.keys()):
-        prices = daily_prices[day]
-        n = len(prices)
-        
-        if n < charge_intervals * 2:
+    trading_days_total = 0
+    total_spread_val = 0.0
+    total_charge_mwh = 0.0
+    total_discharge_mwh = 0.0
+    throughput_limit_total = 0.0
+    terminal_soc_mwh = initial_soc_mwh
+
+    eta = ROUND_TRIP_EFFICIENCY ** 0.5
+
+    for month in months:
+        rows = conn.execute(
+            f"""
+            SELECT settlement_date, rrp_aud_mwh
+            FROM {table}
+            WHERE region_id = ? AND settlement_date LIKE ?
+            ORDER BY settlement_date
+            """,
+            (region, f"{month}-%"),
+        ).fetchall()
+
+        n = len(rows)
+        if n < 2:
             continue
-        
-        price_values = [p[1] for p in prices]
-        
-        # 滑动窗口找最低价充电窗口和最高价放电窗口
-        best_charge_avg = float('inf')
-        best_discharge_avg = float('-inf')
-        
-        # 充电窗口（连续 charge_intervals 个最低均价）
-        for i in range(n - charge_intervals + 1):
-            window = price_values[i:i + charge_intervals]
-            avg = sum(window) / len(window)
-            if avg < best_charge_avg:
-                best_charge_avg = avg
-                best_charge_start = i
-        
-        # 放电窗口（连续 charge_intervals 个最高均价，不能与充电重叠）
-        for i in range(n - charge_intervals + 1):
-            # 检查是否与充电窗口重叠
-            charge_end = best_charge_start + charge_intervals
-            if i < charge_end and i + charge_intervals > best_charge_start:
-                continue
-            window = price_values[i:i + charge_intervals]
-            avg = sum(window) / len(window)
-            if avg > best_discharge_avg:
-                best_discharge_avg = avg
-                best_discharge_start = i
-        
-        if best_discharge_avg == float('-inf'):
+
+        dt_hours = 5.0 / 60.0
+        try:
+            t1 = datetime.fromisoformat(rows[0][0])
+            t2 = datetime.fromisoformat(rows[1][0])
+            delta_min = (t2 - t1).total_seconds() / 60.0
+            if 0 < delta_min <= 60:
+                dt_hours = delta_min / 60.0
+        except Exception:
+            pass
+
+        prices = [row[1] for row in rows]
+        prob = pulp.LpProblem(f"BESS_{region}_{month}", pulp.LpMaximize)
+
+        charge = [pulp.LpVariable(f"Pc_{t}", lowBound=0, upBound=power_mw) for t in range(n)]
+        discharge = [pulp.LpVariable(f"Pd_{t}", lowBound=0, upBound=power_mw) for t in range(n)]
+        soc = [pulp.LpVariable(f"E_{t}", lowBound=0, upBound=capacity_mwh) for t in range(n)]
+        charge_on = [pulp.LpVariable(f"Bc_{t}", cat="Binary") for t in range(n)]
+        discharge_on = [pulp.LpVariable(f"Bd_{t}", cat="Binary") for t in range(n)]
+
+        for t in range(n):
+            if t == 0:
+                prob += soc[t] == initial_soc_mwh + charge[t] * dt_hours * eta - discharge[t] * dt_hours / eta
+            else:
+                prob += soc[t] == soc[t - 1] + charge[t] * dt_hours * eta - discharge[t] * dt_hours / eta
+
+            prob += charge_on[t] + discharge_on[t] <= 1
+            prob += charge[t] <= power_mw * charge_on[t]
+            prob += discharge[t] <= power_mw * discharge_on[t]
+
+        month_days = n * dt_hours / 24.0
+        throughput_limit_mwh = CYCLES_PER_DAY * month_days * capacity_mwh
+        throughput_limit_total += throughput_limit_mwh
+        prob += pulp.lpSum(charge[t] * dt_hours for t in range(n)) <= throughput_limit_mwh
+        prob += soc[n - 1] == initial_soc_mwh
+
+        profit = pulp.lpSum((discharge[t] - charge[t]) * prices[t] * dt_hours for t in range(n))
+        prob += profit
+
+        solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=20)
+        prob.solve(solver)
+
+        if pulp.LpStatus[prob.status] != "Optimal":
             continue
-        
-        # 计算单次循环收入
-        charge_cost = best_charge_avg * capacity_mwh  # 充电成本
-        discharge_income = best_discharge_avg * capacity_mwh * ROUND_TRIP_EFFICIENCY  # 放电收入(扣效率)
-        net_revenue = discharge_income - charge_cost
-        
-        month = day[:7]  # YYYY-MM
-        monthly_revenue[month] += max(0, net_revenue)  # 只有正收益才交易
-        
-        daily_results.append({
-            "date": day,
-            "charge_price": round(best_charge_avg, 2),
-            "discharge_price": round(best_discharge_avg, 2),
-            "spread": round(best_discharge_avg - best_charge_avg, 2),
-            "net_revenue": round(net_revenue, 2),
-        })
-    
-    # 年度统计
+
+        net_revenue = pulp.value(profit) or 0.0
+        month_charge = sum((charge[t].varValue or 0.0) * dt_hours for t in range(n))
+        month_discharge = sum((discharge[t].varValue or 0.0) * dt_hours for t in range(n))
+        terminal_soc_mwh = soc[n - 1].varValue if soc[n - 1].varValue is not None else terminal_soc_mwh
+
+        total_charge_mwh += month_charge
+        total_discharge_mwh += month_discharge
+
+        if net_revenue > 0:
+            monthly_revenue[month] += net_revenue
+            active_days = set()
+            for idx in range(n):
+                if (charge[idx].varValue or 0.0) > 0.1 or (discharge[idx].varValue or 0.0) > 0.1:
+                    active_days.add(rows[idx][0][:10])
+            trading_days_total += len(active_days)
+            total_spread_val += net_revenue / max(len(active_days), 1) / capacity_mwh
+
     total_annual = sum(monthly_revenue.values())
-    revenue_per_mw = total_annual / power_mw if power_mw else 0
-    
+    revenue_per_mw = total_annual / power_mw if power_mw else 0.0
+    avg_daily = total_annual / max(trading_days_total, 1)
+
     return {
         "region": region,
         "year": year,
         "duration": f"{duration_h}h",
         "capacity_mwh": capacity_mwh,
         "power_mw": power_mw,
+        "backtest_mode": "optimized_hindsight",
+        "revenue_scope": "physical_upper_bound",
         "total_revenue_aud": round(total_annual, 0),
         "revenue_per_mw_year": round(revenue_per_mw, 0),
-        "monthly": {k: round(v, 0) for k, v in sorted(monthly_revenue.items())},
-        "trading_days": len(daily_results),
-        "avg_daily_revenue": round(total_annual / max(len(daily_results), 1), 0),
-        "avg_spread": round(
-            sum(d["spread"] for d in daily_results) / max(len(daily_results), 1), 2
-        ),
+        "monthly": {key: round(value, 0) for key, value in sorted(monthly_revenue.items())},
+        "trading_days": trading_days_total,
+        "avg_daily_revenue": round(avg_daily, 0),
+        "avg_spread": round(total_spread_val / max(len(monthly_revenue), 1), 2),
+        "annual_charge_mwh": round(total_charge_mwh, 2),
+        "annual_discharge_mwh": round(total_discharge_mwh, 2),
+        "throughput_limit_mwh": round(throughput_limit_total, 2),
+        "initial_soc_mwh": round(initial_soc_mwh, 2),
+        "terminal_soc_mwh": round(terminal_soc_mwh, 2),
     }
 
 
 def run_full_analysis(regions=None, years=None):
-    """运行完整分析"""
     conn = sqlite3.connect(DB_PATH)
     tables = get_available_tables(conn)
-    
+
     if not tables:
-        logger.error("数据库中没有找到交易价格表")
+        logger.error("No trading_price tables found in the database.")
         return
-    
-    available_years = [int(t.split('_')[-1]) for t in tables]
-    
-    if years:
-        target_years = [y for y in years if y in available_years]
-    else:
-        target_years = available_years
-    
+
+    available_years = [int(table.split("_")[-1]) for table in tables]
+    target_years = [year for year in years if year in available_years] if years else available_years
+
     if not regions:
-        # 默认分析所有区域
-        regions = set()
-        for t in tables:
-            regions.update(get_available_regions(conn, t))
-        regions = sorted(regions)
-    
+        discovered_regions = set()
+        for table in tables:
+            discovered_regions.update(get_available_regions(conn, table))
+        regions = sorted(discovered_regions)
+
     logger.info("=" * 60)
-    logger.info("  BESS 储能套利回测分析")
-    logger.info(f"  区域: {', '.join(regions)}")
-    logger.info(f"  年份: {', '.join(str(y) for y in target_years)}")
-    logger.info(f"  储能配置: {', '.join(STORAGE_CONFIGS.keys())}")
-    logger.info(f"  往返效率: {ROUND_TRIP_EFFICIENCY*100}%")
+    logger.info("  BESS arbitrage backtest")
+    logger.info(f"  Regions: {', '.join(regions)}")
+    logger.info(f"  Years: {', '.join(str(year) for year in target_years)}")
+    logger.info(f"  Storage configs: {', '.join(STORAGE_CONFIGS.keys())}")
+    logger.info(f"  Round-trip efficiency: {ROUND_TRIP_EFFICIENCY * 100:.0f}%")
     logger.info("=" * 60)
-    
+
     all_results = {
         "meta": {
             "generated_at": datetime.now().isoformat(),
@@ -241,49 +259,44 @@ def run_full_analysis(regions=None, years=None):
         "arbitrage_backtest": {},
         "negative_price_trend": {},
     }
-    
-    # 1. 价差分析
-    logger.info("\n📊 1/3 每日价差分析...")
+
+    logger.info("\n1/3 Daily spread analysis...")
     for region in regions:
         all_results["spread_analysis"][region] = {}
         for year in target_years:
             spreads = analyze_daily_spreads(conn, region, year)
-            if spreads:
-                avg_spread = sum(d["spread"] for d in spreads) / len(spreads)
-                max_spread = max(d["spread"] for d in spreads)
-                avg_neg_pct = sum(d["neg_pct"] for d in spreads) / len(spreads)
-                
-                summary = {
-                    "days": len(spreads),
-                    "avg_daily_spread": round(avg_spread, 2),
-                    "max_daily_spread": round(max_spread, 2),
-                    "median_spread": round(
-                        sorted([d["spread"] for d in spreads])[len(spreads)//2], 2
-                    ),
-                    "avg_neg_price_pct": round(avg_neg_pct, 1),
-                }
-                all_results["spread_analysis"][region][year] = summary
-                logger.info(f"  {region} {year}: 均价差=${avg_spread:.0f}, "
-                          f"最大=${max_spread:.0f}, 负价占比={avg_neg_pct:.1f}%")
-    
-    # 2. 负电价趋势
-    logger.info("\n📉 2/3 负电价频率趋势...")
+            if not spreads:
+                continue
+            avg_spread = sum(item["spread"] for item in spreads) / len(spreads)
+            max_spread = max(item["spread"] for item in spreads)
+            avg_neg_pct = sum(item["neg_pct"] for item in spreads) / len(spreads)
+            all_results["spread_analysis"][region][year] = {
+                "days": len(spreads),
+                "avg_daily_spread": round(avg_spread, 2),
+                "max_daily_spread": round(max_spread, 2),
+                "median_spread": round(sorted(item["spread"] for item in spreads)[len(spreads) // 2], 2),
+                "avg_neg_price_pct": round(avg_neg_pct, 1),
+            }
+            logger.info(
+                f"  {region} {year}: avg spread=${avg_spread:.0f}, "
+                f"max=${max_spread:.0f}, neg price share={avg_neg_pct:.1f}%"
+            )
+
+    logger.info("\n2/3 Negative price trend...")
     for region in regions:
         trend = {}
         for year in target_years:
             spreads = analyze_daily_spreads(conn, region, year)
-            if spreads:
-                # 按月汇总
-                monthly_neg = defaultdict(list)
-                for d in spreads:
-                    month = d["date"][:7]
-                    monthly_neg[month].append(d["neg_pct"])
-                for month, pcts in sorted(monthly_neg.items()):
-                    trend[month] = round(sum(pcts) / len(pcts), 1)
+            if not spreads:
+                continue
+            monthly_neg = defaultdict(list)
+            for item in spreads:
+                monthly_neg[item["date"][:7]].append(item["neg_pct"])
+            for month, values in sorted(monthly_neg.items()):
+                trend[month] = round(sum(values) / len(values), 1)
         all_results["negative_price_trend"][region] = trend
-    
-    # 3. 套利回测
-    logger.info("\n💰 3/3 套利收入回测...")
+
+    logger.info("\n3/3 Arbitrage backtest...")
     for region in regions:
         all_results["arbitrage_backtest"][region] = {}
         for year in target_years:
@@ -292,72 +305,68 @@ def run_full_analysis(regions=None, years=None):
                 result = backtest_arbitrage(conn, region, year, config)
                 if result and result.get("trading_days", 0) > 0:
                     year_results[config_name] = result
-                    rev = result["revenue_per_mw_year"]
-                    logger.info(f"  {region} {year} {config_name}: "
-                              f"${rev:,.0f}/MW/年 "
-                              f"(均价差=${result['avg_spread']:.0f})")
+                    logger.info(
+                        f"  {region} {year} {config_name}: "
+                        f"${result['revenue_per_mw_year']:,.0f}/MW/year "
+                        f"(avg spread=${result['avg_spread']:.0f})"
+                    )
             if year_results:
                 all_results["arbitrage_backtest"][region][year] = year_results
-    
+
     conn.close()
-    
-    # 输出 JSON
+
     output_file = "bess_backtest_results.json"
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(all_results, f, indent=2, ensure_ascii=False)
-    
-    logger.info(f"\n✅ 结果已保存至 {output_file}")
-    
-    # 打印摘要表
+    with open(output_file, "w", encoding="utf-8") as handle:
+        json.dump(all_results, handle, indent=2, ensure_ascii=False)
+
+    logger.info(f"\nSaved results to {output_file}")
     print_summary(all_results)
-    
     return all_results
 
 
 def print_summary(results):
-    """打印汇总表"""
     print("\n" + "=" * 80)
-    print("  BESS 套利回测摘要 - 年化收入/MW ($AUD)")
+    print("  BESS arbitrage backtest summary - annual revenue/MW ($AUD)")
     print("=" * 80)
-    
-    bt = results.get("arbitrage_backtest", {})
-    
-    # 表头
-    header = f"{'区域':>6} {'年份':>6}"
-    for cfg in STORAGE_CONFIGS:
-        header += f" {cfg+' $/MW':>12}"
-    header += f" {'均价差':>10}"
+
+    backtests = results.get("arbitrage_backtest", {})
+    header = f"{'Region':>8} {'Year':>6}"
+    for config in STORAGE_CONFIGS:
+        header += f" {config + ' $/MW':>12}"
+    header += f" {'AvgSpread':>12}"
     print(header)
     print("-" * 80)
-    
-    for region in sorted(bt.keys()):
-        for year in sorted(bt[region].keys()):
-            line = f"{region:>6} {year:>6}"
+
+    for region in sorted(backtests.keys()):
+        for year in sorted(backtests[region].keys()):
+            line = f"{region:>8} {year:>6}"
             spread_val = 0
-            for cfg in STORAGE_CONFIGS:
-                if cfg in bt[region][year]:
-                    rev = bt[region][year][cfg]["revenue_per_mw_year"]
-                    line += f" ${rev:>10,.0f}"
-                    if cfg == "4h":
-                        spread_val = bt[region][year][cfg]["avg_spread"]
+            for config in STORAGE_CONFIGS:
+                if config in backtests[region][year]:
+                    revenue = backtests[region][year][config]["revenue_per_mw_year"]
+                    line += f" ${revenue:>10,.0f}"
+                    if config == "4h":
+                        spread_val = backtests[region][year][config]["avg_spread"]
                 else:
                     line += f" {'N/A':>11}"
-            line += f" ${spread_val:>8,.0f}"
+            line += f" ${spread_val:>10,.0f}"
             print(line)
-    
+
     print("=" * 80)
-    print(f"  注: 基于 {ROUND_TRIP_EFFICIENCY*100}% 往返效率, {CYCLES_PER_DAY} 次/天循环")
-    print(f"  注: 这是理论最优(完美预见)收入上限，实际约为 60-70%")
+    print(
+        f"  Note: {ROUND_TRIP_EFFICIENCY * 100:.0f}% round-trip efficiency, "
+        f"{CYCLES_PER_DAY} cycle/day limit, optimized hindsight physical upper bound."
+    )
     print("=" * 80)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="BESS 储能套利回测")
-    parser.add_argument("--region", type=str, help="区域 (NSW1/QLD1/SA1/TAS1/VIC1/WEM)")
-    parser.add_argument("--year", type=int, help="年份")
-    parser.add_argument("--all", action="store_true", help="分析所有区域和年份")
+    parser = argparse.ArgumentParser(description="BESS arbitrage backtest")
+    parser.add_argument("--region", type=str, help="Region (NSW1/QLD1/SA1/TAS1/VIC1/WEM)")
+    parser.add_argument("--year", type=int, help="Year")
+    parser.add_argument("--all", action="store_true", help="Analyze all regions and years")
     args = parser.parse_args()
-    
+
     if args.all:
         run_full_analysis()
     elif args.region and args.year:
@@ -367,10 +376,9 @@ def main():
     elif args.year:
         run_full_analysis(years=[args.year])
     else:
-        # 默认: 分析最近 3 年的关键区域
         run_full_analysis(
             regions=["NSW1", "SA1", "VIC1", "QLD1", "WEM"],
-            years=[2024, 2025, 2026]
+            years=[2024, 2025, 2026],
         )
 
 

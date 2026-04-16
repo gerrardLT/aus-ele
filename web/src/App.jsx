@@ -11,9 +11,11 @@ import RevenueStacking from './components/RevenueStacking';
 import ChargingWindow from './components/ChargingWindow';
 import CycleCost from './components/CycleCost';
 import InvestmentAnalysis from './components/InvestmentAnalysis';
+import GridForecast from './components/GridForecast';
+import { fetchJson } from './lib/apiClient';
 import { translations } from './translations';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8085/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
 
 "use client";
 
@@ -26,6 +28,7 @@ function App() {
   const [selectedDayType, setSelectedDayType] = useState('ALL');
   const [selectedRegion, setSelectedRegion] = useState('NSW1');
   const [chartData, setChartData] = useState(null);
+  const [eventOverlay, setEventOverlay] = useState(null);
   const [summaryData, setSummaryData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -63,7 +66,7 @@ function App() {
 
   // Scroll-based active section tracking (more reliable than IntersectionObserver for tall sections)
   useEffect(() => {
-    const sectionIds = ['sec-overview', 'sec-negative', 'sec-arbitrage', 'sec-fcas', 'sec-simulator', 'sec-stacking', 'sec-charging', 'sec-cycle', 'sec-investment'];
+    const sectionIds = ['sec-overview', 'sec-forecast', 'sec-negative', 'sec-arbitrage', 'sec-fcas', 'sec-simulator', 'sec-stacking', 'sec-charging', 'sec-cycle', 'sec-investment'];
 
     const handleScroll = () => {
       const offset = 120; // account for sticky bar + margin
@@ -98,18 +101,26 @@ function App() {
   }, []);
 
   const t = translations[lang];
+  const simulatorScopeNote = t.simulator.fullYearModelNote || (
+    lang === 'zh'
+      ? '该模块使用全年代表性参数，不跟随 month / quarter / day_type 子时段筛选；事件与预测信号仅用于说明，不会自动注入模拟器收益结果。'
+      : 'Uses full-year representative data. Month, quarter, and day-type filters do not apply here. Event and forecast signals are explanatory only and are not injected into simulator results.'
+  );
+  const investmentScopeNote = t.investment?.fullYearModelNote || (
+    lang === 'zh'
+      ? '该模块使用全年历史回测和年度现金流假设，不跟随 month / quarter / day_type 子时段筛选；事件与预测信号不会自动改写收益、NPV、IRR 或回本期。'
+      : 'Uses full-year historical and cash-flow assumptions. Month, quarter, and day-type filters do not apply here. Event and forecast signals do not automatically change revenue, NPV, IRR, or payback.'
+  );
 
   // Initial Fetch Setup
   const fetchInitial = async () => {
     try {
       setError(false);
       setLoading(true);
-      const [yearsRes, summaryRes] = await Promise.all([
-        fetch(`${API_BASE}/years`),
-        fetch(`${API_BASE}/summary`)
+      const [yearsData, sumData] = await Promise.all([
+        fetchJson(`${API_BASE}/years`),
+        fetchJson(`${API_BASE}/summary`)
       ]);
-      const yearsData = await yearsRes.json();
-      const sumData = await summaryRes.json();
 
       if (yearsData.years?.length > 0) {
         setYears(yearsData.years);
@@ -167,10 +178,24 @@ function App() {
       url += `&day_type=${selectedDayType}`;
     }
 
-    fetch(url)
-      .then(res => res.json())
-      .then(data => {
-        setChartData(data);
+    let eventUrl = `${API_BASE}/event-overlays?year=${selectedYear}&region=${selectedRegion}`;
+    if (selectedMonth !== 'ALL') {
+      eventUrl += `&month=${selectedMonth}`;
+    }
+    if (selectedQuarter !== 'ALL') {
+      eventUrl += `&quarter=${selectedQuarter}`;
+    }
+    if (selectedDayType !== 'ALL') {
+      eventUrl += `&day_type=${selectedDayType}`;
+    }
+
+    Promise.all([
+      fetchJson(url),
+      fetchJson(eventUrl).catch(() => null),
+    ])
+      .then(([priceData, overlayData]) => {
+        setChartData(priceData);
+        setEventOverlay(overlayData);
         setError(false);
         setLoading(false);
       })
@@ -183,6 +208,7 @@ function App() {
 
     const tocSections = [
       { id: 'sec-overview', label: lang === 'zh' ? '市场总览' : 'Overview', shortLabel: '总览' },
+      { id: 'sec-forecast', label: t.forecast?.sectionLabel || (lang === 'zh' ? '电网预测' : 'Grid Forecast'), shortLabel: lang === 'zh' ? '预测' : 'Forecast' },
       { id: 'sec-negative', label: lang === 'zh' ? '负电价分布' : 'Negative Price', shortLabel: '负电价' },
       { id: 'sec-arbitrage', label: lang === 'zh' ? '储能套利' : 'Arbitrage', shortLabel: '套利' },
       { id: 'sec-fcas', label: lang === 'zh' ? 'FCAS 分析' : 'FCAS', shortLabel: 'FCAS' },
@@ -584,8 +610,19 @@ function App() {
               </div>
 
               {/* Right Column: Chart */}
-              <div className="col-span-12 md:col-span-9 h-[500px]">
-                <PriceChart data={chartData?.data} t={t.price_chart} />
+              <div className="col-span-12 md:col-span-9">
+                <div className="h-[500px]">
+                  <PriceChart data={chartData?.data} t={t.price_chart} overlay={eventOverlay} locale={lang} />
+                </div>
+              </div>
+
+              <div id="sec-forecast" className="col-span-12 scroll-mt-24">
+                <GridForecast
+                  apiBase={API_BASE}
+                  region={selectedRegion}
+                  locale={lang}
+                  t={t.forecast}
+                />
               </div>
 
               {/* Lower View: Anomalous Bidding Analytics */}
@@ -607,6 +644,11 @@ function App() {
                 <PeakAnalysis
                   year={selectedYear}
                   region={selectedRegion}
+                  lang={lang}
+                  month={selectedMonth}
+                  quarter={selectedQuarter}
+                  dayType={selectedDayType}
+                  eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.peak_analysis, loadingMsg: t.loading_states.peak}}
                 />
@@ -617,6 +659,11 @@ function App() {
                 <FcasAnalysis
                   year={selectedYear}
                   region={selectedRegion}
+                  lang={lang}
+                  month={selectedMonth}
+                  quarter={selectedQuarter}
+                  dayType={selectedDayType}
+                  eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.fcas, ...t.peak_analysis, loadingMsg: t.loading_states.fcas}}
                 />
@@ -628,6 +675,12 @@ function App() {
                   year={selectedYear}
                   region={selectedRegion}
                   apiBase={API_BASE}
+                  scopeNote={t.simulator.fullYearModelNote || (
+                    lang === 'zh'
+                      ? '该模块使用全年代表性参数，不跟随 month / quarter / day_type 子时段筛选。'
+                      : 'Uses full-year representative data. Month, quarter, and day-type filters do not apply here.'
+                  )}
+                  scopeNote={simulatorScopeNote}
                   t={{...t.simulator, loadingMsg: t.loading_states.simulator}}
                 />
               </div>
@@ -637,6 +690,11 @@ function App() {
                 <RevenueStacking
                   year={selectedYear}
                   region={selectedRegion}
+                  lang={lang}
+                  month={selectedMonth}
+                  quarter={selectedQuarter}
+                  dayType={selectedDayType}
+                  eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.stacking, ...t.peak_analysis, loadingMsg: t.loading_states.stacking}}
                 />
@@ -647,6 +705,8 @@ function App() {
                 <ChargingWindow
                   year={selectedYear}
                   region={selectedRegion}
+                  lang={lang}
+                  eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.charging, ...t.peak_analysis, loadingMsg: t.loading_states.charging}}
                 />
@@ -657,6 +717,11 @@ function App() {
                 <CycleCost
                   year={selectedYear}
                   region={selectedRegion}
+                  lang={lang}
+                  month={selectedMonth}
+                  quarter={selectedQuarter}
+                  dayType={selectedDayType}
+                  eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.cycleCost, ...t.peak_analysis, loadingMsg: t.loading_states.cycleCost}}
                 />
@@ -667,6 +732,13 @@ function App() {
                 <InvestmentAnalysis
                   year={selectedYear}
                   region={selectedRegion}
+                  lang={lang}
+                  scopeNote={t.investment?.fullYearModelNote || (
+                    lang === 'zh'
+                      ? '该模块使用全年历史回测和年度现金流假设，不跟随 month / quarter / day_type 子时段筛选。'
+                      : 'Uses full-year historical and cash-flow assumptions. Month, quarter, and day-type filters do not apply here.'
+                  )}
+                  scopeNote={investmentScopeNote}
                   t={t}
                 />
               </div>

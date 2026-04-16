@@ -1,324 +1,485 @@
 """
-AEMO WEM ESS (Essential System Services) 辅助服务价格爬取工具
-=============================================================
-数据来源: https://data.wa.aemo.com.au/public/market-data/wemde/dispatchSolution/
-服务类型: energy, regulationRaise, regulationLower, contingencyRaise, contingencyLower, rocof
-历史范围: 2023-10-01 ~ 至今 (WEM改革后)
+AEMO WEM ESS slim scraper.
 
-注意: 每天ZIP约230MB，下载约需3-5分钟/天(取决于网速)
-     建议分批运行，每次爬取一周或一个月的数据
-
-使用方法:
-    python aemo_wem_ess_scraper.py --start 2025-01-01 --end 2025-01-07
-    python aemo_wem_ess_scraper.py --start 2025-01-01 --end 2025-01-31
+Downloads WEM dispatch solution files, extracts only the market fields
+needed for lightweight ESS analysis, and stores a rolling latest-month
+window in slim tables.
 """
 
-import sys
-import requests
-import zipfile
+import argparse
+import csv
 import io
 import json
-import time
-import argparse
-import sqlite3
 import logging
-import urllib3
+import re
+import sys
+import time
+import zipfile
 from datetime import datetime, timedelta
+
+import requests
+import urllib3
+
+from database import DatabaseManager
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# 常量
-# ============================================================
 WEM_BASE = "https://data.wa.aemo.com.au/public/market-data/wemde/dispatchSolution/dispatchData"
+FCESS_CAPABILITY_URL = "https://data.wa.aemo.com.au/public/public-data/datafiles/fcess/fcess.csv"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
 }
-ESS_SERVICES = ["energy", "regulationRaise", "regulationLower",
-                "contingencyRaise", "contingencyLower", "rocof"]
+
+SERVICE_MAPPINGS = {
+    "regulationRaise": "regulation_raise",
+    "regulationLower": "regulation_lower",
+    "contingencyRaise": "contingency_raise",
+    "contingencyLower": "contingency_lower",
+    "rocof": "rocof",
+}
+
+AVAILABILITY_MAPPINGS = {
+    "regulationRaise": "available_regulation_raise",
+    "regulationLower": "available_regulation_lower",
+    "contingencyRaise": "available_contingency_raise",
+    "contingencyLower": "available_contingency_lower",
+    "rocof": "available_rocof",
+}
+
+IN_SERVICE_MAPPINGS = {
+    "regulationRaise": "in_service_regulation_raise",
+    "regulationLower": "in_service_regulation_lower",
+    "contingencyRaise": "in_service_contingency_raise",
+    "contingencyLower": "in_service_contingency_lower",
+    "rocof": "in_service_rocof",
+}
+
+REQUIREMENT_MAPPINGS = {
+    "regulationRaise": "requirement_regulation_raise",
+    "regulationLower": "requirement_regulation_lower",
+    "contingencyRaise": "requirement_contingency_raise",
+    "contingencyLower": "requirement_contingency_lower",
+    "rocof": "requirement_rocof",
+}
+
+SHORTFALL_MAPPINGS = {
+    "regulationRaiseDeficit": "shortfall_regulation_raise",
+    "regulationLowerDeficit": "shortfall_regulation_lower",
+    "contingencyRaiseDeficit": "shortfall_contingency_raise",
+    "contingencyLowerDeficit": "shortfall_contingency_lower",
+    "rocofDeficit": "shortfall_rocof",
+}
+
+DISPATCH_TOTAL_MAPPINGS = {
+    "regulationRaise": "dispatch_total_regulation_raise",
+    "regulationLower": "dispatch_total_regulation_lower",
+    "contingencyRaise": "dispatch_total_contingency_raise",
+    "contingencyLower": "dispatch_total_contingency_lower",
+    "rocof": "dispatch_total_rocof",
+}
+
+CONSTRAINT_TYPE_FIELDS = {
+    "formulation": "max_formulation_shadow_price",
+    "facility": "max_facility_shadow_price",
+    "network": "max_network_shadow_price",
+    "generic": "max_generic_shadow_price",
+}
 
 
-# ============================================================
-# 数据库
-# ============================================================
-class WemEssDB:
-    TABLE = "wem_ess_price"
-
-    def __init__(self, db_path="aemo_data.db"):
-        self.db_path = db_path
-        self._init_table()
-
-    def _init_table(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    dispatch_interval TEXT NOT NULL,
-                    energy_price REAL,
-                    regulation_raise_price REAL,
-                    regulation_lower_price REAL,
-                    contingency_raise_price REAL,
-                    contingency_lower_price REAL,
-                    rocof_price REAL,
-                    UNIQUE(dispatch_interval)
-                )
-            """)
-            conn.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_{self.TABLE}_interval
-                ON {self.TABLE} (dispatch_interval)
-            """)
-            conn.commit()
-
-    def has_date(self, date_str: str) -> bool:
-        """检查某天是否已有足够数据（至少200条=可用的一天）"""
-        with sqlite3.connect(self.db_path) as conn:
-            r = conn.execute(
-                f"SELECT COUNT(*) FROM {self.TABLE} WHERE dispatch_interval LIKE ?",
-                (f"{date_str}%",)
-            ).fetchone()
-            return (r[0] or 0) >= 200
-
-    def batch_insert(self, records: list[dict]) -> int:
-        if not records:
-            return 0
-        rows = [(
-            r["dispatch_interval"],
-            r.get("energy_price"),
-            r.get("regulation_raise_price"),
-            r.get("regulation_lower_price"),
-            r.get("contingency_raise_price"),
-            r.get("contingency_lower_price"),
-            r.get("rocof_price"),
-        ) for r in records]
-
-        with sqlite3.connect(self.db_path) as conn:
-            try:
-                conn.executemany(f"""
-                    INSERT OR IGNORE INTO {self.TABLE}
-                    (dispatch_interval, energy_price,
-                     regulation_raise_price, regulation_lower_price,
-                     contingency_raise_price, contingency_lower_price,
-                     rocof_price)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, rows)
-                conn.commit()
-                return len(rows)
-            except sqlite3.Error as e:
-                conn.rollback()
-                logger.error(f"DB error: {e}")
-                return 0
-
-    def get_stats(self) -> dict:
-        with sqlite3.connect(self.db_path) as conn:
-            count = conn.execute(f"SELECT COUNT(*) FROM {self.TABLE}").fetchone()[0]
-            mm = conn.execute(
-                f"SELECT MIN(dispatch_interval), MAX(dispatch_interval) FROM {self.TABLE}"
-            ).fetchone()
-            return {"count": count, "min": mm[0], "max": mm[1]}
-
-
-# ============================================================
-# 解析
-# ============================================================
-def parse_ess_prices(raw: bytes) -> list[dict]:
-    """从dispatch JSON 提取 Reference+Dispatch 的 ESS 价格"""
+def _safe_float(value):
+    if value in (None, "", "null"):
+        return None
     try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return []
-
-    wrapper = data.get("data", data)
-    sd_list = wrapper.get("solutionData", [])
-    results = []
-
-    for sd in sd_list:
-        if sd.get("scenario") != "Reference" or sd.get("dispatchType") != "Dispatch":
-            continue
-
-        interval = sd.get("dispatchInterval", "")
-        if not interval:
-            continue
-
-        # "2026-04-08T15:50:00+08:00" -> "2026-04-08 15:50:00"
-        clean = interval.replace("T", " ")[:19]
-
-        prices_raw = sd.get("prices", [])
-        pm = {}
-
-        # prices 可能是 list[dict] 或 dict
-        if isinstance(prices_raw, list):
-            for p in prices_raw:
-                if isinstance(p, dict):
-                    svc = p.get("marketService", "")
-                    val = p.get("price")
-                    if svc and val is not None:
-                        pm[svc] = float(val)
-        elif isinstance(prices_raw, dict):
-            for svc, val in prices_raw.items():
-                if val is not None:
-                    pm[svc] = float(val) if isinstance(val, (int, float)) else val
-
-        if pm:
-            results.append({
-                "dispatch_interval": clean,
-                "energy_price": pm.get("energy"),
-                "regulation_raise_price": pm.get("regulationRaise"),
-                "regulation_lower_price": pm.get("regulationLower"),
-                "contingency_raise_price": pm.get("contingencyRaise"),
-                "contingency_lower_price": pm.get("contingencyLower"),
-                "rocof_price": pm.get("rocof"),
-            })
-
-    return results
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
-# ============================================================
-# 下载
-# ============================================================
-def download_zip(url: str, label: str, max_retries: int = 3) -> bytes | None:
-    """流式下载带进度，含重试"""
-    for attempt in range(1, max_retries + 1):
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=600,
-                                verify=False, stream=True)
-            if resp.status_code == 404:
-                return None
-            if resp.status_code != 200:
-                logger.warning(f"  HTTP {resp.status_code} (attempt {attempt})")
-                time.sleep(attempt * 5)
+def _clean_dispatch_interval(raw_interval: str) -> str:
+    if not raw_interval:
+        return ""
+    return raw_interval.replace("T", " ")[:19]
+
+
+def _coerce_price_map(raw_prices):
+    prices = {}
+    if isinstance(raw_prices, list):
+        for entry in raw_prices:
+            if not isinstance(entry, dict):
                 continue
+            service = entry.get("marketService")
+            value = _safe_float(entry.get("price"))
+            if service and value is not None:
+                prices[service] = value
+    elif isinstance(raw_prices, dict):
+        for service, value in raw_prices.items():
+            parsed = _safe_float(value)
+            if parsed is not None:
+                prices[service] = parsed
+    return prices
 
-            total = int(resp.headers.get('Content-Length', 0))
-            chunks = []
-            downloaded = 0
 
-            for chunk in resp.iter_content(chunk_size=256 * 1024):
-                chunks.append(chunk)
-                downloaded += len(chunk)
+def extract_slim_solution_rows(raw: bytes) -> tuple[list[dict], list[dict]]:
+    """Extract slim market rows plus constraint summary rows."""
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return [], []
+
+    wrapper = payload.get("data", payload)
+    primary_dispatch_interval = _clean_dispatch_interval(wrapper.get("primaryDispatchInterval", ""))
+    solution_rows = wrapper.get("solutionData", [])
+    market_rows = []
+    constraint_rows = []
+
+    for solution in solution_rows:
+        scenario = solution.get("scenario")
+        dispatch_type = solution.get("dispatchType")
+        if scenario not in (None, "", "Reference") or dispatch_type not in (None, "", "Dispatch"):
+            continue
+
+        dispatch_interval = _clean_dispatch_interval(solution.get("dispatchInterval", ""))
+        if not dispatch_interval:
+            continue
+        if primary_dispatch_interval and dispatch_interval != primary_dispatch_interval:
+            continue
+
+        prices = _coerce_price_map(solution.get("prices", {}))
+        market_row = {
+            "dispatch_interval": dispatch_interval,
+            "energy_price": prices.get("energy"),
+        }
+
+        for raw_key, db_key in SERVICE_MAPPINGS.items():
+            market_row[f"{db_key}_price"] = prices.get(raw_key)
+
+        for mapping, source in (
+            (AVAILABILITY_MAPPINGS, solution.get("availableQuantities", {}) or {}),
+            (IN_SERVICE_MAPPINGS, solution.get("inServiceQuantities", {}) or {}),
+            (REQUIREMENT_MAPPINGS, solution.get("marketServiceRequirements", {}) or {}),
+            (SHORTFALL_MAPPINGS, solution.get("marketShortfalls", {}) or {}),
+            (DISPATCH_TOTAL_MAPPINGS, solution.get("dispatchTotal", {}) or {}),
+        ):
+            for raw_key, db_key in mapping.items():
+                market_row[db_key] = _safe_float(source.get(raw_key))
+
+        capped_flags = {}
+        for entry in solution.get("priceSetting", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            service = entry.get("marketService")
+            if service in SERVICE_MAPPINGS:
+                capped_flags[service] = 1 if entry.get("isMarketServiceCapped") else 0
+        for raw_key, db_key in SERVICE_MAPPINGS.items():
+            market_row[f"capped_{db_key}"] = capped_flags.get(raw_key, 0)
+
+        if any(market_row.get(f"{db_key}_price") is not None for db_key in SERVICE_MAPPINGS.values()):
+            market_rows.append(market_row)
+
+        binding_count = 0
+        near_binding_count = 0
+        binding_max_shadow = 0.0
+        near_binding_max_shadow = 0.0
+        constraint_summary = {
+            "dispatch_interval": dispatch_interval,
+            "binding_count": 0,
+            "near_binding_count": 0,
+            "binding_max_shadow_price": 0.0,
+            "near_binding_max_shadow_price": 0.0,
+            "max_formulation_shadow_price": 0.0,
+            "max_facility_shadow_price": 0.0,
+            "max_network_shadow_price": 0.0,
+            "max_generic_shadow_price": 0.0,
+        }
+
+        for constraint in solution.get("constraints", []) or []:
+            if not isinstance(constraint, dict):
+                continue
+            shadow_price = abs(_safe_float(constraint.get("shadowPrice")) or 0.0)
+            if constraint.get("bindingConstraintFlag"):
+                binding_count += 1
+                binding_max_shadow = max(binding_max_shadow, shadow_price)
+                type_key = (constraint.get("constraintType") or "").lower()
+                field_name = CONSTRAINT_TYPE_FIELDS.get(type_key)
+                if field_name:
+                    constraint_summary[field_name] = max(constraint_summary[field_name], shadow_price)
+            if constraint.get("nearBindingConstraintFlag"):
+                near_binding_count += 1
+                near_binding_max_shadow = max(near_binding_max_shadow, shadow_price)
+
+        constraint_summary["binding_count"] = binding_count
+        constraint_summary["near_binding_count"] = near_binding_count
+        constraint_summary["binding_max_shadow_price"] = binding_max_shadow
+        constraint_summary["near_binding_max_shadow_price"] = near_binding_max_shadow
+        constraint_rows.append(constraint_summary)
+
+    return market_rows, constraint_rows
+
+
+def parse_fcess_capabilities(csv_text: str) -> list[dict]:
+    reader = csv.DictReader(io.StringIO(csv_text))
+    records = []
+    for row in reader:
+        facility_code = (row.get("Facility Code") or "").strip()
+        if not facility_code:
+            continue
+        records.append(
+            {
+                "facility_code": facility_code,
+                "participant_code": (row.get("Participant Code") or "").strip() or None,
+                "participant_name": (row.get("Participant Name") or "").strip() or None,
+                "facility_class": (row.get("Facility Class") or "").strip() or None,
+                "max_accredited_regulation_raise": _safe_float(row.get("Max Accredited Regulation Raise")),
+                "max_accredited_regulation_lower": _safe_float(row.get("Max Accredited Regulation Lower")),
+                "max_accredited_contingency_raise": _safe_float(row.get("Max Accredited Contingency Raise")),
+                "max_accredited_contingency_lower": _safe_float(row.get("Max Accredited Contingency Lower")),
+                "max_accredited_rocof": _safe_float(row.get("Max Accredited ROCOF")),
+                "facility_speed_factor": _safe_float(row.get("Facility Speed Factor")),
+                "rocof_ride_through_capability": _safe_float(row.get("RoCoF Ride-Through Capability")),
+                "extracted_at": (row.get("Extracted At") or "").strip() or None,
+            }
+        )
+    return records
+
+
+def download_bytes(url: str, label: str, *, stream: bool = False, max_retries: int = 3) -> bytes | None:
+    def emit_progress(message: str):
+        try:
+            sys.stdout.write(message)
+            sys.stdout.flush()
+        except OSError:
+            # Some non-interactive runners expose stdout handles that reject flush/write.
+            pass
+
+    if not stream:
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.get(
+                    url,
+                    headers=HEADERS,
+                    timeout=120,
+                    verify=False,
+                    stream=False,
+                )
+                if response.status_code == 404:
+                    return None
+                if response.status_code != 200:
+                    logger.warning(f"{label}: HTTP {response.status_code} (attempt {attempt})")
+                    time.sleep(attempt * 3)
+                    continue
+                return response.content
+            except requests.RequestException as exc:
+                logger.warning(f"{label}: download failed on attempt {attempt}: {exc}")
+                if attempt < max_retries:
+                    time.sleep(attempt * 5)
+        return None
+
+    downloaded = bytearray()
+    total = 0
+    for attempt in range(1, max_retries + 1):
+        request_headers = dict(HEADERS)
+        if downloaded:
+            request_headers["Range"] = f"bytes={len(downloaded)}-"
+
+        try:
+            response = requests.get(
+                url,
+                headers=request_headers,
+                timeout=600,
+                verify=False,
+                stream=True,
+            )
+            if response.status_code == 404:
+                return None
+            if response.status_code not in (200, 206):
+                logger.warning(f"{label}: HTTP {response.status_code} (attempt {attempt})")
+                time.sleep(attempt * 3)
+                continue
+            if downloaded and response.status_code == 200:
+                logger.warning(f"{label}: range request ignored, restarting full download")
+                downloaded = bytearray()
+                total = 0
+
+            content_range = response.headers.get("Content-Range") or ""
+            if content_range:
+                match = re.search(r"/(\d+)$", content_range)
+                if match:
+                    total = int(match.group(1))
+            elif response.headers.get("Content-Length"):
+                content_length = int(response.headers["Content-Length"])
+                total = max(total, len(downloaded) + content_length if response.status_code == 206 else content_length)
+
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if not chunk:
+                    continue
+                downloaded.extend(chunk)
                 if total > 0:
-                    pct = downloaded / total * 100
-                    mb_dl = downloaded / 1024 / 1024
+                    pct = len(downloaded) / total * 100
+                    mb_dl = len(downloaded) / 1024 / 1024
                     mb_total = total / 1024 / 1024
-                    sys.stdout.write(f"\r  {label}: {mb_dl:.1f}/{mb_total:.1f} MB ({pct:.0f}%)")
-                    sys.stdout.flush()
+                    emit_progress(f"\r  {label}: {mb_dl:.1f}/{mb_total:.1f} MB ({pct:.0f}%)")
+
+            if total and len(downloaded) < total:
+                raise requests.exceptions.ChunkedEncodingError(
+                    f"incomplete download: {len(downloaded)} of {total} bytes"
+                )
 
             if total > 0:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-
-            return b"".join(chunks)
-
-        except requests.RequestException as e:
-            logger.warning(f"  下载失败 (attempt {attempt}): {e}")
+                emit_progress("\n")
+            return bytes(downloaded)
+        except requests.RequestException as exc:
+            logger.warning(f"{label}: download failed on attempt {attempt}: {exc}")
             if attempt < max_retries:
-                wait = attempt * 10
-                logger.info(f"  等待 {wait}秒 后重试...")
-                time.sleep(wait)
-
+                if downloaded:
+                    logger.info(
+                        f"{label}: resuming from {len(downloaded) / 1024 / 1024:.1f} MB"
+                    )
+                time.sleep(attempt * 5)
     return None
 
 
-# ============================================================
-# 主逻辑
-# ============================================================
-def scrape_day(target_date: datetime, db: WemEssDB) -> int:
-    """爬取某天 ESS 价格, 返回记录数或 -1(已存在)"""
-    date_str = target_date.strftime("%Y-%m-%d")
+def list_current_json_urls(target_date: datetime) -> list[str]:
     date_compact = target_date.strftime("%Y%m%d")
+    listing_url = f"{WEM_BASE}/current/"
+    raw = download_bytes(listing_url, f"{date_compact} listing", stream=False, max_retries=1)
+    if not raw:
+        return []
+    html = raw.decode("utf-8", errors="ignore")
+    matches = sorted(set(re.findall(rf"ReferenceDispatchSolution_{date_compact}\d{{4}}\.json", html)))
+    return [f"{listing_url}{name}" for name in matches]
 
-    if db.has_date(date_str):
-        return -1
 
-    zip_url = f"{WEM_BASE}/previous/DispatchSolutionReference_{date_compact}.zip"
-    raw = download_zip(zip_url, date_str)
+def sync_fcess_capabilities(db: DatabaseManager) -> int:
+    raw = download_bytes(FCESS_CAPABILITY_URL, "fcess.csv", stream=False, max_retries=2)
     if not raw:
         return 0
+    records = parse_fcess_capabilities(raw.decode("utf-8", errors="ignore"))
+    return db.replace_wem_ess_capabilities(records)
 
-    all_records = []
-    try:
-        with zipfile.ZipFile(io.BytesIO(raw)) as z:
-            json_names = sorted([n for n in z.namelist() if n.endswith('.json')])
-            for name in json_names:
-                with z.open(name) as f:
-                    records = parse_ess_prices(f.read())
-                    all_records.extend(records)
-    except zipfile.BadZipFile:
-        logger.warning(f"  ZIP损坏: {date_compact}")
-        return 0
 
-    if all_records:
-        db.batch_insert(all_records)
-    return len(all_records)
+def _merge_rows_by_interval(records: list[dict]) -> list[dict]:
+    merged = {}
+    for record in records:
+        merged[record["dispatch_interval"]] = record
+    return [merged[key] for key in sorted(merged)]
+
+
+def scrape_day(target_date: datetime, db: DatabaseManager) -> tuple[int, int]:
+    date_label = target_date.strftime("%Y-%m-%d")
+    date_compact = target_date.strftime("%Y%m%d")
+    market_rows = []
+    constraint_rows = []
+
+    zip_url = f"{WEM_BASE}/previous/DispatchSolutionReference_{date_compact}.zip"
+    raw_zip = download_bytes(zip_url, date_label, stream=True, max_retries=2)
+    if raw_zip:
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw_zip)) as zipped:
+                for name in sorted(n for n in zipped.namelist() if n.endswith(".json")):
+                    with zipped.open(name) as handle:
+                        rows, constraints = extract_slim_solution_rows(handle.read())
+                        market_rows.extend(rows)
+                        constraint_rows.extend(constraints)
+        except zipfile.BadZipFile:
+            logger.warning(f"{date_label}: bad zip file")
+    else:
+        for url in list_current_json_urls(target_date):
+            raw_json = download_bytes(url, url.rsplit("/", 1)[-1], stream=False, max_retries=1)
+            if not raw_json:
+                continue
+            rows, constraints = extract_slim_solution_rows(raw_json)
+            market_rows.extend(rows)
+            constraint_rows.extend(constraints)
+
+    market_rows = _merge_rows_by_interval(market_rows)
+    constraint_rows = _merge_rows_by_interval(constraint_rows)
+
+    market_count = db.batch_upsert_wem_ess_market(market_rows)
+    constraint_count = db.batch_upsert_wem_ess_constraints(constraint_rows)
+    return market_count, constraint_count
+
+
+def sync_wem_ess_range(start_dt: datetime, end_dt: datetime, db_path: str, *, prune_before_start: bool = False) -> dict:
+    db = DatabaseManager(db_path)
+    capability_rows = sync_fcess_capabilities(db)
+
+    total_market = 0
+    total_constraints = 0
+    scanned_days = 0
+    current = start_dt
+    while current <= end_dt:
+        scanned_days += 1
+        market_count, constraint_count = scrape_day(current, db)
+        total_market += market_count
+        total_constraints += constraint_count
+        logger.info(
+            f"[{scanned_days}] {current.strftime('%Y-%m-%d')} -> market {market_count}, constraints {constraint_count}"
+        )
+        current += timedelta(days=1)
+        time.sleep(1)
+
+    if prune_before_start:
+        db.prune_wem_ess_history(start_dt.strftime("%Y-%m-%d 00:00:00"))
+
+    stats = db.get_wem_ess_stats()
+    stats.update(
+        {
+            "inserted_market_rows": total_market,
+            "inserted_constraint_rows": total_constraints,
+            "capability_rows": capability_rows,
+        }
+    )
+    return stats
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Sync slim WEM ESS data")
+    parser.add_argument("--start", help="Start date YYYY-MM-DD")
+    parser.add_argument("--end", help="End date YYYY-MM-DD")
+    parser.add_argument("--days", type=int, help="Rolling latest N days, inclusive")
+    parser.add_argument("--db", default="aemo_data.db", help="SQLite database path")
+    return parser.parse_args()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="WEM ESS 辅助服务价格爬取")
-    parser.add_argument("--start", required=True, help="起始日期 YYYY-MM-DD")
-    parser.add_argument("--end", required=True, help="结束日期 YYYY-MM-DD")
-    parser.add_argument("--db", default="aemo_data.db", help="数据库路径")
-    args = parser.parse_args()
+    args = parse_args()
 
-    try:
+    if args.days:
+        end_dt = datetime.now() - timedelta(days=1)
+        start_dt = end_dt - timedelta(days=max(args.days - 1, 0))
+        prune_before_start = True
+    elif args.start and args.end:
         start_dt = datetime.strptime(args.start, "%Y-%m-%d")
         end_dt = datetime.strptime(args.end, "%Y-%m-%d")
-    except ValueError:
-        print("错误: 日期格式应为 YYYY-MM-DD")
-        sys.exit(1)
+        prune_before_start = False
+    else:
+        raise SystemExit("Use either --days N or both --start YYYY-MM-DD --end YYYY-MM-DD")
 
-    db = WemEssDB(args.db)
-    total_days = (end_dt - start_dt).days + 1
-    total_records = 0
-    skipped = 0
+    logger.info("=" * 60)
+    logger.info("WEM ESS slim sync")
+    logger.info(f"Range: {start_dt.strftime('%Y-%m-%d')} -> {end_dt.strftime('%Y-%m-%d')}")
+    logger.info("Mode: slim market + constraint summary + capability table")
+    logger.info("=" * 60)
 
-    logger.info("=" * 55)
-    logger.info("  WEM ESS 辅助服务价格爬取")
-    logger.info(f"  范围: {args.start} ~ {args.end} ({total_days} 天)")
-    logger.info(f"  服务: {', '.join(ESS_SERVICES)}")
-    logger.info("  提示: 每天ZIP约230MB，下载约3-5分钟")
-    logger.info("=" * 55)
-
-    curr = start_dt
-    day_n = 0
-
-    while curr <= end_dt:
-        day_n += 1
-        label = curr.strftime("%Y-%m-%d")
-
-        count = scrape_day(curr, db)
-
-        if count == -1:
-            skipped += 1
-            logger.info(f"  [{day_n}/{total_days}] {label} - 跳过(已有)")
-        elif count > 0:
-            total_records += count
-            logger.info(f"  [{day_n}/{total_days}] {label} - {count} 条 ✓")
-        else:
-            logger.info(f"  [{day_n}/{total_days}] {label} - 无数据")
-
-        curr += timedelta(days=1)
-        if count != -1:
-            time.sleep(2)
-
-    stats = db.get_stats()
-    logger.info("=" * 55)
-    logger.info("  爬取完成!")
-    logger.info(f"  新增: {total_records} 条 | 跳过: {skipped} 天")
-    logger.info(f"  数据库: {stats['count']} 条")
-    if stats["min"]:
-        logger.info(f"  范围: {stats['min']} ~ {stats['max']}")
-    logger.info("=" * 55)
+    stats = sync_wem_ess_range(start_dt, end_dt, args.db, prune_before_start=prune_before_start)
+    logger.info("=" * 60)
+    logger.info(f"Market rows stored: {stats['market_rows']}")
+    logger.info(f"Constraint rows stored: {stats['constraint_rows']}")
+    logger.info(f"Capability rows stored: {stats['capability_rows']}")
+    logger.info(f"Coverage: {stats['min_interval']} -> {stats['max_interval']}")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":

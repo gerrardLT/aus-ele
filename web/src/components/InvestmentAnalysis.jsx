@@ -1,334 +1,408 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ComposedChart, Area, ReferenceLine, Cell
+  Bar,
+  ComposedChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
-import TermTooltip from './Tooltip';
+import {
+  buildInvestmentRequestKey,
+  getInvestmentCopy,
+  shouldAutoRunInvestment,
+} from '../lib/investmentAnalysis';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8085/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
 
 const PRESET_DEFAULTS = {
-  // Storage specification
   power_mw: 100,
   duration_hours: 4,
   round_trip_efficiency: 0.87,
   degradation_rate: 0.025,
-  // Cost (AUD)
   capex_per_kwh: 350,
   fixed_om_per_mw_year: 12000,
   variable_om_per_mwh: 2.5,
   grid_connection_cost: 5000000,
   land_lease_per_year: 200000,
-  // Finance
   discount_rate: 0.08,
   project_life_years: 20,
-  // Revenue
   revenue_capture_rate: 0.65,
   fcas_revenue_per_mw_year: 15000,
+  fcas_revenue_mode: 'auto',
   capacity_payment_per_mw_year: 0,
   backtest_years: [2024, 2025],
 };
 
-const PARAM_META = {
-  power_mw:        { label: '额定功率', labelEn: 'Power Rating', unit: 'MW', min: 1, max: 1000, step: 10, group: 'storage' },
-  duration_hours:  { label: '储能时长', labelEn: 'Duration', unit: 'h', min: 1, max: 12, step: 1, group: 'storage' },
-  round_trip_efficiency: { label: '往返效率', labelEn: 'RTE', unit: '%', min: 0.7, max: 0.97, step: 0.01, group: 'storage', pct: true },
-  degradation_rate: { label: '年衰减率', labelEn: 'Degradation', unit: '%/yr', min: 0.005, max: 0.05, step: 0.005, group: 'storage', pct: true },
-  capex_per_kwh:   { label: 'CAPEX', labelEn: 'CAPEX/kWh', unit: '$/kWh', min: 150, max: 800, step: 10, group: 'cost' },
-  fixed_om_per_mw_year: { label: '固定运维', labelEn: 'Fixed O&M', unit: '$/MW/yr', min: 0, max: 30000, step: 1000, group: 'cost' },
-  variable_om_per_mwh: { label: '可变运维', labelEn: 'Var O&M', unit: '$/MWh', min: 0, max: 10, step: 0.5, group: 'cost' },
-  grid_connection_cost: { label: '并网费用', labelEn: 'Grid Connect', unit: '$', min: 0, max: 20000000, step: 500000, group: 'cost' },
-  land_lease_per_year: { label: '土地租赁', labelEn: 'Land Lease', unit: '$/yr', min: 0, max: 1000000, step: 50000, group: 'cost' },
-  discount_rate:   { label: '贴现率', labelEn: 'Discount Rate', unit: '%', min: 0.03, max: 0.20, step: 0.01, group: 'finance', pct: true },
-  project_life_years: { label: '项目期限', labelEn: 'Project Life', unit: '年', min: 10, max: 30, step: 1, group: 'finance' },
-  revenue_capture_rate: { label: '收入捕获率', labelEn: 'Capture Rate', unit: '%', min: 0.3, max: 1.0, step: 0.05, group: 'finance', pct: true },
-  fcas_revenue_per_mw_year: { label: 'FCAS 收入', labelEn: 'FCAS Rev', unit: '$/MW/yr', min: 0, max: 80000, step: 5000, group: 'finance' },
-  capacity_payment_per_mw_year: { label: '容量补贴', labelEn: 'Cap Payment', unit: '$/MW/yr', min: 0, max: 600000, step: 10000, group: 'finance' },
-};
+const FIELD_GROUPS = [
+  {
+    titleKey: 'storage',
+    fields: [
+      { key: 'power_mw', labelKey: 'power_mw', step: 10, min: 1, suffix: 'MW' },
+      { key: 'duration_hours', labelKey: 'duration_hours', step: 1, min: 1, suffix: 'h' },
+      { key: 'degradation_rate', labelKey: 'degradation_rate', step: 0.005, min: 0, suffix: '%/yr', pct: true },
+      { key: 'revenue_capture_rate', labelKey: 'revenue_capture_rate', step: 0.05, min: 0, max: 1, suffix: '%', pct: true },
+    ],
+  },
+  {
+    titleKey: 'cost',
+    fields: [
+      { key: 'capex_per_kwh', labelKey: 'capex_per_kwh', step: 10, min: 0, suffix: '$/kWh' },
+      { key: 'fixed_om_per_mw_year', labelKey: 'fixed_om_per_mw_year', step: 1000, min: 0, suffix: '$/MW/yr' },
+      { key: 'variable_om_per_mwh', labelKey: 'variable_om_per_mwh', step: 0.5, min: 0, suffix: '$/MWh' },
+      { key: 'grid_connection_cost', labelKey: 'grid_connection_cost', step: 500000, min: 0, suffix: '$' },
+      { key: 'land_lease_per_year', labelKey: 'land_lease_per_year', step: 50000, min: 0, suffix: '$/yr' },
+    ],
+  },
+  {
+    titleKey: 'finance',
+    fields: [
+      { key: 'discount_rate', labelKey: 'discount_rate', step: 0.01, min: 0, max: 1, suffix: '%', pct: true },
+      { key: 'project_life_years', labelKey: 'project_life_years', step: 1, min: 1, suffix: 'yr' },
+      { key: 'fcas_revenue_per_mw_year', labelKey: 'fcas_revenue_per_mw_year', step: 5000, min: 0, suffix: '$/MW/yr' },
+      { key: 'capacity_payment_per_mw_year', labelKey: 'capacity_payment_per_mw_year', step: 10000, min: 0, suffix: '$/MW/yr' },
+    ],
+  },
+];
 
-const GROUPS = {
-  storage: { label: '储能规格', icon: '▪' },
-  cost: { label: '成本参数', icon: '▪' },
-  finance: { label: '财务参数', icon: '▪' },
-};
-
-function fmt(val, prefix = '$') {
-  if (val === null || val === undefined) return '—';
-  const abs = Math.abs(val);
-  if (abs >= 1e9) return `${prefix}${(val / 1e9).toFixed(1)}B`;
-  if (abs >= 1e6) return `${prefix}${(val / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${prefix}${(val / 1e3).toFixed(0)}K`;
-  return `${prefix}${val.toLocaleString()}`;
+function fmt(value, prefix = '$') {
+  if (value === null || value === undefined) return '-';
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `${prefix}${(value / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${prefix}${(value / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${prefix}${(value / 1e3).toFixed(0)}K`;
+  return `${prefix}${Number(value).toLocaleString()}`;
 }
 
-export default function InvestmentAnalysis({ region, year, t }) {
-  const [params, setParams] = useState({ ...PRESET_DEFAULTS });
+function getDefaultMode(region) {
+  return region === 'WEM' ? 'manual' : 'auto';
+}
+
+export default function InvestmentAnalysis({ region, year, lang = 'en', t, scopeNote }) {
+  const sectionRef = useRef(null);
+  const requestControllerRef = useRef(null);
+  const requestSeqRef = useRef(0);
+  const [params, setParams] = useState({
+    ...PRESET_DEFAULTS,
+    fcas_revenue_mode: getDefaultMode(region),
+  });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [expandedGroup, setExpandedGroup] = useState('storage');
+  const [isVisible, setIsVisible] = useState(false);
+  const [loadedKey, setLoadedKey] = useState(null);
+  const requestKey = buildInvestmentRequestKey(region);
+  const copy = useMemo(() => getInvestmentCopy(lang, t), [lang, t]);
 
-  const updateParam = useCallback((key, value) => {
-    setParams(prev => ({ ...prev, [key]: value }));
+  useEffect(() => {
+    const node = sectionRef.current;
+    if (!node) return undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsVisible(entry.isIntersecting);
+      },
+      {
+        threshold: 0.15,
+        rootMargin: '0px 0px -10% 0px',
+      },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
   }, []);
 
-  const runAnalysis = useCallback(async () => {
+  useEffect(() => {
+    setParams((prev) => ({
+      ...prev,
+      fcas_revenue_mode: getDefaultMode(region),
+    }));
+    setResult(null);
+    setError(null);
+    setLoadedKey(null);
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    setLoading(false);
+  }, [region]);
+
+  useEffect(() => (
+    () => {
+      requestControllerRef.current?.abort();
+    }
+  ), []);
+
+  async function runAnalysis(nextParams = params) {
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+    requestSeqRef.current += 1;
+    const seq = requestSeqRef.current;
+    const requestKeyForRun = buildInvestmentRequestKey(region);
+
     setLoading(true);
     setError(null);
+
     try {
-      const body = { ...params, region };
-      const res = await fetch(`${API_BASE}/investment-analysis`, {
+      const body = {
+        ...nextParams,
+        region,
+      };
+
+      const response = await fetch(`${API_BASE}/investment-analysis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
-      const data = await res.json();
-      if (data.error) {
-        setError(data.error);
-      } else {
-        setResult(data);
+      const data = await response.json();
+
+      if (!response.ok || data.error) {
+        throw new Error(data.error || data.detail || 'Request failed');
       }
-    } catch (e) {
-      setError(e.message);
+
+      setResult(data);
+      setLoadedKey(requestKeyForRun);
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        return;
+      }
+      setError(err.message);
+    } finally {
+      if (requestSeqRef.current === seq) {
+        setLoading(false);
+      }
     }
-    setLoading(false);
-  }, [params, region]);
+  }
 
-  // Auto-run on mount
   useEffect(() => {
-    runAnalysis();
-  }, [region]);
+    if (!shouldAutoRunInvestment({
+      isVisible,
+      isLoading: loading,
+      requestKey,
+      loadedKey,
+    })) {
+      return;
+    }
 
-  const cashFlows = result?.cash_flows?.filter(cf => cf.year > 0) || [];
+    runAnalysis({
+      ...params,
+      fcas_revenue_mode: getDefaultMode(region),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible, requestKey, loadedKey, loading]);
+
+  const cashFlows = result?.cash_flows?.filter((row) => row.year > 0) || [];
   const metrics = result?.metrics || {};
   const baseline = result?.baseline_revenue || {};
   const backtest = result?.backtest || {};
 
+  const capexPreview = useMemo(() => (
+    (params.capex_per_kwh * params.power_mw * params.duration_hours * 1000) + params.grid_connection_cost
+  ), [params]);
+
+  const updateNumericParam = (key, value) => {
+    const nextValue = value === '' ? '' : Number(value);
+    setParams((prev) => ({
+      ...prev,
+      [key]: Number.isNaN(nextValue) ? prev[key] : nextValue,
+    }));
+  };
+
+  const assumptionChips = [
+    { label: copy.kpis.backtestMode, value: result?.backtest_mode || '-' },
+    { label: copy.kpis.effectiveDegradation, value: result?.effective_degradation_rate !== undefined ? `${(result.effective_degradation_rate * 100).toFixed(2)}%/yr` : '-' },
+    { label: copy.kpis.fcasSource, value: result?.fcas_baseline_source || '-' },
+    { label: copy.kpis.fcasMode, value: result?.params?.fcas_revenue_mode || params.fcas_revenue_mode },
+    { label: copy.kpis.uiYear, value: year || '-' },
+  ];
+  const lazyLoadNote = isVisible ? copy.lazyVisible : copy.lazyHidden;
+
   return (
-    <div className="col-span-12 mt-16 pt-12 border-t border-[var(--color-border)]">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-3xl font-serif">投资分析 / Investment Analysis</h2>
-        <div className="text-[var(--color-muted)] text-sm tracking-widest uppercase font-bold">
-          BESS CASH FLOW MODEL
+    <div ref={sectionRef} className="col-span-12 mt-16 border-t border-[var(--color-border)] pt-12">
+      <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+        <div>
+          <h2 className="text-3xl font-serif">{copy.title}</h2>
+          <p className="font-sans text-sm text-[var(--color-muted)]">
+            {copy.subtitle}
+          </p>
+        </div>
+        <div className="text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
+          {copy.eyebrow}
         </div>
       </div>
 
+      {scopeNote && (
+        <div className="mb-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
+          {scopeNote}
+        </div>
+      )}
+
+      {!result && !loading && (
+        <div className="mb-8 rounded border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
+          {lazyLoadNote}
+        </div>
+      )}
+
       <div className="grid grid-cols-12 gap-8">
-        {/* Left: Parameter Panel */}
-        <div className="col-span-12 lg:col-span-4">
-          <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-            <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-              <h3 className="font-bold text-sm tracking-wider uppercase">参数设置 / Parameters</h3>
+        <div className="col-span-12 space-y-6 lg:col-span-4">
+          <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
+            <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider">{copy.parameters}</h3>
             </div>
 
-            {Object.entries(GROUPS).map(([groupKey, groupInfo]) => (
-              <div key={groupKey} className="border-b border-[var(--color-border)] last:border-b-0">
-                <button
-                  onClick={() => setExpandedGroup(expandedGroup === groupKey ? null : groupKey)}
-                  className="w-full p-3 flex items-center justify-between hover:bg-[var(--color-surface-hover)] transition-colors"
+            <div className="space-y-6 p-4">
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                  {copy.fcasRevenueMode}
+                </label>
+                <select
+                  value={params.fcas_revenue_mode}
+                  onChange={(e) => setParams((prev) => ({ ...prev, fcas_revenue_mode: e.target.value }))}
+                  className="w-full rounded border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm"
                 >
-                  <span className="text-sm font-medium">{groupInfo.icon} {groupInfo.label}</span>
-                  <span className="text-xs text-[var(--color-muted)]">
-                    {expandedGroup === groupKey ? '▼' : '▶'}
-                  </span>
-                </button>
+                  <option value="auto">{copy.modeAuto}</option>
+                  <option value="manual">{copy.modeManual}</option>
+                </select>
+                <div className="mt-2 text-xs text-[var(--color-muted)]">
+                  {params.fcas_revenue_mode === 'manual' ? copy.modeHelpManual : copy.modeHelpAuto}
+                </div>
+              </div>
 
-                {expandedGroup === groupKey && (
-                  <div className="px-4 pb-4 space-y-3">
-                    {Object.entries(PARAM_META)
-                      .filter(([, meta]) => meta.group === groupKey)
-                      .map(([key, meta]) => (
-                        <div key={key}>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className="text-[var(--color-muted)]">{meta.label}</span>
+              {FIELD_GROUPS.map((group) => (
+                <div key={group.titleKey}>
+                  <div className="mb-3 text-xs font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                    {copy.groups[group.titleKey]}
+                  </div>
+                  <div className="space-y-3">
+                    {group.fields.map((field) => {
+                      const disabled = field.key === 'fcas_revenue_per_mw_year' && params.fcas_revenue_mode !== 'manual';
+                      const value = params[field.key];
+                      return (
+                        <label key={field.key} className={`block ${disabled ? 'opacity-50' : ''}`}>
+                          <div className="mb-1 flex items-center justify-between text-xs">
+                            <span className="text-[var(--color-muted)]">{copy.fields[field.labelKey]}</span>
                             <span className="font-mono font-bold">
-                              {meta.pct
-                                ? `${(params[key] * 100).toFixed(1)}${meta.unit}`
-                                : `${params[key].toLocaleString()} ${meta.unit}`}
+                              {field.pct ? `${(value * 100).toFixed(2)}${field.suffix}` : `${Number(value).toLocaleString()} ${field.suffix}`}
                             </span>
                           </div>
                           <input
-                            type="range"
-                            min={meta.min}
-                            max={meta.max}
-                            step={meta.step}
-                            value={params[key]}
-                            onChange={e => updateParam(key, parseFloat(e.target.value))}
-                            className="w-full h-1.5 accent-[var(--color-text)] cursor-pointer"
+                            type="number"
+                            min={field.min}
+                            max={field.max}
+                            step={field.step}
+                            value={value}
+                            disabled={disabled}
+                            onChange={(e) => updateNumericParam(field.key, e.target.value)}
+                            className="w-full rounded border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm font-mono disabled:cursor-not-allowed"
                           />
-                        </div>
-                      ))}
+                        </label>
+                      );
+                    })}
                   </div>
-                )}
-              </div>
-            ))}
+                </div>
+              ))}
+            </div>
 
-            {/* Run Button */}
-            <div className="p-4 bg-[var(--color-surface)]">
+            <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <button
-                onClick={runAnalysis}
+                onClick={() => runAnalysis()}
                 disabled={loading}
-                className="w-full py-3 bg-[var(--color-inverted)] text-[var(--color-inverted-text)] font-bold text-sm tracking-wider uppercase hover:opacity-90 transition-opacity disabled:opacity-50"
+                className="w-full bg-[var(--color-inverted)] py-3 text-sm font-bold uppercase tracking-wider text-[var(--color-inverted-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {loading ? '计算中...' : '运行分析 / RUN ANALYSIS'}
+                {loading ? copy.running : copy.runAnalysis}
               </button>
-              <div className="mt-2 text-xs text-center text-[var(--color-muted)]">
-                总投资: {fmt((params.capex_per_kwh * params.power_mw * params.duration_hours * 1000) + params.grid_connection_cost)}
-                {' | '}容量: {params.power_mw}MW / {params.power_mw * params.duration_hours}MWh
+              <div className="mt-2 text-center text-xs text-[var(--color-muted)]">
+                {copy.capexSummary} {fmt(capexPreview)} | {copy.sizeSummary} {params.power_mw}MW / {params.power_mw * params.duration_hours}MWh
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right: Results */}
         <div className="col-span-12 lg:col-span-8">
           {error && (
-            <div className="p-4 border border-red-300 bg-red-50 text-red-700 rounded mb-4">
+            <div className="mb-4 rounded border border-red-300 bg-red-50 p-4 text-red-700">
               {error}
             </div>
           )}
 
           {result && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-8"
-            >
-              {/* KPI Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  {
-                    label: 'NPV',
-                    tooltip: '净现值 (Net Present Value) — 项目在整个生命周期内所有现金流的折现总和。NPV > 0 表示项目创造价值。',
-                    value: fmt(metrics.npv),
-                    sub: `贴现率 ${(params.discount_rate * 100).toFixed(0)}%`,
-                    color: metrics.npv > 0 ? '#22c55e' : '#ef4444',
-                  },
-                  {
-                    label: 'IRR',
-                    tooltip: '内部收益率 (Internal Rate of Return) — 使 NPV 为零的折现率。IRR 高于贴现率说明项目有吸引力。',
-                    value: metrics.irr !== null ? `${metrics.irr}%` : '—',
-                    sub: metrics.irr > params.discount_rate * 100 ? '✓ 超过贴现率' : '‼ 低于贴现率',
-                    color: metrics.irr && metrics.irr > params.discount_rate * 100 ? '#22c55e' : '#f59e0b',
-                  },
-                  {
-                    label: '回收期',
-                    tooltip: '静态回收期 (Payback Period) — 累计净现金流由负转正所需的年数。越短风险越低。',
-                    value: metrics.payback_years ? `${metrics.payback_years} 年` : '> 项目期',
-                    sub: `项目期 ${params.project_life_years} 年`,
-                    color: metrics.payback_years && metrics.payback_years <= params.project_life_years * 0.5 ? '#22c55e' : '#f59e0b',
-                  },
-                  {
-                    label: '年均营收/MW',
-                    tooltip: '每 MW 装机容量每年的平均收入，包含套利收入和 FCAS 辅助服务收入。',
-                    value: fmt(baseline.per_mw),
-                    sub: `套利 ${fmt(baseline.arbitrage)}`,
-                    color: '#0047FF',
-                  },
-                ].map((kpi, i) => (
-                  <div key={i} className="border border-[var(--color-border)] p-4 rounded-lg">
-                    <div className="text-xs text-[var(--color-muted)] uppercase tracking-wider mb-1">
-                      <TermTooltip term={kpi.label} explanation={kpi.tooltip}>{kpi.label}</TermTooltip>
-                    </div>
-                    <div className="text-2xl font-bold font-mono" style={{ color: kpi.color }}>{kpi.value}</div>
-                    <div className="text-xs text-[var(--color-muted)] mt-1">{kpi.sub}</div>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <KpiCard label={copy.kpis.npv} value={fmt(metrics.npv)} tone={metrics.npv > 0 ? 'good' : 'bad'} sub={`${copy.kpis.discount} ${(params.discount_rate * 100).toFixed(1)}%`} />
+                <KpiCard label={copy.kpis.irr} value={metrics.irr !== null && metrics.irr !== undefined ? `${metrics.irr}%` : '-'} tone={metrics.irr > params.discount_rate * 100 ? 'good' : 'warn'} sub={copy.kpis.postTaxNotModeled} />
+                <KpiCard label={copy.kpis.payback} value={metrics.payback_years ? `${metrics.payback_years} ${copy.kpis.yearSuffix}` : copy.kpis.overLife} tone={metrics.payback_years ? 'good' : 'warn'} sub={`${copy.kpis.projectLife} ${params.project_life_years} ${copy.kpis.yearSuffix}`} />
+                <KpiCard label={copy.kpis.baselinePerMw} value={baseline.per_mw ? fmt(baseline.per_mw) : '-'} tone="brand" sub={`${copy.kpis.arbitrage} ${fmt(baseline.arbitrage || 0)}`} />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                {assumptionChips.map((chip) => (
+                  <div key={chip.label} className="rounded border border-[var(--color-border)] p-3">
+                    <div className="mb-1 text-[10px] uppercase tracking-widest text-[var(--color-muted)]">{chip.label}</div>
+                    <div className="break-words text-sm font-bold font-mono">{chip.value}</div>
                   </div>
                 ))}
               </div>
 
-              {/* Backtest Results */}
+              {result.assumptions?.length > 0 && (
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider">{copy.assumptions}</h4>
+                  <div className="space-y-2 text-sm text-[var(--color-muted)]">
+                    {result.assumptions.map((item, index) => (
+                      <div key={index}>- {item}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {Object.keys(backtest).length > 0 && (
-                <div className="border border-[var(--color-border)] rounded-lg p-4">
-                  <h4 className="text-sm font-bold mb-3 uppercase tracking-wider">历史回测 / BACKTEST RESULTS</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    {Object.entries(backtest).map(([yr, data]) => (
-                      <div key={yr} className="bg-[var(--color-surface)] p-3 rounded">
-                        <div className="font-bold">{yr}</div>
-                        <div className="text-[var(--color-muted)] text-xs">
-                          理论: {fmt(data.per_mw)}/MW/yr
-                        </div>
-                        <div className="text-xs">{data.trading_days} 交易日</div>
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider">{copy.backtestResults}</h4>
+                  <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+                    {Object.entries(backtest).map(([backtestYear, row]) => (
+                      <div key={backtestYear} className="rounded bg-[var(--color-surface)] p-3">
+                        <div className="font-bold">{backtestYear}</div>
+                        <div className="mt-1 text-xs text-[var(--color-muted)]">{fmt(row.per_mw)}{copy.kpis.perMwPerYear}</div>
+                        <div className="mt-1 text-xs">{row.trading_days} {copy.kpis.tradingDays}</div>
                       </div>
                     ))}
-                    <div className="bg-[var(--color-surface)] p-3 rounded border-l-2 border-[var(--color-primary)]">
-                      <div className="font-bold">实际基准</div>
-                      <div className="text-[var(--color-muted)] text-xs">
-                        × {(params.revenue_capture_rate * 100).toFixed(0)}% 捕获率
+                    <div className="rounded border-l-2 border-[var(--color-primary)] bg-[var(--color-surface)] p-3">
+                      <div className="font-bold">{copy.implementableBaseline}</div>
+                      <div className="mt-1 text-xs text-[var(--color-muted)]">
+                        {copy.captureRate} {(params.revenue_capture_rate * 100).toFixed(0)}%
                       </div>
-                      <div className="text-xs font-bold" style={{ color: 'var(--color-primary)' }}>
-                        = {fmt(baseline.per_mw)}/MW/yr
-                      </div>
+                      <div className="mt-1 text-xs font-bold">{fmt(baseline.per_mw)}{copy.kpis.perMwPerYear}</div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Revenue Breakdown Bar */}
-              <div className="border border-[var(--color-border)] rounded-lg p-4">
-                <h4 className="text-sm font-bold mb-3 uppercase tracking-wider">年收入构成 / REVENUE BREAKDOWN (Year 1)</h4>
-                <div className="h-10 flex rounded overflow-hidden text-xs font-bold">
-                  {baseline.arbitrage > 0 && (
-                    <div
-                      className="flex items-center justify-center text-white"
-                      style={{
-                        width: `${(baseline.arbitrage / baseline.total) * 100}%`,
-                        backgroundColor: 'var(--color-primary)',
-                        minWidth: baseline.arbitrage > 0 ? '60px' : '0',
-                      }}
-                    >
-                      套利 {fmt(baseline.arbitrage)}
-                    </div>
-                  )}
-                  {baseline.fcas > 0 && (
-                    <div
-                      className="flex items-center justify-center"
-                      style={{
-                        width: `${(baseline.fcas / baseline.total) * 100}%`,
-                        backgroundColor: '#111827',
-                        color: '#E5E7EB',
-                        minWidth: baseline.fcas > 0 ? '60px' : '0',
-                      }}
-                    >
-                      FCAS {fmt(baseline.fcas)}
-                    </div>
-                  )}
-                  {baseline.capacity > 0 && (
-                    <div
-                      className="flex items-center justify-center"
-                      style={{
-                        width: `${(baseline.capacity / baseline.total) * 100}%`,
-                        backgroundColor: '#f59e0b',
-                        minWidth: baseline.capacity > 0 ? '60px' : '0',
-                      }}
-                    >
-                      容量 {fmt(baseline.capacity)}
-                    </div>
-                  )}
+              <div className="rounded-lg border border-[var(--color-border)] p-4">
+                <h4 className="mb-3 text-sm font-bold uppercase tracking-wider">{copy.revenueBreakdown}</h4>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <SummaryBlock label={copy.revenueLabels.arbitrage} value={fmt(baseline.arbitrage || 0)} />
+                  <SummaryBlock label={copy.revenueLabels.fcas} value={fmt(baseline.fcas || 0)} />
+                  <SummaryBlock label={copy.revenueLabels.capacity} value={fmt(baseline.capacity || 0)} />
                 </div>
-                <div className="text-xs text-[var(--color-muted)] mt-2 text-right">
-                  总计: {fmt(baseline.total)} / 年
+                <div className="mt-3 text-right text-sm text-[var(--color-muted)]">
+                  {copy.totalPerYear} {fmt(baseline.total || 0)} {copy.perYear}
                 </div>
               </div>
 
-              {/* Cash Flow Chart */}
               {cashFlows.length > 0 && (
-                <div className="border border-[var(--color-border)] rounded-lg p-4">
-                  <h4 className="text-sm font-bold mb-4 uppercase tracking-wider">现金流曲线 / CASH FLOW PROJECTION</h4>
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <h4 className="mb-4 text-sm font-bold uppercase tracking-wider">{copy.cashFlowProjection}</h4>
                   <ResponsiveContainer width="100%" height={400}>
                     <ComposedChart data={cashFlows}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                      <XAxis
-                        dataKey="year"
-                        label={{ value: '年份', position: 'bottom', offset: -5 }}
-                        tick={{ fontSize: 12 }}
-                      />
-                      <YAxis
-                        tickFormatter={v => fmt(v)}
-                        tick={{ fontSize: 11 }}
-                      />
+                      <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+                      <YAxis tickFormatter={(value) => fmt(value)} tick={{ fontSize: 11 }} />
                       <Tooltip
-                        formatter={(val, name) => [fmt(val), name]}
+                        formatter={(value, name) => [fmt(value), name]}
                         contentStyle={{
                           backgroundColor: 'var(--color-bg)',
                           border: '1px solid var(--color-border)',
@@ -336,61 +410,46 @@ export default function InvestmentAnalysis({ region, year, t }) {
                         }}
                       />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Bar dataKey="revenue" name="营收" fill="var(--color-primary)" opacity={0.7} />
-                      <Bar dataKey="opex" name="运营成本" fill="#ef4444" opacity={0.5} />
-                      <Line
-                        type="monotone"
-                        dataKey="cumulative"
-                        name="累计现金流"
-                        stroke="#22c55e"
-                        strokeWidth={2.5}
-                        dot={false}
-                      />
+                      <Bar dataKey="revenue" name={copy.revenue} fill="var(--color-primary)" opacity={0.7} />
+                      <Bar dataKey="opex" name={copy.opex} fill="#ef4444" opacity={0.5} />
+                      <Line type="monotone" dataKey="cumulative" name={copy.cumulative} stroke="#22c55e" strokeWidth={2.5} dot={false} />
                       <ReferenceLine y={0} stroke="var(--color-muted)" strokeDasharray="4 4" />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               )}
 
-              {/* Cash Flow Table */}
               {cashFlows.length > 0 && (
-                <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-                  <h4 className="text-sm font-bold p-4 uppercase tracking-wider bg-[var(--color-surface)]">
-                    逐年现金流 / ANNUAL CASH FLOWS
+                <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
+                  <h4 className="bg-[var(--color-surface)] p-4 text-sm font-bold uppercase tracking-wider">
+                    {copy.annualCashFlows}
                   </h4>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs font-mono">
                       <thead>
                         <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-                          <th className="p-2 text-left">年份</th>
-                          <th className="p-2 text-right">营收</th>
-                          <th className="p-2 text-right">运维</th>
-                          <th className="p-2 text-right">净现金流</th>
-                          <th className="p-2 text-right">累计</th>
-                          <th className="p-2 text-right">衰减</th>
+                          <th className="p-2 text-left">{copy.year}</th>
+                          <th className="p-2 text-right">{copy.revenue}</th>
+                          <th className="p-2 text-right">{copy.opex}</th>
+                          <th className="p-2 text-right">{copy.net}</th>
+                          <th className="p-2 text-right">{copy.cumulative}</th>
+                          <th className="p-2 text-right">{copy.degradationFactor}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {cashFlows.map(cf => (
-                          <tr
-                            key={cf.year}
-                            className="border-b border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]"
-                          >
-                            <td className="p-2 font-bold">Y{cf.year}</td>
-                            <td className="p-2 text-right text-[var(--color-primary)]">{fmt(cf.revenue)}</td>
-                            <td className="p-2 text-right text-[#ef4444]">{fmt(cf.opex)}</td>
-                            <td className="p-2 text-right font-bold" style={{
-                              color: cf.net_cash_flow >= 0 ? '#22c55e' : '#ef4444'
-                            }}>
-                              {fmt(cf.net_cash_flow)}
+                        {cashFlows.map((row) => (
+                          <tr key={row.year} className="border-b border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]">
+                            <td className="p-2 font-bold">Y{row.year}</td>
+                            <td className="p-2 text-right text-[var(--color-primary)]">{fmt(row.revenue)}</td>
+                            <td className="p-2 text-right text-[#ef4444]">{fmt(row.opex)}</td>
+                            <td className="p-2 text-right font-bold" style={{ color: row.net_cash_flow >= 0 ? '#22c55e' : '#ef4444' }}>
+                              {fmt(row.net_cash_flow)}
                             </td>
-                            <td className="p-2 text-right" style={{
-                              color: cf.cumulative >= 0 ? '#22c55e' : '#ef4444'
-                            }}>
-                              {fmt(cf.cumulative)}
+                            <td className="p-2 text-right" style={{ color: row.cumulative >= 0 ? '#22c55e' : '#ef4444' }}>
+                              {fmt(row.cumulative)}
                             </td>
                             <td className="p-2 text-right text-[var(--color-muted)]">
-                              {(cf.degradation_factor * 100).toFixed(1)}%
+                              {(row.degradation_factor * 100).toFixed(1)}%
                             </td>
                           </tr>
                         ))}
@@ -399,17 +458,36 @@ export default function InvestmentAnalysis({ region, year, t }) {
                   </div>
                 </div>
               )}
-
-              {/* Disclaimer */}
-              <div className="text-xs text-[var(--color-muted)] italic border-t border-[var(--color-border)] pt-4">
-                免责声明: 本分析基于历史价格回测，使用完美预见差价 × {(params.revenue_capture_rate * 100).toFixed(0)}% 捕获率作为基准。
-                实际收入受市场条件、调度策略、竞争环境等因素影响可能有较大偏差。
-                本工具仅供投资参考，不构成投资建议。
-              </div>
             </motion.div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function KpiCard({ label, value, sub, tone }) {
+  const colors = {
+    good: '#22c55e',
+    bad: '#ef4444',
+    warn: '#f59e0b',
+    brand: '#0047FF',
+  };
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] p-4">
+      <div className="mb-1 text-xs uppercase tracking-wider text-[var(--color-muted)]">{label}</div>
+      <div className="text-2xl font-bold font-mono" style={{ color: colors[tone] || 'inherit' }}>{value}</div>
+      <div className="mt-1 text-xs text-[var(--color-muted)]">{sub}</div>
+    </div>
+  );
+}
+
+function SummaryBlock({ label, value }) {
+  return (
+    <div className="rounded border border-[var(--color-border)] p-4">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[var(--color-muted)]">{label}</div>
+      <div className="text-xl font-bold font-mono">{value}</div>
     </div>
   );
 }

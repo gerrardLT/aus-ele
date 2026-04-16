@@ -1,17 +1,51 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, ReferenceLine, Cell
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
+import { fetchJson } from '../lib/apiClient';
+import { getEventText } from '../lib/eventOverlays';
 
-/**
- * CycleCost — Histogram: Daily Spread Distribution
- * Overlaid with a degradation cost threshold line.
- * "Is this trade worth making?"
- */
+function buildParams(year, region, month, quarter, dayType) {
+  const params = new URLSearchParams({
+    year: String(year),
+    region,
+    aggregation: 'daily',
+  });
 
-export default function CycleCost({ year, region, apiBase, t }) {
+  if (month && month !== 'ALL') {
+    params.set('month', month);
+  }
+  if (quarter && quarter !== 'ALL') {
+    params.set('quarter', quarter);
+  }
+  if (dayType && dayType !== 'ALL') {
+    params.set('day_type', dayType);
+  }
+
+  return params;
+}
+
+export default function CycleCost({
+  year,
+  region,
+  lang = 'en',
+  month,
+  quarter,
+  dayType,
+  eventOverlay,
+  apiBase,
+  t,
+}) {
+  const eventText = getEventText(lang);
   const [dailyData, setDailyData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [degradationCost, setDegradationCost] = useState(40);
@@ -20,58 +54,80 @@ export default function CycleCost({ year, region, apiBase, t }) {
     if (!year || !region) return;
     setLoading(true);
 
-    fetch(`${apiBase}/peak-analysis?year=${year}&region=${region}&aggregation=daily`)
-      .then(r => r.json())
-      .then(res => {
+    const params = buildParams(year, region, month, quarter, dayType);
+    fetchJson(`${apiBase}/peak-analysis?${params.toString()}`)
+      .then((res) => {
         setDailyData(res);
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [year, region, apiBase]);
+  }, [year, region, month, quarter, dayType, apiBase]);
 
-  const { histogram, metrics } = useMemo(() => {
-    if (!dailyData?.data) return { histogram: [], metrics: null };
+  const analysis = useMemo(() => {
+    const rows = dailyData?.data || [];
+    if (!rows.length) {
+      return {
+        histogram: [],
+        metrics: null,
+        metricKey: 'net_spread_4h',
+        legacyFallback: false,
+      };
+    }
 
-    const spreads = dailyData.data
-      .map(d => d.spread_4h)
-      .filter(v => v !== null && v !== undefined);
+    const netSpreads = rows
+      .map((row) => row.net_spread_4h)
+      .filter((value) => value !== null && value !== undefined);
 
-    if (spreads.length === 0) return { histogram: [], metrics: null };
+    const spreadKey = netSpreads.length > 0 ? 'net_spread_4h' : 'spread_4h';
+    const spreads = rows
+      .map((row) => row[spreadKey])
+      .filter((value) => value !== null && value !== undefined);
 
-    // Histogram: bucket by $25 ranges for cleaner bars
+    if (!spreads.length) {
+      return {
+        histogram: [],
+        metrics: null,
+        metricKey: spreadKey,
+        legacyFallback: spreadKey !== 'net_spread_4h',
+      };
+    }
+
     const bucketSize = 25;
     const bucketMap = {};
-    for (const s of spreads) {
-      const bucket = Math.floor(s / bucketSize) * bucketSize;
+    for (const spread of spreads) {
+      const bucket = Math.floor(spread / bucketSize) * bucketSize;
       bucketMap[bucket] = (bucketMap[bucket] || 0) + 1;
     }
 
-    const hist = Object.entries(bucketMap)
-      .map(([k, v]) => ({
-        range: `$${k}`,
-        rangeNum: Number(k),
-        count: v,
+    const histogram = Object.entries(bucketMap)
+      .map(([bucket, count]) => ({
+        range: `$${bucket}`,
+        rangeNum: Number(bucket),
+        count,
       }))
       .sort((a, b) => a.rangeNum - b.rangeNum);
 
-    // Metrics
     const totalDays = spreads.length;
-    const profitableDays = spreads.filter(s => s > degradationCost).length;
-    const avgSpread = spreads.reduce((a, b) => a + b, 0) / totalDays;
+    const profitableDays = spreads.filter((spread) => spread > degradationCost).length;
+    const avgSpread = spreads.reduce((sum, value) => sum + value, 0) / totalDays;
     const maxSpread = Math.max(...spreads);
 
     return {
-      histogram: hist,
+      histogram,
       metrics: {
         totalDays,
         profitableDays,
         unprofitableDays: totalDays - profitableDays,
-        profitableRatio: ((profitableDays / totalDays) * 100).toFixed(1),
-        avgSpread: avgSpread.toFixed(1),
-        maxSpread: maxSpread.toFixed(1),
+        profitableRatio: totalDays > 0 ? (profitableDays / totalDays) * 100 : 0,
+        avgSpread,
+        maxSpread,
       },
+      metricKey: spreadKey,
+      legacyFallback: spreadKey !== 'net_spread_4h',
     };
   }, [dailyData, degradationCost]);
+
+  const { histogram, metrics, legacyFallback } = analysis;
 
   const barColor = (rangeNum) => {
     if (rangeNum >= degradationCost) return '#10b981';
@@ -98,11 +154,20 @@ export default function CycleCost({ year, region, apiBase, t }) {
         </div>
       </div>
 
+      {legacyFallback && (
+        <div className="mb-8 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
+          {t.ccLegacyFallback || (lang === 'zh'
+            ? '兼容模式：由于缺少 net_spread_4h，当前视图暂时使用 spread_4h。'
+            : 'Legacy mode: net_spread_4h is missing, so this view is temporarily using spread_4h.')}
+        </div>
+      )}
+
       {loading ? (
-        <div className="h-64 flex items-center justify-center text-[var(--color-muted)] font-serif text-lg">{t.loadingMsg || 'Loading...'}</div>
+        <div className="h-64 flex items-center justify-center text-[var(--color-muted)] font-serif text-lg">
+          {t.loadingMsg || 'Loading...'}
+        </div>
       ) : histogram.length > 0 && metrics ? (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* Left: Controls + Stats */}
           <div className="space-y-6">
             <div className="flex flex-col gap-2">
               <label className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
@@ -113,9 +178,12 @@ export default function CycleCost({ year, region, apiBase, t }) {
                 <span className="text-xs text-[var(--color-muted)]">/MWh</span>
               </div>
               <input
-                type="range" min={5} max={100} step={5}
+                type="range"
+                min={5}
+                max={100}
+                step={5}
                 value={degradationCost}
-                onChange={e => setDegradationCost(Number(e.target.value))}
+                onChange={(e) => setDegradationCost(Number(e.target.value))}
                 className="w-full accent-[var(--color-text)] h-1.5 bg-[var(--color-border)] rounded-full appearance-none cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-[var(--color-muted)]">
@@ -126,17 +194,17 @@ export default function CycleCost({ year, region, apiBase, t }) {
 
             <div className="border border-green-500/30 bg-green-500/5 p-4 rounded">
               <div className="text-xs tracking-widest uppercase font-bold text-green-600 mb-2">
-                ✓ {t.ccProfitable || 'Worth Cycling'}
+                {t.ccProfitable || 'Worth Cycling'}
               </div>
               <div className="text-3xl font-mono font-bold text-green-600">{metrics.profitableDays}</div>
               <div className="text-xs text-[var(--color-muted)] mt-1">
-                {t.ccDays || 'days'} ({metrics.profitableRatio}%)
+                {t.ccDays || 'days'} ({metrics.profitableRatio.toFixed(1)}%)
               </div>
             </div>
 
             <div className="border border-red-500/30 bg-red-500/5 p-4 rounded">
               <div className="text-xs tracking-widest uppercase font-bold text-red-600 mb-2">
-                ✗ {t.ccNotWorth || 'Hold — Not Worth It'}
+                {t.ccNotWorth || 'Hold - Not Worth It'}
               </div>
               <div className="text-3xl font-mono font-bold text-red-500">{metrics.unprofitableDays}</div>
               <div className="text-xs text-[var(--color-muted)] mt-1">
@@ -147,11 +215,11 @@ export default function CycleCost({ year, region, apiBase, t }) {
             <div className="border border-[var(--color-border)] p-4 rounded space-y-2">
               <div className="flex justify-between text-xs">
                 <span className="text-[var(--color-muted)]">{t.ccAvgSpread || 'Avg Spread'}</span>
-                <span className="font-mono font-bold">${metrics.avgSpread}</span>
+                <span className="font-mono font-bold">${metrics.avgSpread.toFixed(1)}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-[var(--color-muted)]">{t.ccMaxSpread || 'Max Spread'}</span>
-                <span className="font-mono font-bold">${metrics.maxSpread}</span>
+                <span className="font-mono font-bold">${metrics.maxSpread.toFixed(1)}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-[var(--color-muted)]">{t.ccTotalDays || 'Total Days'}</span>
@@ -160,7 +228,6 @@ export default function CycleCost({ year, region, apiBase, t }) {
             </div>
           </div>
 
-          {/* Histogram Bar Chart */}
           <div className="lg:col-span-3">
             <div style={{ width: '100%', height: 420 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -174,7 +241,7 @@ export default function CycleCost({ year, region, apiBase, t }) {
                     angle={-45}
                     textAnchor="end"
                     label={{
-                      value: t.ccXAxis || 'Daily Spread ($/MWh)',
+                      value: t.ccXAxis || 'Daily Net Spread ($/MWh)',
                       position: 'bottom',
                       offset: 15,
                       style: { fontSize: 11, fill: 'var(--color-muted)' },
@@ -185,7 +252,7 @@ export default function CycleCost({ year, region, apiBase, t }) {
                     tickLine={false}
                     axisLine={false}
                     label={{
-                      value: 'Days',
+                      value: lang === 'zh' ? '天数' : 'Days',
                       angle: -90,
                       position: 'insideLeft',
                       style: { fontSize: 11, fill: 'var(--color-muted)' },
@@ -197,8 +264,8 @@ export default function CycleCost({ year, region, apiBase, t }) {
                       border: '1px solid var(--color-border)',
                       fontSize: 12,
                     }}
-                    formatter={(value) => [`${value} days`, 'Frequency']}
-                    labelFormatter={(label) => `Spread: ${label}/MWh`}
+                    formatter={(value) => [`${value} ${lang === 'zh' ? '天' : 'days'}`, lang === 'zh' ? '频次' : 'Frequency']}
+                    labelFormatter={(label) => `${lang === 'zh' ? '价差' : 'Spread'}: ${label}/MWh`}
                   />
                   <ReferenceLine
                     x={`$${Math.floor(degradationCost / 25) * 25}`}
@@ -206,25 +273,24 @@ export default function CycleCost({ year, region, apiBase, t }) {
                     strokeWidth={2}
                     strokeDasharray="8 4"
                     label={{
-                      value: `← $${degradationCost} ${t.ccThreshold || 'threshold'}`,
+                      value: `-> $${degradationCost} ${t.ccThreshold || 'threshold'}`,
                       position: 'top',
                       style: { fontSize: 10, fill: '#ef4444', fontFamily: 'monospace' },
                     }}
                   />
                   <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                    {histogram.map((entry, i) => (
-                      <Cell key={i} fill={barColor(entry.rangeNum)} fillOpacity={0.8} />
+                    {histogram.map((entry, index) => (
+                      <Cell key={index} fill={barColor(entry.rangeNum)} fillOpacity={0.8} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Legend */}
-            <div className="flex items-center justify-center gap-6 mt-3 text-xs text-[var(--color-muted)]">
+            <div className="flex items-center justify-center gap-6 mt-3 text-xs text-[var(--color-muted)] flex-wrap">
               <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded-sm bg-green-500" />
-                {t.ccGo || 'Profitable — Cycle'}
+                {t.ccGo || 'Profitable - Cycle'}
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded-sm bg-yellow-500" />
@@ -232,7 +298,7 @@ export default function CycleCost({ year, region, apiBase, t }) {
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded-sm bg-red-500" />
-                {t.ccHold || 'Hold — Not Worth'}
+                {t.ccHold || 'Hold - Not Worth'}
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-px h-3 border-l-2 border-dashed border-red-500" />
@@ -243,7 +309,7 @@ export default function CycleCost({ year, region, apiBase, t }) {
         </div>
       ) : (
         <div className="h-32 flex items-center justify-center text-[var(--color-muted)] font-serif">
-          {t.noData || 'No Data'}
+          {t.noData || (lang === 'zh' ? '暂无数据' : 'No Data')}
         </div>
       )}
     </motion.div>

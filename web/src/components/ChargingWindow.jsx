@@ -1,5 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
+import EventBadgeList from './EventBadgeList';
+import { fetchJson } from '../lib/apiClient';
+import { buildOverlayNotice, getEventText } from '../lib/eventOverlays';
 
 /**
  * ChargingWindow — 24-hour Clock Heatmap
@@ -28,7 +31,7 @@ function interpolateColor(value, min, max) {
   return `rgb(${Math.round(230 + p * 25)}, ${Math.round(80 - p * 50)}, ${Math.round(30 - p * 20)})`;
 }
 
-export default function ChargingWindow({ year, region, apiBase, t }) {
+export default function ChargingWindow({ year, region, lang = 'en', eventOverlay, apiBase, t }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [selectedHour, setSelectedHour] = useState(null);
@@ -37,8 +40,7 @@ export default function ChargingWindow({ year, region, apiBase, t }) {
   useEffect(() => {
     if (!year || !region) return;
     setLoading(true);
-    fetch(`${apiBase}/hourly-price-profile?year=${year}&region=${region}`)
-      .then(r => r.json())
+    fetchJson(`${apiBase}/hourly-price-profile?year=${year}&region=${region}`)
       .then(res => {
         setData(res);
         setLoading(false);
@@ -61,6 +63,9 @@ export default function ChargingWindow({ year, region, apiBase, t }) {
 
     return { minPrice, maxPrice, bestCharge, bestDischarge };
   }, [hourlyData]);
+
+  const eventText = getEventText(lang);
+  const overlayNotice = useMemo(() => buildOverlayNotice(eventOverlay, lang), [eventOverlay, lang]);
 
   // SVG clock heatmap geometry
   const size = 380;
@@ -192,6 +197,29 @@ export default function ChargingWindow({ year, region, apiBase, t }) {
 
           {/* Right: Insights */}
           <div className="lg:col-span-1 space-y-6">
+            <div className={`rounded border p-4 ${
+              overlayNotice.variant === 'warning'
+                ? 'border-amber-500/40 bg-amber-50 text-amber-900'
+                : overlayNotice.variant === 'info'
+                  ? 'border-sky-500/30 bg-sky-50 text-sky-900'
+                  : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]'
+            }`}>
+              <div className="text-xs tracking-widest uppercase font-bold mb-2">
+                {eventText.hintTitle}
+              </div>
+              <div className="text-sm font-medium">
+                {overlayNotice.title}
+              </div>
+              <div className="mt-1 text-xs opacity-80">
+                {overlayNotice.message}
+              </div>
+              {overlayNotice.topStates.length > 0 && (
+                <div className="mt-3">
+                  <EventBadgeList states={overlayNotice.topStates.slice(0, 2)} size="xs" locale={lang} />
+                </div>
+              )}
+            </div>
+
             {/* Best charge window */}
             <div className="border border-green-500/30 bg-green-500/5 p-4 rounded">
               <div className="text-xs tracking-widest uppercase font-bold text-green-600 mb-3">
@@ -261,7 +289,7 @@ export default function ChargingWindow({ year, region, apiBase, t }) {
         </div>
       ) : (
         <div className="h-32 flex items-center justify-center text-[var(--color-muted)] font-serif">
-          {t.noData || 'No Data'}
+          {t.noData || (lang === 'zh' ? '暂无数据' : 'No Data')}
         </div>
       )}
     </motion.div>
