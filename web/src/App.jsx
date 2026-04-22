@@ -1,23 +1,34 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Activity, Database, ChevronUp, List } from 'lucide-react';
 import PriceChart from './components/PriceChart';
 import SummaryStats from './components/SummaryStats';
-import HourlyDistributionChart from './components/HourlyDistributionChart';
-import PeakAnalysis from './components/PeakAnalysis';
-import FcasAnalysis from './components/FcasAnalysis';
-import BessSimulator from './components/BessSimulator';
-import RevenueStacking from './components/RevenueStacking';
-import ChargingWindow from './components/ChargingWindow';
-import CycleCost from './components/CycleCost';
-import InvestmentAnalysis from './components/InvestmentAnalysis';
-import GridForecast from './components/GridForecast';
 import { fetchJson } from './lib/apiClient';
 import { translations } from './translations';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const HourlyDistributionChart = lazy(() => import('./components/HourlyDistributionChart'));
+const PeakAnalysis = lazy(() => import('./components/PeakAnalysis'));
+const FcasAnalysis = lazy(() => import('./components/FcasAnalysis'));
+const BessSimulator = lazy(() => import('./components/BessSimulator'));
+const RevenueStacking = lazy(() => import('./components/RevenueStacking'));
+const ChargingWindow = lazy(() => import('./components/ChargingWindow'));
+const CycleCost = lazy(() => import('./components/CycleCost'));
+const InvestmentAnalysis = lazy(() => import('./components/InvestmentAnalysis'));
+const GridForecast = lazy(() => import('./components/GridForecast'));
 
 "use client";
+
+function SectionFallback({ minHeight = '320px' }) {
+  return (
+    <div
+      className="flex items-center justify-center rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)]/70 px-6 text-sm text-[var(--color-muted)]"
+      style={{ minHeight }}
+    >
+      Loading section...
+    </div>
+  );
+}
 
 function App() {
   const [lang, setLang] = useState('zh');
@@ -613,12 +624,14 @@ function App() {
               </div>
 
               <div id="sec-forecast" className="col-span-12 scroll-mt-24">
-                <GridForecast
-                  apiBase={API_BASE}
-                  region={selectedRegion}
-                  locale={lang}
-                  t={t.forecast}
-                />
+                <Suspense fallback={<SectionFallback />}>
+                  <GridForecast
+                    apiBase={API_BASE}
+                    region={selectedRegion}
+                    locale={lang}
+                    t={t.forecast}
+                  />
+                </Suspense>
               </div>
 
               {/* Lower View: Anomalous Bidding Analytics */}
@@ -630,44 +643,51 @@ function App() {
 
                 <div className="grid grid-cols-12 gap-12">
                   <div className="col-span-12 md:col-span-10 md:col-start-2">
-                    <HourlyDistributionChart data={chartData?.hourly_distribution} t={t.hourly_dist} />
+                    <Suspense fallback={<SectionFallback minHeight="360px" />}>
+                      <HourlyDistributionChart data={chartData?.hourly_distribution} t={t.hourly_dist} />
+                    </Suspense>
                   </div>
                 </div>
               </div>
 
               {/* Peak/Trough Arbitrage Analysis */}
               <div id="sec-arbitrage" className="col-span-12 scroll-mt-24">
-                <PeakAnalysis
-                  year={selectedYear}
-                  region={selectedRegion}
-                  lang={lang}
-                  month={selectedMonth}
-                  quarter={selectedQuarter}
-                  dayType={selectedDayType}
-                  eventOverlay={eventOverlay}
-                  apiBase={API_BASE}
-                  t={{...t.peak_analysis, loadingMsg: t.loading_states.peak}}
-                />
+                <Suspense fallback={<SectionFallback />}>
+                  <PeakAnalysis
+                    year={selectedYear}
+                    region={selectedRegion}
+                    lang={lang}
+                    month={selectedMonth}
+                    quarter={selectedQuarter}
+                    dayType={selectedDayType}
+                    eventOverlay={eventOverlay}
+                    apiBase={API_BASE}
+                    t={{...t.peak_analysis, loadingMsg: t.loading_states.peak}}
+                  />
+                </Suspense>
               </div>
 
               {/* FCAS Revenue Analysis */}
               <div id="sec-fcas" className="col-span-12 scroll-mt-24">
-                <FcasAnalysis
-                  year={selectedYear}
-                  region={selectedRegion}
-                  lang={lang}
-                  month={selectedMonth}
-                  quarter={selectedQuarter}
-                  dayType={selectedDayType}
-                  eventOverlay={eventOverlay}
-                  apiBase={API_BASE}
-                  t={{...t.fcas, ...t.peak_analysis, loadingMsg: t.loading_states.fcas}}
-                />
+                <Suspense fallback={<SectionFallback />}>
+                  <FcasAnalysis
+                    year={selectedYear}
+                    region={selectedRegion}
+                    lang={lang}
+                    month={selectedMonth}
+                    quarter={selectedQuarter}
+                    dayType={selectedDayType}
+                    eventOverlay={eventOverlay}
+                    apiBase={API_BASE}
+                    t={{...t.fcas, ...t.peak_analysis, loadingMsg: t.loading_states.fcas}}
+                  />
+                </Suspense>
               </div>
 
               {/* BESS P&L Simulator (Waterfall) */}
               <div id="sec-simulator" className="col-span-12 scroll-mt-24">
-                <BessSimulator
+                <Suspense fallback={<SectionFallback />}>
+                  <BessSimulator
                   year={selectedYear}
                   region={selectedRegion}
                   apiBase={API_BASE}
@@ -678,12 +698,14 @@ function App() {
                   )}
                   scopeNote={simulatorScopeNote}
                   t={{...t.simulator, loadingMsg: t.loading_states.simulator}}
-                />
+                  />
+                </Suspense>
               </div>
 
               {/* Revenue Stacking (Arbitrage + FCAS) */}
               <div id="sec-stacking" className="col-span-12 scroll-mt-24">
-                <RevenueStacking
+                <Suspense fallback={<SectionFallback />}>
+                  <RevenueStacking
                   year={selectedYear}
                   region={selectedRegion}
                   lang={lang}
@@ -693,24 +715,28 @@ function App() {
                   eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.stacking, ...t.peak_analysis, loadingMsg: t.loading_states.stacking}}
-                />
+                  />
+                </Suspense>
               </div>
 
               {/* Charging Window Clock Heatmap */}
               <div id="sec-charging" className="col-span-12 scroll-mt-24">
-                <ChargingWindow
+                <Suspense fallback={<SectionFallback />}>
+                  <ChargingWindow
                   year={selectedYear}
                   region={selectedRegion}
                   lang={lang}
                   eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.charging, ...t.peak_analysis, loadingMsg: t.loading_states.charging}}
-                />
+                  />
+                </Suspense>
               </div>
 
               {/* Cycle Cost vs Profitability */}
               <div id="sec-cycle" className="col-span-12 scroll-mt-24">
-                <CycleCost
+                <Suspense fallback={<SectionFallback />}>
+                  <CycleCost
                   year={selectedYear}
                   region={selectedRegion}
                   lang={lang}
@@ -720,12 +746,14 @@ function App() {
                   eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.cycleCost, ...t.peak_analysis, loadingMsg: t.loading_states.cycleCost}}
-                />
+                  />
+                </Suspense>
               </div>
 
               {/* BESS Investment Analysis */}
               <div id="sec-investment" className="col-span-12 scroll-mt-24">
-                <InvestmentAnalysis
+                <Suspense fallback={<SectionFallback />}>
+                  <InvestmentAnalysis
                   year={selectedYear}
                   region={selectedRegion}
                   lang={lang}
@@ -736,7 +764,8 @@ function App() {
                   )}
                   scopeNote={investmentScopeNote}
                   t={t}
-                />
+                  />
+                </Suspense>
               </div>
 
             </motion.div>

@@ -66,7 +66,7 @@ def format_timestamp(value: dt.datetime) -> str:
 
 def parse_as_of(as_of: Optional[str]) -> dt.datetime:
     parsed = parse_timestamp(as_of)
-    return parsed or dt.datetime.utcnow()
+    return parsed or dt.datetime.now(dt.UTC).replace(tzinfo=None)
 
 
 def horizon_delta(horizon: str) -> dt.timedelta:

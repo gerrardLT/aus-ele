@@ -1,9 +1,11 @@
 import contextlib
+import datetime as dt
 import json
 import os
 import tempfile
 import unittest
 from unittest import mock
+import warnings
 
 from tests.support import ensure_repo_import_paths
 
@@ -253,6 +255,22 @@ class GridForecastEngineTests(unittest.TestCase):
                 os.remove(self.db_path)
             except PermissionError:
                 pass
+
+    def test_parse_as_of_uses_naive_utc_fallback_without_deprecation_warning(self):
+        import grid_forecast
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            parsed = grid_forecast.parse_as_of(None)
+        expected_utc_now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
+
+        deprecations = [
+            warning for warning in captured
+            if issubclass(warning.category, DeprecationWarning)
+        ]
+        self.assertEqual(deprecations, [])
+        self.assertIsNone(parsed.tzinfo)
+        self.assertLess(abs((expected_utc_now - parsed).total_seconds()), 5)
 
     @mock.patch("grid_forecast.fetch_nem_predispatch_window")
     def test_nem_24h_forecast_uses_predispatch_and_event_signals(self, mock_p5):
