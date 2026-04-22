@@ -136,7 +136,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t }) {
       return undefined;
     }
 
-    const controller = new AbortController();
+    let ignore = false;
     setLoading(true);
     setError(false);
 
@@ -145,22 +145,24 @@ export default function GridForecast({ apiBase, region, locale = 'en', t }) {
         market,
         region,
         horizon,
-      }),
-      { signal: controller.signal },
+      })
     )
       .then((data) => {
-        setPayload(normalizeForecastResponse(data));
-        setLoading(false);
+        if (!ignore) {
+          setPayload(normalizeForecastResponse(data));
+          setLoading(false);
+        }
       })
       .catch((err) => {
-        if (err?.name === 'AbortError') {
-          return;
+        if (!ignore) {
+          setError(true);
+          setLoading(false);
         }
-        setError(true);
-        setLoading(false);
       });
 
-    return () => controller.abort();
+    return () => {
+      ignore = true;
+    };
   }, [apiBase, market, region, horizon]);
 
   const horizonLabels = {

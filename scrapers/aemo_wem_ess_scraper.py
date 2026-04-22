@@ -20,6 +20,9 @@ from datetime import datetime, timedelta
 import requests
 import urllib3
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../backend')))
 from database import DatabaseManager
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -449,7 +452,7 @@ def parse_args():
     parser.add_argument("--start", help="Start date YYYY-MM-DD")
     parser.add_argument("--end", help="End date YYYY-MM-DD")
     parser.add_argument("--days", type=int, help="Rolling latest N days, inclusive")
-    parser.add_argument("--db", default="aemo_data.db", help="SQLite database path")
+    parser.add_argument("--db", default="../data/aemo_data.db", help="SQLite database path")
     return parser.parse_args()
 
 

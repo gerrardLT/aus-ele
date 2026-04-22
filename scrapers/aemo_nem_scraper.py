@@ -24,6 +24,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../backend')))
 from database import DatabaseManager
 
 # 修复 Windows 控制台 GBK 编码问题

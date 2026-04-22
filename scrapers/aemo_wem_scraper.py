@@ -16,6 +16,9 @@ import argparse
 import logging
 from datetime import datetime, timedelta, timezone
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../backend')))
 from database import DatabaseManager
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
@@ -185,7 +188,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AEMO WEM Data Scraper")
     parser.add_argument("--start", type=str, required=True, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, required=True, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--db", type=str, default="aemo_data.db", help="SQLite database file")
+    parser.add_argument("--db", type=str, default="../data/aemo_data.db", help="SQLite database file")
     
     args = parser.parse_args()
     

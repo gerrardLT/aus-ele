@@ -5,6 +5,9 @@ import logging
 from tqdm import tqdm
 
 from aemo_wem_scraper import scrape_wem_date
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../backend')))
 from database import DatabaseManager
 
 # Suppress detailed logs to make room for tqdm

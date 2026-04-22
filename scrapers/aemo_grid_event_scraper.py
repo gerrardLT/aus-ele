@@ -2,6 +2,9 @@ import argparse
 import logging
 import sys
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../backend')))
 from database import DatabaseManager
 import grid_events
 
@@ -12,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Sync official grid event sources into SQLite.")
-    parser.add_argument("--db", default="aemo_data.db", help="SQLite database path")
+    parser.add_argument("--db", default="../data/aemo_data.db", help="SQLite database path")
     parser.add_argument("--days", type=int, default=180, help="Lookback window in days for rolling sources")
     args = parser.parse_args()
 

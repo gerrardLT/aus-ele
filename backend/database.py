@@ -85,7 +85,7 @@ class DatabaseManager:
         "extracted_at",
     ]
 
-    def __init__(self, db_path: str = "aemo_data.db"):
+    def __init__(self, db_path: str = "../data/aemo_data.db"):
         self.db_path = db_path
         # Ensure the directory exists
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)

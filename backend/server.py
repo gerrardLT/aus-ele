@@ -7,7 +7,7 @@ import threading
 import uvicorn
 from contextlib import asynccontextmanager
 import logging
-from typing import Optional
+from typing import Optional, Dict
 import datetime
 import subprocess
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,7 +22,7 @@ from response_cache import RedisResponseCache
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DB_PATH = "aemo_data.db"
+DB_PATH = "../data/aemo_data.db"
 db = DatabaseManager(DB_PATH)
 response_cache = RedisResponseCache()
 
@@ -241,18 +241,18 @@ def run_sync_scrapers():
         today = datetime.datetime.now().strftime('%Y-%m-%d')
         
         logger.info(f"Running WEM Scraper from {two_weeks_ago} to {today}...")
-        subprocess.run(["python", "aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today], check=True)
+        subprocess.run(["python", "../scrapers/aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today], check=True)
 
         logger.info("Running WEM ESS slim sync for latest 30 days...")
-        subprocess.run(["python", "aemo_wem_ess_scraper.py", "--days", "30"], check=True)
+        subprocess.run(["python", "../scrapers/aemo_wem_ess_scraper.py", "--days", "30"], check=True)
         
         logger.info("Running NEM Scraper...")
         start_month = (datetime.datetime.now() - datetime.timedelta(days=14)).strftime('%Y-%m')
         end_month = datetime.datetime.now().strftime('%Y-%m')
-        subprocess.run(["python", "aemo_nem_scraper.py", "--start", start_month, "--end", end_month, "--fcas"], check=True)
+        subprocess.run(["python", "../scrapers/aemo_nem_scraper.py", "--start", start_month, "--end", end_month, "--fcas"], check=True)
 
         logger.info("Running Grid Event Scraper...")
-        subprocess.run(["python", "aemo_grid_event_scraper.py", "--days", "180"], check=True)
+        subprocess.run(["python", "../scrapers/aemo_grid_event_scraper.py", "--days", "180"], check=True)
 
         
         # Record Success Time
@@ -1371,737 +1371,153 @@ def get_fcas_analysis(
 # Investment Analysis (BESS Cash Flow / NPV / IRR)
 # ============================================================
 
-from pydantic import BaseModel
-from typing import List, Dict
-import math
+from models.financial_params import InvestmentParams, DispatchMode, FcasRevenueMode
+from engines.financial_model import FinancialModel
+import bess_backtest
 
-INVESTMENT_RESPONSE_CACHE_SCOPE = "investment_response_v1"
-INVESTMENT_BACKTEST_CACHE_SCOPE = "investment_backtest_v1"
-INVESTMENT_FCAS_CACHE_SCOPE = "investment_fcas_v1"
+INVESTMENT_RESPONSE_CACHE_SCOPE = "investment_response_v2"
 _ANALYSIS_INFLIGHT_LOCK = threading.Lock()
 _ANALYSIS_INFLIGHT: Dict[str, dict] = {}
 
-class InvestmentParams(BaseModel):
-    region: str = "SA1"
-    # Storage specs
-    power_mw: float = 100
-    duration_hours: float = 4
-    round_trip_efficiency: float = 0.87
-    degradation_rate: float = 0.025  # 2.5%/year
-    # Cost params (AUD)
-    capex_per_kwh: float = 350  # $/kWh total EPC
-    fixed_om_per_mw_year: float = 12000  # $/MW/year
-    variable_om_per_mwh: float = 2.5  # $/MWh discharged
-    grid_connection_cost: float = 5000000  # one-time
-    land_lease_per_year: float = 200000
-    # Finance
-    discount_rate: float = 0.08  # 8%
-    project_life_years: int = 20
-    # Revenue adjustments
-    revenue_capture_rate: float = 0.65  # realistic vs perfect foresight
-    fcas_revenue_per_mw_year: float = 15000  # additional FCAS income
-    fcas_revenue_mode: Optional[str] = None  # auto for NEM, manual for WEM by default
-    capacity_payment_per_mw_year: float = 0  # WEM RCM or CIS
-    # Backtest years to use for projection
-    backtest_years: List[int] = [2024, 2025]
-
-
-def _estimate_nem_fcas_baseline(conn, region: str, years: List[int], power_mw: float):
-    annual_estimates = []
-    cursor = conn.cursor()
-    interval_hours = 5 / 60
-
-    for year in years:
-        table_name = f"trading_price_{year}"
-        cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
-            (table_name,),
-        )
-        if not cursor.fetchone():
-            continue
-
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        existing_cols = {row[1] for row in cursor.fetchall()}
-        available_fcas = [col for col in FCAS_COLUMNS if col in existing_cols]
-        if not available_fcas:
-            continue
-
-        nonnull_expr = " OR ".join(f"{col} IS NOT NULL" for col in available_fcas)
-        total_fcas_expr = " + ".join(f"COALESCE({col}, 0)" for col in available_fcas)
-        cursor.execute(
-            f"""
-            SELECT SUM(({total_fcas_expr}) * ? * ?) as annual_estimate
-            FROM {table_name}
-            WHERE region_id = ? AND ({nonnull_expr})
-            """,
-            (power_mw, interval_hours, region),
-        )
-        estimate = cursor.fetchone()[0]
-        if estimate:
-            annual_estimates.append(float(estimate))
-
-    if not annual_estimates:
-        return 0.0, "manual_input_no_historical_fcas"
-    return sum(annual_estimates) / len(annual_estimates), "historical_auto"
-
+def _analysis_data_version() -> str:
+    return db.get_last_update_time() or "no_last_update"
 
 def _stable_cache_key(payload: dict) -> str:
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
-
-def _analysis_data_version() -> str:
-    return db.get_last_update_time() or "no_last_update"
-
-
-def _investment_response_cache_key(params: InvestmentParams, capacity_mwh: float) -> str:
-    return _stable_cache_key({
-        "region": params.region,
-        "power_mw": params.power_mw,
-        "duration_hours": params.duration_hours,
-        "capacity_mwh": capacity_mwh,
-        "round_trip_efficiency": params.round_trip_efficiency,
-        "degradation_rate": params.degradation_rate,
-        "capex_per_kwh": params.capex_per_kwh,
-        "fixed_om_per_mw_year": params.fixed_om_per_mw_year,
-        "variable_om_per_mwh": params.variable_om_per_mwh,
-        "grid_connection_cost": params.grid_connection_cost,
-        "land_lease_per_year": params.land_lease_per_year,
-        "discount_rate": params.discount_rate,
-        "project_life_years": params.project_life_years,
-        "revenue_capture_rate": params.revenue_capture_rate,
-        "fcas_revenue_per_mw_year": params.fcas_revenue_per_mw_year,
-        "fcas_revenue_mode": params.fcas_revenue_mode,
-        "capacity_payment_per_mw_year": params.capacity_payment_per_mw_year,
-        "backtest_years": sorted(params.backtest_years),
-    })
-
-
-def _investment_backtest_cache_key(
-    *,
-    region: str,
-    year: int,
-    power_mw: float,
-    duration_hours: float,
-    capacity_mwh: float,
-    round_trip_efficiency: float,
-) -> str:
-    return _stable_cache_key({
-        "region": region,
-        "year": year,
-        "power_mw": power_mw,
-        "duration_hours": duration_hours,
-        "capacity_mwh": capacity_mwh,
-        "round_trip_efficiency": round_trip_efficiency,
-    })
-
-
-def _investment_fcas_cache_key(*, region: str, years: List[int], power_mw: float) -> str:
-    return _stable_cache_key({
-        "region": region,
-        "years": sorted(years),
-        "power_mw": power_mw,
-    })
-
-
-def _normalize_cached_investment_response(payload: dict | None) -> dict | None:
-    if not isinstance(payload, dict):
-        return payload
-    backtest = payload.get("backtest")
-    if not isinstance(backtest, dict):
-        return payload
-
-    normalized = {}
-    for key, value in backtest.items():
-        if isinstance(key, str) and key.isdigit():
-            normalized[int(key)] = value
-        else:
-            normalized[key] = value
-
-    result = dict(payload)
-    result["backtest"] = normalized
-    return result
-
-
-def _analysis_inflight_key(*, scope: str, cache_key: str, data_version: str) -> str:
-    return f"{scope}:{data_version}:{cache_key}"
-
-
-def _fetch_or_compute_analysis_cache(*, scope: str, cache_key: str, data_version: str, compute_fn):
-    cached = db.fetch_analysis_cache(
-        scope=scope,
-        cache_key=cache_key,
-        data_version=data_version,
-    )
-    if cached is not None:
-        return cached
-
-    inflight_key = _analysis_inflight_key(
-        scope=scope,
-        cache_key=cache_key,
-        data_version=data_version,
-    )
-    is_leader = False
-
-    with _ANALYSIS_INFLIGHT_LOCK:
-        inflight = _ANALYSIS_INFLIGHT.get(inflight_key)
-        if inflight is None:
-            inflight = {
-                "event": threading.Event(),
-                "result": None,
-                "error": None,
-            }
-            _ANALYSIS_INFLIGHT[inflight_key] = inflight
-            is_leader = True
-
-    if not is_leader:
-        inflight["event"].wait()
-        if inflight["error"] is not None:
-            raise RuntimeError(str(inflight["error"])) from inflight["error"]
-        if inflight["result"] is not None:
-            return inflight["result"]
-        return db.fetch_analysis_cache(
-            scope=scope,
-            cache_key=cache_key,
-            data_version=data_version,
-        )
-
-    try:
-        result = compute_fn()
-        inflight["result"] = result
-        if not (isinstance(result, dict) and "error" in result):
-            db.upsert_analysis_cache(
-                scope=scope,
-                cache_key=cache_key,
-                data_version=data_version,
-                response_payload=result or {},
-            )
-        return result
-    except Exception as exc:
-        inflight["error"] = exc
-        raise
-    finally:
-        inflight["event"].set()
-        with _ANALYSIS_INFLIGHT_LOCK:
-            _ANALYSIS_INFLIGHT.pop(inflight_key, None)
-
-
-def _run_investment_backtest(*, region: str, year: int, storage_config: dict):
-    import bess_backtest
-
-    with db.get_connection() as conn:
-        return bess_backtest.backtest_arbitrage(conn, region, year, storage_config)
-
-
-def _run_investment_fcas_baseline(*, region: str, years: List[int], power_mw: float):
-    with db.get_connection() as conn:
-        baseline_fcas, fcas_baseline_source = _estimate_nem_fcas_baseline(
-            conn,
-            region,
-            years,
-            power_mw,
-        )
-    return {
-        "baseline_fcas": baseline_fcas,
-        "fcas_baseline_source": fcas_baseline_source,
-    }
-
-
-def _compute_investment_analysis_response(
-    params: InvestmentParams,
-    *,
-    capacity_mwh: float,
-    data_version: str,
-):
-    actual_fcas_mode = params.fcas_revenue_mode or ("manual" if params.region == "WEM" else "auto")
-
-    yearly_revenues = {}
-    total_discharge_history = []
-    backtest_mode = "optimized_hindsight / physical_upper_bound"
-    storage_config = {
-        "duration_hours": params.duration_hours,
-        "power_mw": params.power_mw,
-        "capacity_mwh": capacity_mwh,
-    }
-    assumptions = [
-        "Arbitrage baseline is derived from an optimized hindsight backtest and should be treated as a physical upper bound, not realized dispatch revenue.",
-        f"Revenue capture rate ({params.revenue_capture_rate:.0%}) converts the backtest upper bound into an implementable arbitrage baseline.",
-        "Capacity payment remains a manual user input.",
-    ]
-    for year in params.backtest_years:
-        backtest_cache_key = _investment_backtest_cache_key(
-            region=params.region,
-            year=year,
-            power_mw=params.power_mw,
-            duration_hours=params.duration_hours,
-            capacity_mwh=capacity_mwh,
-            round_trip_efficiency=params.round_trip_efficiency,
-        )
-        res = _fetch_or_compute_analysis_cache(
-            scope=INVESTMENT_BACKTEST_CACHE_SCOPE,
-            cache_key=backtest_cache_key,
-            data_version=data_version,
-            compute_fn=lambda year=year: _run_investment_backtest(
-                region=params.region,
-                year=year,
-                storage_config=storage_config,
-            ),
-        )
-
-        if res and res.get("total_revenue_aud", 0) > 0:
-            gross = res["total_revenue_aud"]
-            yearly_revenues[year] = {
-                "gross_arbitrage": round(gross),
-                "trading_days": res.get("trading_days", 0),
-                "per_mw": round(res.get("revenue_per_mw_year", 0)),
-                "backtest_mode": res.get("backtest_mode", "optimized_hindsight"),
-                "revenue_scope": res.get("revenue_scope", "physical_upper_bound"),
-            }
-            backtest_mode = (
-                f"{res.get('backtest_mode', 'optimized_hindsight')} / "
-                f"{res.get('revenue_scope', 'physical_upper_bound')}"
-            )
-            if res.get("annual_discharge_mwh"):
-                total_discharge_history.append(res["annual_discharge_mwh"])
-
-    if not yearly_revenues:
-        return {"error": "No backtest data available for the specified region/years"}
-
-    avg_gross = sum(v["gross_arbitrage"] for v in yearly_revenues.values()) / len(yearly_revenues)
-    avg_annual_discharge_mwh = sum(total_discharge_history) / len(total_discharge_history) if total_discharge_history else capacity_mwh * 365 * 0.85
-
-    baseline_arbitrage = avg_gross * params.revenue_capture_rate
-    actual_est_annual_discharge = avg_annual_discharge_mwh * params.revenue_capture_rate
-
-    if actual_fcas_mode == "auto" and params.region != "WEM":
-        fcas_cache_key = _investment_fcas_cache_key(
-            region=params.region,
-            years=params.backtest_years,
-            power_mw=params.power_mw,
-        )
-        cached_fcas = _fetch_or_compute_analysis_cache(
-            scope=INVESTMENT_FCAS_CACHE_SCOPE,
-            cache_key=fcas_cache_key,
-            data_version=data_version,
-            compute_fn=lambda: _run_investment_fcas_baseline(
-                region=params.region,
-                years=params.backtest_years,
-                power_mw=params.power_mw,
-            ),
-        )
-        baseline_fcas = cached_fcas.get("baseline_fcas", 0.0)
-        fcas_baseline_source = cached_fcas.get("fcas_baseline_source", "manual_input_no_historical_fcas")
-        if fcas_baseline_source != "historical_auto":
-            actual_fcas_mode = "manual"
-            baseline_fcas = params.fcas_revenue_per_mw_year * params.power_mw
-            fcas_baseline_source = "manual_input_no_historical_fcas"
-            assumptions.append(
-                "Historical FCAS coverage was incomplete for the selected NEM years, so the manual FCAS revenue input was used."
-            )
-    elif actual_fcas_mode == "auto" and params.region == "WEM":
-        actual_fcas_mode = "manual"
-        baseline_fcas = params.fcas_revenue_per_mw_year * params.power_mw
-        fcas_baseline_source = "manual_input_wem_fallback"
-        assumptions.append(
-            "WEM investment model keeps FCAS revenue on manual input until full historical ESS coverage is available."
-        )
-    else:
-        baseline_fcas = params.fcas_revenue_per_mw_year * params.power_mw
-        fcas_baseline_source = "manual_input"
-
-    baseline_capacity = params.capacity_payment_per_mw_year * params.power_mw
-    baseline_total = baseline_arbitrage + baseline_fcas + baseline_capacity
-
-    total_capex = (params.capex_per_kwh * capacity_mwh * 1000) + params.grid_connection_cost
-    annual_fixed_om = params.fixed_om_per_mw_year * params.power_mw + params.land_lease_per_year
-    annual_var_om = params.variable_om_per_mwh * actual_est_annual_discharge
-
-    effective_degradation_rate = max(params.degradation_rate, 0.0)
-
-    cash_flows = []
-    cumulative = -total_capex
-    payback_year = None
-
-    cash_flows.append({
-        "year": 0,
-        "revenue": 0,
-        "opex": 0,
-        "net_cash_flow": round(-total_capex),
-        "cumulative": round(-total_capex),
-        "degradation_factor": 1.0,
-    })
-
-    for yr in range(1, params.project_life_years + 1):
-        deg_factor = (1 - effective_degradation_rate) ** (yr - 1)
-        rev_arbitrage = baseline_arbitrage * deg_factor
-        rev_fcas = baseline_fcas * deg_factor
-        rev_capacity = baseline_capacity
-        total_rev = rev_arbitrage + rev_fcas + rev_capacity
-        total_opex = annual_fixed_om + (annual_var_om * deg_factor)
-        net = total_rev - total_opex
-        cumulative += net
-
-        if payback_year is None and cumulative >= 0:
-            payback_year = yr
-
-        cash_flows.append({
-            "year": yr,
-            "revenue": round(total_rev),
-            "revenue_arbitrage": round(rev_arbitrage),
-            "revenue_fcas": round(rev_fcas),
-            "revenue_capacity": round(rev_capacity),
-            "opex": round(total_opex),
-            "net_cash_flow": round(net),
-            "cumulative": round(cumulative),
-            "degradation_factor": round(deg_factor, 4),
-        })
-
-    cf_list = [cf["net_cash_flow"] for cf in cash_flows]
-    npv = sum(cf / (1 + params.discount_rate) ** i for i, cf in enumerate(cf_list))
-    irr = _compute_irr(cf_list)
-    total_net = sum(cf_list[1:])
-    roi = total_net / total_capex if total_capex > 0 else 0
-
-    return {
-        "backtest": yearly_revenues,
-        "backtest_mode": backtest_mode,
-        "effective_degradation_rate": round(effective_degradation_rate, 4),
-        "fcas_baseline_source": fcas_baseline_source,
-        "assumptions": assumptions,
-        "params": {
-            "region": params.region,
-            "power_mw": params.power_mw,
-            "duration_hours": params.duration_hours,
-            "capacity_mwh": capacity_mwh,
-            "total_capex": round(total_capex),
-            "capex_per_kwh": params.capex_per_kwh,
-            "revenue_capture_rate": params.revenue_capture_rate,
-            "project_life_years": params.project_life_years,
-            "discount_rate": params.discount_rate,
-            "degradation_rate": params.degradation_rate,
-            "fcas_revenue_mode": actual_fcas_mode,
-        },
-        "baseline_revenue": {
-            "arbitrage": round(baseline_arbitrage),
-            "fcas": round(baseline_fcas),
-            "capacity": round(baseline_capacity),
-            "total": round(baseline_total),
-            "per_mw": round(baseline_total / params.power_mw),
-        },
-        "metrics": {
-            "npv": round(npv),
-            "irr": round(irr * 100, 2) if irr is not None else None,
-            "payback_years": payback_year,
-            "roi_pct": round(roi * 100, 1),
-            "total_capex": round(total_capex),
-        },
-        "cash_flows": cash_flows,
-    }
-
-
 @app.post("/api/investment-analysis")
 def investment_analysis(params: InvestmentParams):
     """
-    Compute BESS investment cash flow analysis:
-    1. Backtest historical arbitrage revenue
-    2. Project future revenue with degradation
-    3. Calculate NPV, IRR, payback period
+    Compute BESS investment cash flow analysis using the new Engine Layer:
+    1. Base Case Evaluation
+    2. Scenario Analysis
+    3. Monte Carlo Simulation
     """
     try:
-        capacity_mwh = params.power_mw * params.duration_hours
         data_version = _analysis_data_version()
-        response_cache_key = _investment_response_cache_key(params, capacity_mwh)
-        redis_cache_payload = {
-            "response_cache_key": response_cache_key,
-            "data_version": data_version,
-        }
-        redis_cached_response = _fetch_response_cache(
-            INVESTMENT_RESPONSE_REDIS_SCOPE,
-            redis_cache_payload,
-            normalize_fn=_normalize_cached_investment_response,
-        )
-        if redis_cached_response is not None:
-            return redis_cached_response
-        cached_response = db.fetch_analysis_cache(
-            scope=INVESTMENT_RESPONSE_CACHE_SCOPE,
-            cache_key=response_cache_key,
-            data_version=data_version,
-        )
-        if cached_response is not None:
-            _store_response_cache(
-                INVESTMENT_RESPONSE_REDIS_SCOPE,
-                redis_cache_payload,
-                cached_response,
-                INVESTMENT_RESPONSE_CACHE_TTL_SECONDS,
-            )
-            return _normalize_cached_investment_response(cached_response)
-        response = _fetch_or_compute_analysis_cache(
-            scope=INVESTMENT_RESPONSE_CACHE_SCOPE,
-            cache_key=response_cache_key,
-            data_version=data_version,
-            compute_fn=lambda: _compute_investment_analysis_response(
-                params,
-                capacity_mwh=capacity_mwh,
-                data_version=data_version,
-            ),
-        )
-        _store_response_cache(
-            INVESTMENT_RESPONSE_REDIS_SCOPE,
-            redis_cache_payload,
-            response,
-            INVESTMENT_RESPONSE_CACHE_TTL_SECONDS,
-        )
-        return _normalize_cached_investment_response(response)
-
-        actual_fcas_mode = params.fcas_revenue_mode or ("manual" if params.region == "WEM" else "auto")
-
-        # --- Step 1: Backtest arbitrage revenue per year ---
-        import bess_backtest
-        yearly_revenues = {}
-        total_discharge_history = []
-        backtest_mode = "optimized_hindsight / physical_upper_bound"
-        storage_config = {
-            "duration_hours": params.duration_hours,
-            "power_mw": params.power_mw,
-            "capacity_mwh": capacity_mwh,
-        }
-        assumptions = [
-            "Arbitrage baseline is derived from an optimized hindsight backtest and should be treated as a physical upper bound, not realized dispatch revenue.",
-            f"Revenue capture rate ({params.revenue_capture_rate:.0%}) converts the backtest upper bound into an implementable arbitrage baseline.",
-            "Capacity payment remains a manual user input.",
-        ]
-        for year in params.backtest_years:
-            backtest_cache_key = _investment_backtest_cache_key(
-                region=params.region,
-                year=year,
-                power_mw=params.power_mw,
-                duration_hours=params.duration_hours,
-                capacity_mwh=capacity_mwh,
-                round_trip_efficiency=params.round_trip_efficiency,
-            )
-            res = db.fetch_analysis_cache(
-                scope=INVESTMENT_BACKTEST_CACHE_SCOPE,
-                cache_key=backtest_cache_key,
-                data_version=data_version,
-            )
-            if res is None:
-                with db.get_connection() as conn:
-                    res = bess_backtest.backtest_arbitrage(conn, params.region, year, storage_config)
-                db.upsert_analysis_cache(
-                    scope=INVESTMENT_BACKTEST_CACHE_SCOPE,
-                    cache_key=backtest_cache_key,
-                    data_version=data_version,
-                    response_payload=res or {},
-                )
-
-            if res and res.get("total_revenue_aud", 0) > 0:
-                gross = res["total_revenue_aud"]
-                yearly_revenues[year] = {
-                    "gross_arbitrage": round(gross),
-                    "trading_days": res.get("trading_days", 0),
-                    "per_mw": round(res.get("revenue_per_mw_year", 0)),
-                    "backtest_mode": res.get("backtest_mode", "optimized_hindsight"),
-                    "revenue_scope": res.get("revenue_scope", "physical_upper_bound"),
-                }
-                backtest_mode = (
-                    f"{res.get('backtest_mode', 'optimized_hindsight')} / "
-                    f"{res.get('revenue_scope', 'physical_upper_bound')}"
-                )
-                if res.get("annual_discharge_mwh"):
-                    total_discharge_history.append(res["annual_discharge_mwh"])
-
-        if not yearly_revenues:
-            return {"error": "No backtest data available for the specified region/years"}
-
-        # --- Step 2: Compute baseline annual revenue ---
-        avg_gross = sum(v["gross_arbitrage"] for v in yearly_revenues.values()) / len(yearly_revenues)
-        avg_annual_discharge_mwh = sum(total_discharge_history) / len(total_discharge_history) if total_discharge_history else capacity_mwh * 365 * 0.85
         
-        baseline_arbitrage = avg_gross * params.revenue_capture_rate
-        actual_est_annual_discharge = avg_annual_discharge_mwh * params.revenue_capture_rate
-
-        if actual_fcas_mode == "auto" and params.region != "WEM":
-            fcas_cache_key = _investment_fcas_cache_key(
-                region=params.region,
-                years=params.backtest_years,
-                power_mw=params.power_mw,
-            )
-            cached_fcas = db.fetch_analysis_cache(
-                scope=INVESTMENT_FCAS_CACHE_SCOPE,
-                cache_key=fcas_cache_key,
-                data_version=data_version,
-            )
-            if cached_fcas is None:
-                with db.get_connection() as conn:
-                    baseline_fcas, fcas_baseline_source = _estimate_nem_fcas_baseline(
-                        conn,
-                        params.region,
-                        params.backtest_years,
-                        params.power_mw,
-                    )
-                cached_fcas = {
-                    "baseline_fcas": baseline_fcas,
-                    "fcas_baseline_source": fcas_baseline_source,
-                }
-                db.upsert_analysis_cache(
-                    scope=INVESTMENT_FCAS_CACHE_SCOPE,
-                    cache_key=fcas_cache_key,
-                    data_version=data_version,
-                    response_payload=cached_fcas,
-                )
-            baseline_fcas = cached_fcas.get("baseline_fcas", 0.0)
-            fcas_baseline_source = cached_fcas.get("fcas_baseline_source", "manual_input_no_historical_fcas")
-            if fcas_baseline_source != "historical_auto":
-                actual_fcas_mode = "manual"
-                baseline_fcas = params.fcas_revenue_per_mw_year * params.power_mw
-                fcas_baseline_source = "manual_input_no_historical_fcas"
-                assumptions.append(
-                    "Historical FCAS coverage was incomplete for the selected NEM years, so the manual FCAS revenue input was used."
-                )
-        elif actual_fcas_mode == "auto" and params.region == "WEM":
-            actual_fcas_mode = "manual"
-            baseline_fcas = params.fcas_revenue_per_mw_year * params.power_mw
-            fcas_baseline_source = "manual_input_wem_fallback"
-            assumptions.append(
-                "WEM investment model keeps FCAS revenue on manual input until full historical ESS coverage is available."
-            )
-        else:
-            baseline_fcas = params.fcas_revenue_per_mw_year * params.power_mw
-            fcas_baseline_source = "manual_input"
-
-        baseline_capacity = params.capacity_payment_per_mw_year * params.power_mw
-        baseline_total = baseline_arbitrage + baseline_fcas + baseline_capacity
-
-        # --- Step 3: Build cash flow model ---
-        total_capex = (params.capex_per_kwh * capacity_mwh * 1000) + params.grid_connection_cost
-        annual_fixed_om = params.fixed_om_per_mw_year * params.power_mw + params.land_lease_per_year
-        annual_var_om = params.variable_om_per_mwh * actual_est_annual_discharge
-
-        # 双因子寿命衰减模型 (Dual-factor Degradation Model: Calendar + Cycle)
-        effective_degradation_rate = max(params.degradation_rate, 0.0)
-
-        cash_flows = []
-        cumulative = -total_capex
-        payback_year = None
-
-        # Year 0
-        cash_flows.append({
-            "year": 0,
-            "revenue": 0,
-            "opex": 0,
-            "net_cash_flow": round(-total_capex),
-            "cumulative": round(-total_capex),
-            "degradation_factor": 1.0,
-        })
-
-        for yr in range(1, params.project_life_years + 1):
-            deg_factor = (1 - effective_degradation_rate) ** (yr - 1)
-
-            # Revenue degrades with battery capacity
-            rev_arbitrage = baseline_arbitrage * deg_factor
-            rev_fcas = baseline_fcas * deg_factor
-            rev_capacity = baseline_capacity  # capacity payments don't degrade
-            total_rev = rev_arbitrage + rev_fcas + rev_capacity
-
-            # OpEx
-            total_opex = annual_fixed_om + (annual_var_om * deg_factor)
-
-            net = total_rev - total_opex
-            cumulative += net
-
-            if payback_year is None and cumulative >= 0:
-                payback_year = yr
-
-            cash_flows.append({
-                "year": yr,
-                "revenue": round(total_rev),
-                "revenue_arbitrage": round(rev_arbitrage),
-                "revenue_fcas": round(rev_fcas),
-                "revenue_capacity": round(rev_capacity),
-                "opex": round(total_opex),
-                "net_cash_flow": round(net),
-                "cumulative": round(cumulative),
-                "degradation_factor": round(deg_factor, 4),
-            })
-
-        # --- Step 4: NPV & IRR ---
-        cf_list = [cf["net_cash_flow"] for cf in cash_flows]
-        npv = sum(cf / (1 + params.discount_rate) ** i for i, cf in enumerate(cf_list))
-
-        # IRR via bisection
-        irr = _compute_irr(cf_list)
-
-        # ROI
-        total_net = sum(cf_list[1:])
-        roi = total_net / total_capex if total_capex > 0 else 0
-
-        response = {
-            "backtest": yearly_revenues,
-            "backtest_mode": backtest_mode,
-            "effective_degradation_rate": round(effective_degradation_rate, 4),
-            "fcas_baseline_source": fcas_baseline_source,
-            "assumptions": assumptions,
-            "params": {
-                "region": params.region,
-                "power_mw": params.power_mw,
-                "duration_hours": params.duration_hours,
-                "capacity_mwh": capacity_mwh,
-                "total_capex": round(total_capex),
-                "capex_per_kwh": params.capex_per_kwh,
-                "revenue_capture_rate": params.revenue_capture_rate,
-                "project_life_years": params.project_life_years,
-                "discount_rate": params.discount_rate,
-                "degradation_rate": params.degradation_rate,
-                "fcas_revenue_mode": actual_fcas_mode,
-            },
-            "baseline_revenue": {
-                "arbitrage": round(baseline_arbitrage),
-                "fcas": round(baseline_fcas),
-                "capacity": round(baseline_capacity),
-                "total": round(baseline_total),
-                "per_mw": round(baseline_total / params.power_mw),
-            },
-            "metrics": {
-                "npv": round(npv),
-                "irr": round(irr * 100, 2) if irr is not None else None,
-                "payback_years": payback_year,
-                "roi_pct": round(roi * 100, 1),
-                "total_capex": round(total_capex),
-            },
-            "cash_flows": cash_flows,
+        # 1. Prepare storage config for MILP backtest
+        storage_config = {
+            "duration_hours": params.battery.duration_hours,
+            "power_mw": params.battery.power_mw,
+            "capacity_mwh": params.battery.capacity_mwh
         }
-        db.upsert_analysis_cache(
-            scope=INVESTMENT_RESPONSE_CACHE_SCOPE,
-            cache_key=response_cache_key,
-            data_version=data_version,
-            response_payload=response,
-        )
-        return response
+        
+        # 2. Run Backtest (MILP) for requested years to establish Physical Upper Bound
+        total_arb_revenue = 0.0
+        total_cycles = 0.0
+        valid_years = 0
+        
+        with db.get_connection() as conn:
+            for year in params.backtest_years:
+                result = bess_backtest.backtest_arbitrage(conn, params.region, year, storage_config)
+                if result and result.get("total_revenue_aud", 0) > 0:
+                    total_arb_revenue += result["total_revenue_aud"]
+                    # Convert discharge MWh to equivalent full cycles
+                    cycles = result["annual_discharge_mwh"] / params.battery.capacity_mwh if params.battery.capacity_mwh else 365
+                    total_cycles += cycles
+                    valid_years += 1
+        
+        # Average the results
+        avg_annual_arb = total_arb_revenue / valid_years if valid_years > 0 else 0.0
+        avg_annual_cycles = total_cycles / valid_years if valid_years > 0 else 365.0
+        
+        # Apply revenue capture rate AND forecast inefficiency to the gross upper bound
+        # Forecast Inefficiency simulates the reality of Rolling Horizon (MPC) not having perfect foresight
+        efficiency_factor = max(0.0, 1.0 - params.forecast_inefficiency)
+        avg_annual_arb = avg_annual_arb * efficiency_factor
+        baseline_arbitrage = avg_annual_arb * params.revenue_capture_rate
+        
+        # FCAS Logic: Opportunity Cost & Activation Probability
+        baseline_fcas = 0.0
+        if params.fcas_revenue_mode == FcasRevenueMode.AUTO:
+            total_fcas_avg = 0.0
+            from server import FCAS_COLUMNS
+            fcas_expr = " + ".join(f"COALESCE({col}, 0)" for col in FCAS_COLUMNS)
+            
+            with db.get_connection() as conn:
+                for year in params.backtest_years:
+                    table_name = f"trading_price_{year}"
+                    try:
+                        res = conn.execute(
+                            f"SELECT AVG({fcas_expr}) FROM {table_name} WHERE region_id = ?", 
+                            (params.region,)
+                        ).fetchone()
+                        if res and res[0]:
+                            total_fcas_avg += res[0]
+                    except Exception:
+                        pass
+            
+            avg_fcas_price_per_mwh = total_fcas_avg / valid_years if valid_years > 0 else 0.0
+            
+            # Realistic Co-optimization: Battery provides FCAS based on activation probability.
+            # Revenue = Price * Capacity * Hours (8760) * Capture Rate
+            # We assume it participates when Spread > Opportunity Cost. For auto mode, we use a simple expected value:
+            baseline_fcas = avg_fcas_price_per_mwh * params.battery.power_mw * 8760 * params.revenue_capture_rate
+            
+            # Since FCAS activates with a certain probability, it also causes implicit cycling.
+            # We add the expected FCAS discharge to the annual discharge total.
+            fcas_implicit_discharge_mwh = baseline_fcas / (avg_fcas_price_per_mwh if avg_fcas_price_per_mwh > 0 else 1) * params.fcas_activation_probability
+            avg_annual_cycles += (fcas_implicit_discharge_mwh / params.battery.capacity_mwh if params.battery.capacity_mwh > 0 else 0)
+            
+        else:
+            baseline_fcas = params.fcas_revenue_per_mw_year * params.battery.power_mw
+            # Manual mode implies some cycling too
+            fcas_implicit_discharge_mwh = (baseline_fcas / 15000) * params.battery.power_mw * params.fcas_activation_probability * 8760
+            avg_annual_cycles += (fcas_implicit_discharge_mwh / params.battery.capacity_mwh if params.battery.capacity_mwh > 0 else 0)
+        
+        
+        # Construct cycles history (assuming constant expected cycles based on the backtest average)
+        annual_cycles_history = [avg_annual_cycles] * params.financial.project_life_years
 
+        # Run base scenario
+        base_scenario_config = params.scenarios[0] if params.scenarios else None
+        if not base_scenario_config:
+            from models.financial_params import ScenarioConfig
+            base_scenario_config = ScenarioConfig(name="Base")
+            
+        base_result = FinancialModel.run_scenario(
+            params, base_scenario_config, baseline_arbitrage, baseline_fcas, annual_cycles_history
+        )
+        
+        # Run other scenarios
+        scenarios = [base_result]
+        for config in params.scenarios[1:]:
+            res = FinancialModel.run_scenario(
+                params, config, baseline_arbitrage, baseline_fcas, annual_cycles_history
+            )
+            scenarios.append(res)
+            
+        # Run Monte Carlo if enabled
+        mc_result = None
+        if params.monte_carlo.enabled:
+            mc_result = FinancialModel.run_monte_carlo(
+                params, baseline_arbitrage, baseline_fcas, annual_cycles_history
+            )
+            
+        response = {
+            "region": params.region,
+            "params_summary": {
+                "power_mw": params.battery.power_mw,
+                "duration_hours": params.battery.duration_hours,
+                "project_life": params.financial.project_life_years
+            },
+            "base_metrics": base_result.metrics.model_dump(),
+            "scenarios": [s.model_dump() for s in scenarios],
+            "monte_carlo": mc_result.model_dump() if mc_result else None,
+            "assumptions": [
+                "Using Dual-factor degradation model.",
+                "Monte Carlo simulations: " + ("Enabled" if params.monte_carlo.enabled else "Disabled"),
+            ]
+        }
+        
+        return response
+        
     except Exception as e:
         logger.error(f"Investment analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-def _compute_irr(cash_flows, tol=1e-6, max_iter=1000):
-    """Compute IRR using bisection method."""
-    if not cash_flows or cash_flows[0] >= 0:
-        return None
-    
-    low, high = -0.5, 5.0
-    
-    for _ in range(max_iter):
-        mid = (low + high) / 2
-        npv = sum(cf / (1 + mid) ** i for i, cf in enumerate(cash_flows))
-        
-        if abs(npv) < tol:
-            return mid
-        if npv > 0:
-            low = mid
-        else:
-            high = mid
-    
-    return (low + high) / 2
 
 
 if __name__ == "__main__":
