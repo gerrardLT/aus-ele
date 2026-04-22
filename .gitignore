@@ -46,6 +46,7 @@ package-lock.json
 .vscode/
 *.swp
 .DS_Store
+.worktrees/
 
 # Runtime outputs & debug logs
 output/
