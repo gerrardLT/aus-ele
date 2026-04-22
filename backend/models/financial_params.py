@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Union
 from enum import Enum
 
@@ -56,6 +56,12 @@ class InvestmentParams(BaseModel):
     region: str = "SA1"
     battery: BatterySpecs = Field(default_factory=BatterySpecs)
     financial: FinancialAssumptions = Field(default_factory=FinancialAssumptions)
+
+    # Legacy flat fields kept for compatibility with existing tests and UI payloads.
+    power_mw: Optional[float] = None
+    duration_hours: Optional[float] = None
+    degradation_rate: Optional[float] = None
+    discount_rate: Optional[float] = None
     
     revenue_capture_rate: float = 0.65
     fcas_revenue_per_mw_year: float = 15000.0
@@ -69,6 +75,18 @@ class InvestmentParams(BaseModel):
     
     scenarios: List[ScenarioConfig] = [ScenarioConfig()]
     monte_carlo: MonteCarloConfig = Field(default_factory=MonteCarloConfig)
+
+    @model_validator(mode="after")
+    def apply_legacy_overrides(self):
+        if self.power_mw is not None:
+            self.battery.power_mw = self.power_mw
+        if self.duration_hours is not None:
+            self.battery.duration_hours = self.duration_hours
+        if self.degradation_rate is not None:
+            self.battery.calendar_degradation_rate = self.degradation_rate
+        if self.discount_rate is not None:
+            self.financial.discount_rate = self.discount_rate
+        return self
 
 class CashFlowYear(BaseModel):
     year: int

@@ -7,7 +7,7 @@ test('fetchJson deduplicates concurrent GET requests for the same URL', async ()
   clearFetchJsonCache();
 
   let callCount = 0;
-  global.fetch = async () => {
+  globalThis.fetch = async () => {
     callCount += 1;
     await new Promise((resolve) => setTimeout(resolve, 10));
     return {
@@ -30,7 +30,7 @@ test('fetchJson does not deduplicate POST requests', async () => {
   clearFetchJsonCache();
 
   let callCount = 0;
-  global.fetch = async () => {
+  globalThis.fetch = async () => {
     callCount += 1;
     return {
       json: async () => ({ ok: true }),

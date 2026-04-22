@@ -48,7 +48,7 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
       .catch(() => setLoading(false));
   }, [year, region, apiBase]);
 
-  const hourlyData = data?.hourly || [];
+  const hourlyData = useMemo(() => data?.hourly || [], [data]);
 
   const stats = useMemo(() => {
     if (!hourlyData.length) return null;
@@ -120,7 +120,6 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
                 const endAngle = (i + 1) * 15;
                 const color = interpolateColor(h.avg_price, stats.minPrice, stats.maxPrice);
                 const isSelected = selectedHour === i;
-                const barR = innerR + (outerR - innerR) * Math.min(1, Math.abs(h.avg_price) / Math.max(1, Math.abs(stats.maxPrice)));
 
                 return (
                   <g key={i}

@@ -153,7 +153,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t }) {
           setLoading(false);
         }
       })
-      .catch((err) => {
+      .catch(() => {
         if (!ignore) {
           setError(true);
           setLoading(false);

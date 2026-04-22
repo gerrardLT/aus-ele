@@ -29,7 +29,6 @@ function App() {
   const [selectedRegion, setSelectedRegion] = useState('NSW1');
   const [chartData, setChartData] = useState(null);
   const [eventOverlay, setEventOverlay] = useState(null);
-  const [summaryData, setSummaryData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -127,9 +126,6 @@ function App() {
         setSelectedYear(yearsData.years[0]);
       } else {
         setLoading(false);
-      }
-      if (sumData.tables) {
-        setSummaryData(sumData.tables);
       }
       if (sumData.last_update) {
         setLastUpdate(sumData.last_update);

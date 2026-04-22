@@ -5,6 +5,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+from tests.support import ensure_repo_import_paths
+
+ensure_repo_import_paths()
+
 from database import DatabaseManager
 import server
 

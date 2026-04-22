@@ -12,7 +12,6 @@ import {
   YAxis,
 } from 'recharts';
 import { fetchJson } from '../lib/apiClient';
-import { getEventText } from '../lib/eventOverlays';
 
 function buildParams(year, region, month, quarter, dayType) {
   const params = new URLSearchParams({
@@ -41,11 +40,9 @@ export default function CycleCost({
   month,
   quarter,
   dayType,
-  eventOverlay,
   apiBase,
   t,
 }) {
-  const eventText = getEventText(lang);
   const [dailyData, setDailyData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [degradationCost, setDegradationCost] = useState(40);

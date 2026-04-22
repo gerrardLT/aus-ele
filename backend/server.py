@@ -1376,15 +1376,266 @@ from engines.financial_model import FinancialModel
 import bess_backtest
 
 INVESTMENT_RESPONSE_CACHE_SCOPE = "investment_response_v2"
+INVESTMENT_BACKTEST_CACHE_SCOPE = "investment_backtest_v1"
+INVESTMENT_FCAS_CACHE_SCOPE = "investment_fcas_baseline_v1"
 _ANALYSIS_INFLIGHT_LOCK = threading.Lock()
 _ANALYSIS_INFLIGHT: Dict[str, dict] = {}
 
 def _analysis_data_version() -> str:
     return db.get_last_update_time() or "no_last_update"
 
-def _stable_cache_key(payload: dict) -> str:
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+def _analysis_cache_lookup(
+    *,
+    scope: str,
+    payload: dict,
+    data_version: str,
+    allow_response_cache: bool = False,
+):
+    cache_key = _stable_cache_key(payload)
+    cached = db.fetch_analysis_cache(
+        scope=scope,
+        cache_key=cache_key,
+        data_version=data_version,
+    )
+    if cached is not None:
+        return cached
+
+    if allow_response_cache:
+        return response_cache.get_json(INVESTMENT_RESPONSE_REDIS_SCOPE, cache_key)
+
+    return None
+
+
+def _analysis_cache_store(
+    *,
+    scope: str,
+    payload: dict,
+    data_version: str,
+    response_payload: dict,
+    store_response_cache: bool = False,
+):
+    cache_key = _stable_cache_key(payload)
+    db.upsert_analysis_cache(
+        scope=scope,
+        cache_key=cache_key,
+        data_version=data_version,
+        response_payload=response_payload,
+    )
+    if store_response_cache:
+        response_cache.set_json(
+            INVESTMENT_RESPONSE_REDIS_SCOPE,
+            cache_key,
+            response_payload,
+            INVESTMENT_RESPONSE_CACHE_TTL_SECONDS,
+        )
+    return response_payload
+
+
+def _effective_degradation_rate(params: InvestmentParams) -> float:
+    return (
+        params.degradation_rate
+        if params.degradation_rate is not None
+        else params.battery.calendar_degradation_rate
+    )
+
+
+def _build_backtest_summary(params: InvestmentParams, data_version: str) -> dict:
+    payload = {
+        "region": params.region,
+        "backtest_years": list(params.backtest_years),
+        "power_mw": params.battery.power_mw,
+        "duration_hours": params.battery.duration_hours,
+        "capacity_mwh": params.battery.capacity_mwh,
+    }
+    cached = _analysis_cache_lookup(
+        scope=INVESTMENT_BACKTEST_CACHE_SCOPE,
+        payload=payload,
+        data_version=data_version,
+    )
+    if cached is not None:
+        return cached
+
+    storage_config = {
+        "duration_hours": params.battery.duration_hours,
+        "power_mw": params.battery.power_mw,
+        "capacity_mwh": params.battery.capacity_mwh,
+    }
+
+    total_arb_revenue = 0.0
+    total_cycles = 0.0
+    valid_years = 0
+    backtest_modes = []
+    revenue_scopes = []
+
+    with db.get_connection() as conn:
+        for year in params.backtest_years:
+            result = bess_backtest.backtest_arbitrage(conn, params.region, year, storage_config)
+            if result and result.get("total_revenue_aud", 0) > 0:
+                total_arb_revenue += result["total_revenue_aud"]
+                cycles = (
+                    result["annual_discharge_mwh"] / params.battery.capacity_mwh
+                    if params.battery.capacity_mwh
+                    else 365.0
+                )
+                total_cycles += cycles
+                valid_years += 1
+                if result.get("backtest_mode"):
+                    backtest_modes.append(result["backtest_mode"])
+                if result.get("revenue_scope"):
+                    revenue_scopes.append(result["revenue_scope"])
+
+    summary = {
+        "avg_annual_arbitrage_raw": total_arb_revenue / valid_years if valid_years > 0 else 0.0,
+        "avg_annual_cycles": total_cycles / valid_years if valid_years > 0 else 365.0,
+        "valid_years": valid_years,
+        "backtest_mode": " / ".join(dict.fromkeys(backtest_modes)) if backtest_modes else "unavailable",
+        "revenue_scope": " / ".join(dict.fromkeys(revenue_scopes)) if revenue_scopes else "unavailable",
+    }
+    return _analysis_cache_store(
+        scope=INVESTMENT_BACKTEST_CACHE_SCOPE,
+        payload=payload,
+        data_version=data_version,
+        response_payload=summary,
+    )
+
+
+def _estimate_nem_fcas_baseline(params: InvestmentParams) -> tuple[float, str]:
+    total_fcas_avg = 0.0
+    valid_years = 0
+    fcas_expr = " + ".join(f"COALESCE({col}, 0)" for col in FCAS_COLUMNS)
+
+    with db.get_connection() as conn:
+        for year in params.backtest_years:
+            table_name = f"trading_price_{year}"
+            try:
+                res = conn.execute(
+                    f"SELECT AVG({fcas_expr}) FROM {table_name} WHERE region_id = ?",
+                    (params.region,),
+                ).fetchone()
+            except Exception:
+                continue
+
+            if res and res[0] is not None:
+                total_fcas_avg += float(res[0])
+                valid_years += 1
+
+    avg_fcas_price_per_mwh = total_fcas_avg / valid_years if valid_years > 0 else 0.0
+    baseline = avg_fcas_price_per_mwh * params.battery.power_mw * 8760 * params.revenue_capture_rate
+    return baseline, "historical_auto"
+
+
+def _get_fcas_baseline(params: InvestmentParams, data_version: str) -> tuple[float, str]:
+    if params.fcas_revenue_mode == FcasRevenueMode.MANUAL:
+        return params.fcas_revenue_per_mw_year * params.battery.power_mw, "manual_input"
+
+    payload = {
+        "region": params.region,
+        "backtest_years": list(params.backtest_years),
+        "power_mw": params.battery.power_mw,
+        "revenue_capture_rate": params.revenue_capture_rate,
+        "fcas_revenue_mode": params.fcas_revenue_mode.value,
+        "fcas_revenue_per_mw_year": params.fcas_revenue_per_mw_year,
+    }
+    cached = _analysis_cache_lookup(
+        scope=INVESTMENT_FCAS_CACHE_SCOPE,
+        payload=payload,
+        data_version=data_version,
+    )
+    if cached is not None:
+        return cached["baseline_fcas"], cached["source"]
+
+    if params.region == "WEM":
+        result = {
+            "baseline_fcas": params.fcas_revenue_per_mw_year * params.battery.power_mw,
+            "source": "manual_input_wem_fallback",
+        }
+    else:
+        baseline_fcas, source = _estimate_nem_fcas_baseline(params)
+        result = {
+            "baseline_fcas": baseline_fcas,
+            "source": source,
+        }
+
+    cached_result = _analysis_cache_store(
+        scope=INVESTMENT_FCAS_CACHE_SCOPE,
+        payload=payload,
+        data_version=data_version,
+        response_payload=result,
+    )
+    return cached_result["baseline_fcas"], cached_result["source"]
+
+
+def _build_investment_response(
+    *,
+    params: InvestmentParams,
+    base_result,
+    scenarios: list,
+    mc_result,
+    baseline_arbitrage: float,
+    baseline_fcas: float,
+    fcas_baseline_source: str,
+    backtest_summary: dict,
+) -> dict:
+    base_metrics = base_result.metrics.model_dump()
+    storage_capex = max(
+        0.0,
+        base_result.metrics.total_capex - params.financial.grid_connection_cost,
+    )
+    base_cash_flows = []
+    for row in base_result.cash_flows:
+        payload = row.model_dump()
+        if storage_capex > 0 and payload.get("augmentation_capex", 0) > 0:
+            payload["degradation_factor"] = max(
+                0.0,
+                1.0 - (payload["augmentation_capex"] / storage_capex),
+            )
+        else:
+            payload["degradation_factor"] = payload.get("state_of_health")
+        base_cash_flows.append(payload)
+
+    assumptions = [
+        "Using Dual-factor degradation model.",
+        "Monte Carlo simulations: " + ("Enabled" if params.monte_carlo.enabled else "Disabled"),
+        f"Backtest revenue scope: {backtest_summary.get('revenue_scope', 'unavailable')}.",
+    ]
+    if params.region == "WEM":
+        assumptions.append("WEM auto FCAS falls back to manual input because only slim preview data is available.")
+
+    return {
+        "region": params.region,
+        "params_summary": {
+            "power_mw": params.battery.power_mw,
+            "duration_hours": params.battery.duration_hours,
+            "project_life": params.financial.project_life_years,
+        },
+        "base_metrics": base_metrics,
+        "scenarios": [scenario.model_dump() for scenario in scenarios],
+        "monte_carlo": mc_result.model_dump() if mc_result else None,
+        "assumptions": assumptions,
+        # Legacy compatibility fields still consumed by tests and parts of the UI.
+        "metrics": base_metrics,
+        "cash_flows": base_cash_flows,
+        "baseline_revenue": {
+            "arbitrage": baseline_arbitrage,
+            "fcas": baseline_fcas,
+            "capacity": params.financial.capacity_payment_per_mw_year * params.battery.power_mw,
+        },
+        "backtest_mode": backtest_summary.get("backtest_mode", "unavailable"),
+        "revenue_scope": backtest_summary.get("revenue_scope", "unavailable"),
+        "effective_degradation_rate": _effective_degradation_rate(params),
+        "fcas_baseline_source": fcas_baseline_source,
+    }
+
+
+def _acquire_inflight_entry(cache_key: str) -> tuple[dict, bool]:
+    with _ANALYSIS_INFLIGHT_LOCK:
+        entry = _ANALYSIS_INFLIGHT.get(cache_key)
+        if entry is not None:
+            return entry, False
+
+        entry = {"event": threading.Event(), "response": None, "error": None}
+        _ANALYSIS_INFLIGHT[cache_key] = entry
+        return entry, True
 
 @app.post("/api/investment-analysis")
 def investment_analysis(params: InvestmentParams):
@@ -1396,123 +1647,122 @@ def investment_analysis(params: InvestmentParams):
     """
     try:
         data_version = _analysis_data_version()
-        
-        # 1. Prepare storage config for MILP backtest
-        storage_config = {
-            "duration_hours": params.battery.duration_hours,
-            "power_mw": params.battery.power_mw,
-            "capacity_mwh": params.battery.capacity_mwh
-        }
-        
-        # 2. Run Backtest (MILP) for requested years to establish Physical Upper Bound
-        total_arb_revenue = 0.0
-        total_cycles = 0.0
-        valid_years = 0
-        
-        with db.get_connection() as conn:
-            for year in params.backtest_years:
-                result = bess_backtest.backtest_arbitrage(conn, params.region, year, storage_config)
-                if result and result.get("total_revenue_aud", 0) > 0:
-                    total_arb_revenue += result["total_revenue_aud"]
-                    # Convert discharge MWh to equivalent full cycles
-                    cycles = result["annual_discharge_mwh"] / params.battery.capacity_mwh if params.battery.capacity_mwh else 365
-                    total_cycles += cycles
-                    valid_years += 1
-        
-        # Average the results
-        avg_annual_arb = total_arb_revenue / valid_years if valid_years > 0 else 0.0
-        avg_annual_cycles = total_cycles / valid_years if valid_years > 0 else 365.0
-        
-        # Apply revenue capture rate AND forecast inefficiency to the gross upper bound
-        # Forecast Inefficiency simulates the reality of Rolling Horizon (MPC) not having perfect foresight
-        efficiency_factor = max(0.0, 1.0 - params.forecast_inefficiency)
-        avg_annual_arb = avg_annual_arb * efficiency_factor
-        baseline_arbitrage = avg_annual_arb * params.revenue_capture_rate
-        
-        # FCAS Logic: Opportunity Cost & Activation Probability
-        baseline_fcas = 0.0
-        if params.fcas_revenue_mode == FcasRevenueMode.AUTO:
-            total_fcas_avg = 0.0
-            from server import FCAS_COLUMNS
-            fcas_expr = " + ".join(f"COALESCE({col}, 0)" for col in FCAS_COLUMNS)
-            
-            with db.get_connection() as conn:
-                for year in params.backtest_years:
-                    table_name = f"trading_price_{year}"
-                    try:
-                        res = conn.execute(
-                            f"SELECT AVG({fcas_expr}) FROM {table_name} WHERE region_id = ?", 
-                            (params.region,)
-                        ).fetchone()
-                        if res and res[0]:
-                            total_fcas_avg += res[0]
-                    except Exception:
-                        pass
-            
-            avg_fcas_price_per_mwh = total_fcas_avg / valid_years if valid_years > 0 else 0.0
-            
-            # Realistic Co-optimization: Battery provides FCAS based on activation probability.
-            # Revenue = Price * Capacity * Hours (8760) * Capture Rate
-            # We assume it participates when Spread > Opportunity Cost. For auto mode, we use a simple expected value:
-            baseline_fcas = avg_fcas_price_per_mwh * params.battery.power_mw * 8760 * params.revenue_capture_rate
-            
-            # Since FCAS activates with a certain probability, it also causes implicit cycling.
-            # We add the expected FCAS discharge to the annual discharge total.
-            fcas_implicit_discharge_mwh = baseline_fcas / (avg_fcas_price_per_mwh if avg_fcas_price_per_mwh > 0 else 1) * params.fcas_activation_probability
-            avg_annual_cycles += (fcas_implicit_discharge_mwh / params.battery.capacity_mwh if params.battery.capacity_mwh > 0 else 0)
-            
-        else:
-            baseline_fcas = params.fcas_revenue_per_mw_year * params.battery.power_mw
-            # Manual mode implies some cycling too
-            fcas_implicit_discharge_mwh = (baseline_fcas / 15000) * params.battery.power_mw * params.fcas_activation_probability * 8760
-            avg_annual_cycles += (fcas_implicit_discharge_mwh / params.battery.capacity_mwh if params.battery.capacity_mwh > 0 else 0)
-        
-        
-        # Construct cycles history (assuming constant expected cycles based on the backtest average)
-        annual_cycles_history = [avg_annual_cycles] * params.financial.project_life_years
+        request_payload = params.model_dump(mode="json", exclude_none=True)
 
-        # Run base scenario
-        base_scenario_config = params.scenarios[0] if params.scenarios else None
-        if not base_scenario_config:
-            from models.financial_params import ScenarioConfig
-            base_scenario_config = ScenarioConfig(name="Base")
-            
-        base_result = FinancialModel.run_scenario(
-            params, base_scenario_config, baseline_arbitrage, baseline_fcas, annual_cycles_history
+        cached_response = _analysis_cache_lookup(
+            scope=INVESTMENT_RESPONSE_CACHE_SCOPE,
+            payload=request_payload,
+            data_version=data_version,
+            allow_response_cache=True,
         )
-        
-        # Run other scenarios
-        scenarios = [base_result]
-        for config in params.scenarios[1:]:
-            res = FinancialModel.run_scenario(
-                params, config, baseline_arbitrage, baseline_fcas, annual_cycles_history
+        if cached_response is not None:
+            return cached_response
+
+        inflight_key = _stable_cache_key({
+            "scope": INVESTMENT_RESPONSE_CACHE_SCOPE,
+            "request": request_payload,
+            "data_version": data_version,
+        })
+        inflight_entry, is_owner = _acquire_inflight_entry(inflight_key)
+        if not is_owner:
+            inflight_entry["event"].wait()
+            if inflight_entry["error"] is not None:
+                raise inflight_entry["error"]
+            return inflight_entry["response"]
+
+        try:
+            backtest_summary = _build_backtest_summary(params, data_version)
+
+            efficiency_factor = max(0.0, 1.0 - params.forecast_inefficiency)
+            avg_annual_arb = backtest_summary["avg_annual_arbitrage_raw"] * efficiency_factor
+            baseline_arbitrage = avg_annual_arb * params.revenue_capture_rate
+            avg_annual_cycles = backtest_summary["avg_annual_cycles"]
+
+            baseline_fcas, fcas_baseline_source = _get_fcas_baseline(params, data_version)
+            if baseline_fcas > 0:
+                if fcas_baseline_source == "historical_auto":
+                    avg_fcas_price_per_mwh = (
+                        baseline_fcas / (params.battery.power_mw * 8760 * params.revenue_capture_rate)
+                        if params.battery.power_mw > 0 and params.revenue_capture_rate > 0
+                        else 0.0
+                    )
+                    fcas_implicit_discharge_mwh = (
+                        baseline_fcas / avg_fcas_price_per_mwh * params.fcas_activation_probability
+                        if avg_fcas_price_per_mwh > 0
+                        else 0.0
+                    )
+                else:
+                    fcas_implicit_discharge_mwh = (
+                        (baseline_fcas / 15000) * params.battery.power_mw * params.fcas_activation_probability * 8760
+                    )
+                avg_annual_cycles += (
+                    fcas_implicit_discharge_mwh / params.battery.capacity_mwh
+                    if params.battery.capacity_mwh > 0
+                    else 0.0
+                )
+
+            annual_cycles_history = [avg_annual_cycles] * params.financial.project_life_years
+
+            base_scenario_config = params.scenarios[0] if params.scenarios else None
+            if not base_scenario_config:
+                from models.financial_params import ScenarioConfig
+                base_scenario_config = ScenarioConfig(name="Base")
+
+            base_result = FinancialModel.run_scenario(
+                params,
+                base_scenario_config,
+                baseline_arbitrage,
+                baseline_fcas,
+                annual_cycles_history,
             )
-            scenarios.append(res)
-            
-        # Run Monte Carlo if enabled
-        mc_result = None
-        if params.monte_carlo.enabled:
-            mc_result = FinancialModel.run_monte_carlo(
-                params, baseline_arbitrage, baseline_fcas, annual_cycles_history
+
+            scenarios = [base_result]
+            for config in params.scenarios[1:]:
+                scenarios.append(
+                    FinancialModel.run_scenario(
+                        params,
+                        config,
+                        baseline_arbitrage,
+                        baseline_fcas,
+                        annual_cycles_history,
+                    )
+                )
+
+            mc_result = None
+            if params.monte_carlo.enabled:
+                mc_result = FinancialModel.run_monte_carlo(
+                    params,
+                    baseline_arbitrage,
+                    baseline_fcas,
+                    annual_cycles_history,
+                )
+
+            response = _build_investment_response(
+                params=params,
+                base_result=base_result,
+                scenarios=scenarios,
+                mc_result=mc_result,
+                baseline_arbitrage=baseline_arbitrage,
+                baseline_fcas=baseline_fcas,
+                fcas_baseline_source=fcas_baseline_source,
+                backtest_summary=backtest_summary,
             )
-            
-        response = {
-            "region": params.region,
-            "params_summary": {
-                "power_mw": params.battery.power_mw,
-                "duration_hours": params.battery.duration_hours,
-                "project_life": params.financial.project_life_years
-            },
-            "base_metrics": base_result.metrics.model_dump(),
-            "scenarios": [s.model_dump() for s in scenarios],
-            "monte_carlo": mc_result.model_dump() if mc_result else None,
-            "assumptions": [
-                "Using Dual-factor degradation model.",
-                "Monte Carlo simulations: " + ("Enabled" if params.monte_carlo.enabled else "Disabled"),
-            ]
-        }
-        
-        return response
+            response = _analysis_cache_store(
+                scope=INVESTMENT_RESPONSE_CACHE_SCOPE,
+                payload=request_payload,
+                data_version=data_version,
+                response_payload=response,
+                store_response_cache=True,
+            )
+            inflight_entry["response"] = response
+            return response
+        except Exception as exc:
+            inflight_entry["error"] = exc
+            raise
+        finally:
+            inflight_entry["event"].set()
+            with _ANALYSIS_INFLIGHT_LOCK:
+                _ANALYSIS_INFLIGHT.pop(inflight_key, None)
         
     except Exception as e:
         logger.error(f"Investment analysis error: {e}")

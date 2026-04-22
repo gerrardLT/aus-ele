@@ -9,6 +9,10 @@ import time
 import unittest
 from unittest import mock
 
+from tests.support import ensure_repo_import_paths
+
+ensure_repo_import_paths()
+
 import bess_backtest
 from database import DatabaseManager
 import server

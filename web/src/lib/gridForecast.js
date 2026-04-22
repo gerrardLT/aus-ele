@@ -239,14 +239,6 @@ function toNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function formatNumber(value, locale = 'en', options = {}) {
-  const numeric = toNumber(value);
-  if (numeric === null) {
-    return getCopy(locale).generic.notAvailable;
-  }
-  return new Intl.NumberFormat(normalizeLocale(locale) === 'zh' ? 'zh-CN' : 'en-US', options).format(numeric);
-}
-
 function formatSigned(value, locale = 'en', fractionDigits = 1) {
   const numeric = toNumber(value);
   if (numeric === null) {
