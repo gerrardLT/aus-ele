@@ -17,6 +17,9 @@ class DatabaseManager:
     GRID_FORECAST_SNAPSHOT_TABLE = "grid_forecast_snapshot"
     GRID_FORECAST_SYNC_TABLE = "grid_forecast_sync_state"
     ANALYSIS_CACHE_TABLE = "analysis_cache"
+    FINGRID_DATASET_TABLE = "fingrid_dataset_catalog"
+    FINGRID_TIMESERIES_TABLE = "fingrid_timeseries"
+    FINGRID_SYNC_STATE_TABLE = "fingrid_sync_state"
 
     WEM_ESS_MARKET_COLUMNS = [
         "dispatch_interval",
@@ -306,6 +309,63 @@ class DatabaseManager:
         cursor.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_{self.ANALYSIS_CACHE_TABLE}_lookup
             ON {self.ANALYSIS_CACHE_TABLE} (scope, cache_key, data_version)
+        """)
+        conn.commit()
+
+    def ensure_fingrid_tables(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.FINGRID_DATASET_TABLE} (
+                dataset_id TEXT PRIMARY KEY,
+                dataset_code TEXT,
+                name TEXT NOT NULL,
+                description TEXT,
+                unit TEXT NOT NULL,
+                frequency TEXT NOT NULL,
+                timezone TEXT NOT NULL,
+                value_kind TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                updated_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.FINGRID_TIMESERIES_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dataset_id TEXT NOT NULL,
+                series_key TEXT NOT NULL,
+                timestamp_utc TEXT NOT NULL,
+                timestamp_local TEXT NOT NULL,
+                value REAL,
+                unit TEXT NOT NULL,
+                quality_flag TEXT,
+                source_updated_at TEXT,
+                ingested_at TEXT NOT NULL,
+                extra_json TEXT NOT NULL DEFAULT '{{}}',
+                UNIQUE(dataset_id, series_key, timestamp_utc)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.FINGRID_SYNC_STATE_TABLE} (
+                dataset_id TEXT PRIMARY KEY,
+                last_success_at TEXT,
+                last_attempt_at TEXT,
+                last_cursor TEXT,
+                last_synced_timestamp_utc TEXT,
+                sync_status TEXT NOT NULL,
+                last_error TEXT,
+                backfill_started_at TEXT,
+                backfill_completed_at TEXT
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.FINGRID_TIMESERIES_TABLE}_dataset_time
+            ON {self.FINGRID_TIMESERIES_TABLE} (dataset_id, timestamp_utc)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.FINGRID_TIMESERIES_TABLE}_dataset_series_time
+            ON {self.FINGRID_TIMESERIES_TABLE} (dataset_id, series_key, timestamp_utc)
         """)
         conn.commit()
 
@@ -657,6 +717,296 @@ class DatabaseManager:
         if not row:
             return None
         return json.loads(row[0])
+
+    def upsert_fingrid_dataset_catalog(self, records: list[dict]):
+        if not records:
+            return 0
+
+        with self.get_connection() as conn:
+            self.ensure_fingrid_tables(conn)
+            conn.executemany(
+                f"""
+                INSERT INTO {self.FINGRID_DATASET_TABLE} (
+                    dataset_id,
+                    dataset_code,
+                    name,
+                    description,
+                    unit,
+                    frequency,
+                    timezone,
+                    value_kind,
+                    source_url,
+                    enabled,
+                    metadata_json,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset_id) DO UPDATE SET
+                    dataset_code=excluded.dataset_code,
+                    name=excluded.name,
+                    description=excluded.description,
+                    unit=excluded.unit,
+                    frequency=excluded.frequency,
+                    timezone=excluded.timezone,
+                    value_kind=excluded.value_kind,
+                    source_url=excluded.source_url,
+                    enabled=excluded.enabled,
+                    metadata_json=excluded.metadata_json,
+                    updated_at=excluded.updated_at
+                """,
+                [
+                    (
+                        record["dataset_id"],
+                        record.get("dataset_code"),
+                        record["name"],
+                        record.get("description"),
+                        record["unit"],
+                        record["frequency"],
+                        record["timezone"],
+                        record["value_kind"],
+                        record["source_url"],
+                        int(record.get("enabled", 1)),
+                        json.dumps(record.get("metadata_json") or {}),
+                        record["updated_at"],
+                    )
+                    for record in records
+                ],
+            )
+            conn.commit()
+        return len(records)
+
+    def upsert_fingrid_timeseries(self, records: list[dict]):
+        if not records:
+            return 0
+
+        with self.get_connection() as conn:
+            self.ensure_fingrid_tables(conn)
+            conn.executemany(
+                f"""
+                INSERT INTO {self.FINGRID_TIMESERIES_TABLE} (
+                    dataset_id,
+                    series_key,
+                    timestamp_utc,
+                    timestamp_local,
+                    value,
+                    unit,
+                    quality_flag,
+                    source_updated_at,
+                    ingested_at,
+                    extra_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset_id, series_key, timestamp_utc) DO UPDATE SET
+                    timestamp_local=excluded.timestamp_local,
+                    value=excluded.value,
+                    unit=excluded.unit,
+                    quality_flag=excluded.quality_flag,
+                    source_updated_at=excluded.source_updated_at,
+                    ingested_at=excluded.ingested_at,
+                    extra_json=excluded.extra_json
+                """,
+                [
+                    (
+                        record["dataset_id"],
+                        record["series_key"],
+                        record["timestamp_utc"],
+                        record["timestamp_local"],
+                        record.get("value"),
+                        record["unit"],
+                        record.get("quality_flag"),
+                        record.get("source_updated_at"),
+                        record["ingested_at"],
+                        json.dumps(record.get("extra_json") or {}),
+                    )
+                    for record in records
+                ],
+            )
+            conn.commit()
+        return len(records)
+
+    def upsert_fingrid_sync_state(
+        self,
+        *,
+        dataset_id: str,
+        last_success_at,
+        last_attempt_at,
+        last_cursor,
+        last_synced_timestamp_utc,
+        sync_status: str,
+        last_error,
+        backfill_started_at,
+        backfill_completed_at,
+    ):
+        with self.get_connection() as conn:
+            self.ensure_fingrid_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.FINGRID_SYNC_STATE_TABLE} (
+                    dataset_id,
+                    last_success_at,
+                    last_attempt_at,
+                    last_cursor,
+                    last_synced_timestamp_utc,
+                    sync_status,
+                    last_error,
+                    backfill_started_at,
+                    backfill_completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dataset_id) DO UPDATE SET
+                    last_success_at=excluded.last_success_at,
+                    last_attempt_at=excluded.last_attempt_at,
+                    last_cursor=excluded.last_cursor,
+                    last_synced_timestamp_utc=excluded.last_synced_timestamp_utc,
+                    sync_status=excluded.sync_status,
+                    last_error=excluded.last_error,
+                    backfill_started_at=excluded.backfill_started_at,
+                    backfill_completed_at=excluded.backfill_completed_at
+                """,
+                (
+                    dataset_id,
+                    last_success_at,
+                    last_attempt_at,
+                    last_cursor,
+                    last_synced_timestamp_utc,
+                    sync_status,
+                    last_error,
+                    backfill_started_at,
+                    backfill_completed_at,
+                ),
+            )
+            conn.commit()
+
+    def fetch_fingrid_dataset_catalog(self, enabled_only: bool = True) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_fingrid_tables(conn)
+            cursor = conn.cursor()
+            query = f"""
+                SELECT dataset_id, dataset_code, name, description, unit, frequency, timezone,
+                       value_kind, source_url, enabled, metadata_json, updated_at
+                FROM {self.FINGRID_DATASET_TABLE}
+            """
+            if enabled_only:
+                query += " WHERE enabled = 1"
+            query += " ORDER BY dataset_id ASC"
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+        return [
+            {
+                "dataset_id": row[0],
+                "dataset_code": row[1],
+                "name": row[2],
+                "description": row[3],
+                "unit": row[4],
+                "frequency": row[5],
+                "timezone": row[6],
+                "value_kind": row[7],
+                "source_url": row[8],
+                "enabled": row[9],
+                "metadata_json": json.loads(row[10]),
+                "updated_at": row[11],
+            }
+            for row in rows
+        ]
+
+    def fetch_fingrid_series(
+        self,
+        *,
+        dataset_id: str,
+        start_utc: str | None = None,
+        end_utc: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_fingrid_tables(conn)
+            cursor = conn.cursor()
+            clauses = ["dataset_id = ?"]
+            params = [dataset_id]
+            if start_utc:
+                clauses.append("timestamp_utc >= ?")
+                params.append(start_utc)
+            if end_utc:
+                clauses.append("timestamp_utc <= ?")
+                params.append(end_utc)
+
+            query = f"""
+                SELECT dataset_id, series_key, timestamp_utc, timestamp_local, value, unit,
+                       quality_flag, source_updated_at, ingested_at, extra_json
+                FROM {self.FINGRID_TIMESERIES_TABLE}
+                WHERE {' AND '.join(clauses)}
+                ORDER BY timestamp_utc ASC
+            """
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        return [
+            {
+                "dataset_id": row[0],
+                "series_key": row[1],
+                "timestamp_utc": row[2],
+                "timestamp_local": row[3],
+                "value": row[4],
+                "unit": row[5],
+                "quality_flag": row[6],
+                "source_updated_at": row[7],
+                "ingested_at": row[8],
+                "extra_json": json.loads(row[9]),
+            }
+            for row in rows
+        ]
+
+    def fetch_fingrid_sync_state(self, dataset_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_fingrid_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT dataset_id, last_success_at, last_attempt_at, last_cursor,
+                       last_synced_timestamp_utc, sync_status, last_error,
+                       backfill_started_at, backfill_completed_at
+                FROM {self.FINGRID_SYNC_STATE_TABLE}
+                WHERE dataset_id = ?
+                """,
+                (dataset_id,),
+            )
+            row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "dataset_id": row[0],
+            "last_success_at": row[1],
+            "last_attempt_at": row[2],
+            "last_cursor": row[3],
+            "last_synced_timestamp_utc": row[4],
+            "sync_status": row[5],
+            "last_error": row[6],
+            "backfill_started_at": row[7],
+            "backfill_completed_at": row[8],
+        }
+
+    def fetch_fingrid_dataset_coverage(self, dataset_id: str) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_fingrid_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT MIN(timestamp_utc), MAX(timestamp_utc), COUNT(*)
+                FROM {self.FINGRID_TIMESERIES_TABLE}
+                WHERE dataset_id = ?
+                """,
+                (dataset_id,),
+            )
+            row = cursor.fetchone()
+
+        return {
+            "dataset_id": dataset_id,
+            "coverage_start_utc": row[0],
+            "coverage_end_utc": row[1],
+            "record_count": row[2] or 0,
+        }
 
     def batch_upsert_wem_ess_market(self, records: list[dict]):
         if not records:
