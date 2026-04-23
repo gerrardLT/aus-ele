@@ -1,5 +1,8 @@
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from statistics import mean
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from .catalog import get_dataset_config, list_dataset_configs
 from .client import FingridClient
@@ -122,13 +125,153 @@ def sync_dataset(
     }
 
 
-def get_dataset_series_payload(db, *, dataset_id: str, start: str | None, end: str | None, aggregation: str, tz: str, limit: int) -> dict:
-    raise NotImplementedError
+def _bucket_key(local_dt, aggregation: str):
+    if aggregation in {"raw", "hour"}:
+        return local_dt.replace(minute=0, second=0, microsecond=0)
+    if aggregation == "day":
+        return local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    if aggregation == "week":
+        iso_year, iso_week, _ = local_dt.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    if aggregation == "month":
+        return local_dt.strftime("%Y-%m-01T00:00:00")
+    raise ValueError(f"Unsupported aggregation: {aggregation}")
+
+
+def _aggregate_rows(rows: list[dict], *, aggregation: str, tz_name: str) -> list[dict]:
+    if aggregation == "raw":
+        return [
+            {
+                "timestamp": row["timestamp_local"],
+                "timestamp_utc": row["timestamp_utc"],
+                "value": row["value"],
+                "unit": row["unit"],
+            }
+            for row in rows
+        ]
+
+    tz = ZoneInfo(tz_name)
+    buckets = defaultdict(list)
+    for row in rows:
+        utc_dt = _parse_utc(row["timestamp_utc"])
+        local_dt = utc_dt.astimezone(tz)
+        buckets[_bucket_key(local_dt, aggregation)].append(row["value"])
+
+    items = []
+    for key, values in sorted(buckets.items(), key=lambda item: str(item[0])):
+        timestamp = key if isinstance(key, str) else key.isoformat()
+        items.append(
+            {
+                "timestamp": timestamp,
+                "timestamp_utc": timestamp,
+                "value": round(mean(values), 4),
+                "unit": rows[0]["unit"] if rows else "EUR/MW",
+            }
+        )
+    return items
+
+
+def _build_summary_kpis(rows: list[dict]) -> dict:
+    values = [row["value"] for row in rows if row["value"] is not None]
+    if not values:
+        return {
+            "latest_value": None,
+            "latest_timestamp": None,
+            "avg_24h": None,
+            "avg_7d": None,
+            "avg_30d": None,
+            "min_value": None,
+            "max_value": None,
+        }
+
+    latest = rows[-1]
+    return {
+        "latest_value": latest["value"],
+        "latest_timestamp": latest["timestamp_utc"],
+        "avg_24h": round(mean(values[-24:]), 4),
+        "avg_7d": round(mean(values[-(24 * 7):]), 4),
+        "avg_30d": round(mean(values[-(24 * 30):]), 4),
+        "min_value": min(values),
+        "max_value": max(values),
+    }
+
+
+def _hourly_profile(rows: list[dict], tz_name: str) -> list[dict]:
+    tz = ZoneInfo(tz_name)
+    buckets = defaultdict(list)
+    for row in rows:
+        local_dt = _parse_utc(row["timestamp_utc"]).astimezone(tz)
+        buckets[local_dt.hour].append(row["value"])
+    return [{"hour": hour, "avg_value": round(mean(values), 4)} for hour, values in sorted(buckets.items())]
+
+
+def _yearly_average_series(rows: list[dict], tz_name: str) -> list[dict]:
+    tz = ZoneInfo(tz_name)
+    buckets = defaultdict(list)
+    for row in rows:
+        local_dt = _parse_utc(row["timestamp_utc"]).astimezone(tz)
+        buckets[local_dt.year].append(row["value"])
+    return [
+        {
+            "timestamp": f"{year}-01-01T00:00:00",
+            "timestamp_utc": f"{year}-01-01T00:00:00Z",
+            "value": round(mean(values), 4),
+            "unit": rows[0]["unit"] if rows else "EUR/MW",
+        }
+        for year, values in sorted(buckets.items())
+    ]
+
+
+def get_dataset_series_payload(
+    db,
+    *,
+    dataset_id: str,
+    start: str | None,
+    end: str | None,
+    aggregation: str,
+    tz: str,
+    limit: int,
+) -> dict:
+    dataset = get_dataset_config(dataset_id)
+    rows = db.fetch_fingrid_series(dataset_id=dataset_id, start_utc=start, end_utc=end, limit=limit)
+    return {
+        "dataset": dataset,
+        "query": {"start": start, "end": end, "aggregation": aggregation, "tz": tz, "limit": limit},
+        "series": _aggregate_rows(rows, aggregation=aggregation, tz_name=tz),
+    }
 
 
 def get_dataset_summary_payload(db, *, dataset_id: str, start: str | None, end: str | None) -> dict:
-    raise NotImplementedError
+    dataset = get_dataset_config(dataset_id)
+    rows = db.fetch_fingrid_series(dataset_id=dataset_id, start_utc=start, end_utc=end)
+    return {
+        "dataset": dataset,
+        "window": {"start": start, "end": end},
+        "kpis": _build_summary_kpis(rows),
+        "monthly_average_series": _aggregate_rows(rows, aggregation="month", tz_name=dataset["timezone"]),
+        "yearly_average_series": _yearly_average_series(rows, dataset["timezone"]),
+        "hourly_profile": _hourly_profile(rows, dataset["timezone"]),
+    }
 
 
 def get_dataset_status_payload(db, *, dataset_id: str) -> dict:
-    raise NotImplementedError
+    dataset = get_dataset_config(dataset_id)
+    coverage = db.fetch_fingrid_dataset_coverage(dataset_id)
+    sync_state = db.fetch_fingrid_sync_state(dataset_id) or {
+        "dataset_id": dataset_id,
+        "last_success_at": None,
+        "last_attempt_at": None,
+        "last_cursor": None,
+        "last_synced_timestamp_utc": None,
+        "sync_status": "idle",
+        "last_error": None,
+        "backfill_started_at": None,
+        "backfill_completed_at": None,
+    }
+    return {
+        "dataset": dataset,
+        "status": {
+            **sync_state,
+            **coverage,
+        },
+    }
