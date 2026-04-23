@@ -67,3 +67,36 @@ npm run dev
 ---
 
 *This repository is built for quantitative analysis and visualization of absolute grid fluctuations. Discover anomalous bidding behaviors inside the Australian Electrical System.*
+
+---
+
+## Fingrid Open Data
+
+Set these environment variables before using the Fingrid endpoints or sync CLI:
+
+```bash
+set FINGRID_API_KEY=your-key-here
+set FINGRID_BASE_URL=https://data.fingrid.fi/api
+set FINGRID_REQUEST_INTERVAL_SECONDS=6.5
+set FINGRID_TIMEOUT_SECONDS=30
+set FINGRID_DEFAULT_BACKFILL_START=2014-01-01T00:00:00Z
+set FINGRID_DEFAULT_INCREMENTAL_LOOKBACK_DAYS=30
+```
+
+Backfill dataset `317`:
+
+```bash
+python scrapers/fingrid_sync.py --dataset 317 --mode backfill
+```
+
+Incremental refresh:
+
+```bash
+python scrapers/fingrid_sync.py --dataset 317 --mode incremental
+```
+
+Frontend route:
+
+```text
+http://127.0.0.1:5173/fingrid
+```
