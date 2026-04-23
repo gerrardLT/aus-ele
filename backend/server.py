@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 import hashlib
 import json
@@ -15,6 +15,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import DatabaseManager
 import grid_events
 import grid_forecast
+from fingrid import catalog as fingrid_catalog
+from fingrid import service as fingrid_service
+from fingrid.export import build_fingrid_csv
 from network_fees import get_default_fee, get_window_sizes, get_all_fees, get_settlement_interval
 from collections import defaultdict
 from response_cache import RedisResponseCache
@@ -266,6 +269,96 @@ def sync_data(background_tasks: BackgroundTasks):
     """Trigger data scrape manually via background task."""
     background_tasks.add_task(run_sync_scrapers)
     return {"status": "Update started in background"}
+
+
+@app.get("/api/fingrid/datasets")
+def get_fingrid_datasets():
+    fingrid_service.seed_dataset_catalog(db)
+    return {"datasets": fingrid_catalog.list_dataset_configs()}
+
+
+@app.get("/api/fingrid/datasets/{dataset_id}/status")
+def get_fingrid_dataset_status(dataset_id: str):
+    try:
+        return fingrid_service.get_dataset_status_payload(db, dataset_id=dataset_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
+
+
+@app.post("/api/fingrid/datasets/{dataset_id}/sync")
+def sync_fingrid_dataset(
+    dataset_id: str,
+    background_tasks: BackgroundTasks,
+    mode: str = Query("incremental"),
+):
+    try:
+        fingrid_catalog.get_dataset_config(dataset_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
+
+    background_tasks.add_task(fingrid_service.sync_dataset, db, dataset_id=dataset_id, mode=mode)
+    return {"status": "accepted", "dataset_id": dataset_id, "mode": mode}
+
+
+@app.get("/api/fingrid/datasets/{dataset_id}/series")
+def get_fingrid_dataset_series(
+    dataset_id: str,
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    tz: str = Query("Europe/Helsinki"),
+    aggregation: str = Query("raw", pattern="^(raw|hour|day|week|month)$"),
+    limit: int = Query(5000),
+):
+    try:
+        return fingrid_service.get_dataset_series_payload(
+            db,
+            dataset_id=dataset_id,
+            start=start,
+            end=end,
+            aggregation=aggregation,
+            tz=tz,
+            limit=limit,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
+
+
+@app.get("/api/fingrid/datasets/{dataset_id}/summary")
+def get_fingrid_dataset_summary(
+    dataset_id: str,
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+):
+    try:
+        return fingrid_service.get_dataset_summary_payload(db, dataset_id=dataset_id, start=start, end=end)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
+
+
+@app.get("/api/fingrid/datasets/{dataset_id}/export")
+def export_fingrid_dataset_csv(
+    dataset_id: str,
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    tz: str = Query("Europe/Helsinki"),
+    aggregation: str = Query("raw", pattern="^(raw|hour|day|week|month)$"),
+    limit: int = Query(5000),
+):
+    payload = fingrid_service.get_dataset_series_payload(
+        db,
+        dataset_id=dataset_id,
+        start=start,
+        end=end,
+        aggregation=aggregation,
+        tz=tz,
+        limit=limit,
+    )
+    csv_text = build_fingrid_csv(payload["series"])
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="fingrid-{dataset_id}.csv"'},
+    )
 
 
 def _build_temporal_filters(
