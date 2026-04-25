@@ -294,13 +294,25 @@ def build_recent_market_features(db, market: str, region: str, as_of: str) -> di
             "recent_fcas_avg": sum(fcas_prices) / len(fcas_prices),
         }
 
+    empty_nem_history = {
+        "coverage": "none",
+        "recent_history_points": 0,
+        "recent_avg_price": 0.0,
+        "recent_max_price": 0.0,
+        "recent_min_price": 0.0,
+        "negative_ratio": 0.0,
+        "recent_fcas_avg": 0.0,
+    }
+
     with db.get_connection() as conn:
         table_name = f"trading_price_{as_of_dt.year}"
         cursor = conn.cursor()
         cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (table_name,))
         if not cursor.fetchone():
             tables = _available_year_tables(conn, market, region)
-            table_name = tables[-1] if tables else table_name
+            if not tables:
+                return empty_nem_history
+            table_name = tables[-1]
 
         cursor.execute(f"PRAGMA table_info({table_name})")
         existing_cols = {row[1] for row in cursor.fetchall()}
@@ -321,15 +333,7 @@ def build_recent_market_features(db, market: str, region: str, as_of: str) -> di
         rows = cursor.fetchall()
 
     if not rows:
-        return {
-            "coverage": "none",
-            "recent_history_points": 0,
-            "recent_avg_price": 0.0,
-            "recent_max_price": 0.0,
-            "recent_min_price": 0.0,
-            "negative_ratio": 0.0,
-            "recent_fcas_avg": 0.0,
-        }
+        return empty_nem_history
 
     prices = [float(row[0] or 0.0) for row in rows]
     total_fcas = [float(row[1] or 0.0) for row in rows]

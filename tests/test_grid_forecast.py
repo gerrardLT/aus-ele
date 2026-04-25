@@ -368,6 +368,25 @@ class GridForecastEngineTests(unittest.TestCase):
         self.assertEqual(result["market_context"]["constraint_pressure_index"], 34.0)
 
     @mock.patch("grid_forecast.fetch_nem_predispatch_window")
+    def test_nem_forecast_handles_missing_trading_price_tables_without_500(self, mock_p5):
+        import grid_forecast
+
+        mock_p5.return_value = []
+
+        result = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="24h",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertEqual(result["metadata"]["coverage_quality"], "partial")
+        self.assertEqual(result["coverage"]["source_status"]["recent_market_history"], "missing")
+        self.assertEqual(result["coverage"]["source_status"]["nem_predispatch"], "missing")
+        self.assertEqual(result["coverage"]["recent_history_points"], 0)
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window")
     def test_cache_hit_skips_upstream_fetch(self, mock_p5):
         import grid_forecast
 
