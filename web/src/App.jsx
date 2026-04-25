@@ -31,7 +31,13 @@ function SectionFallback({ minHeight = '320px' }) {
 }
 
 function App() {
-  const [lang, setLang] = useState('zh');
+  const [lang, setLang] = useState(() => {
+    try {
+      return localStorage.getItem('app_lang') || 'zh';
+    } catch {
+      return 'zh';
+    }
+  });
   const [years, setYears] = useState([]);
   const [selectedYear, setSelectedYear] = useState(null);
   const [selectedMonth, setSelectedMonth] = useState('ALL');
@@ -151,6 +157,14 @@ function App() {
   useEffect(() => {
     fetchInitial();
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('app_lang', lang);
+    } catch {
+      // Ignore localStorage write failures in restricted environments.
+    }
+  }, [lang]);
 
   const handleSync = async () => {
     setIsSyncing(true);
@@ -370,6 +384,12 @@ function App() {
           <div className="flex items-center space-x-6 text-sm font-sans tracking-wide text-[var(--color-muted)]">
             <span className="hidden md:inline">{t.nav.subtitle}</span>
             {lastUpdate && <span className="hidden lg:inline text-xs border border-[var(--color-border)] rounded-full px-3 py-1 bg-[var(--color-bg)]">{lastUpdate}</span>}
+            <a
+              href="/fingrid"
+              className="px-3 py-1.5 border border-[var(--color-border)] rounded hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)] transition-colors min-h-[44px] inline-flex items-center"
+            >
+              {lang === 'zh' ? '芬兰 Fingrid' : 'Fingrid'}
+            </a>
             <button
                onClick={handleSync}
                disabled={isSyncing}

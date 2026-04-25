@@ -29,6 +29,16 @@ test('buildFingridSummaryUrl and buildFingridSyncUrl include dataset id', () => 
   assert.match(buildFingridSyncUrl('http://127.0.0.1:8085/api', '317'), /datasets\/317\/sync/);
 });
 
+test('buildFingridSeriesUrl omits the limit parameter when limit is null', () => {
+  const url = buildFingridSeriesUrl('http://127.0.0.1:8085/api', {
+    datasetId: '317',
+    aggregation: '4h',
+    limit: null,
+  });
+
+  assert.doesNotMatch(url, /limit=/);
+});
+
 test('normalizeFingridDatasetList falls back to an empty array', () => {
   assert.deepEqual(normalizeFingridDatasetList({}), []);
   assert.equal(normalizeFingridDatasetList({ datasets: [{ dataset_id: '317' }] })[0].dataset_id, '317');

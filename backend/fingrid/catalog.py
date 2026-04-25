@@ -13,7 +13,7 @@ FINGRID_DATASETS = {
         "series_key": "fcrn_hourly_market_price",
         "default_backfill_start": "2014-01-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
-        "supported_aggregations": ["raw", "hour", "day", "week", "month"],
+        "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {
             "market": "Fingrid",
             "product": "FCR-N",

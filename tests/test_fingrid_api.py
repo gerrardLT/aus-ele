@@ -1,4 +1,5 @@
 import os
+import inspect
 import tempfile
 import unittest
 from unittest import mock
@@ -42,3 +43,34 @@ class FingridApiTests(unittest.TestCase):
         self.assertEqual(response["status"], "accepted")
         self.assertEqual(response["dataset_id"], "317")
         self.assertEqual(len(tasks.tasks), 1)
+
+    def test_series_route_uses_no_default_limit_when_query_param_is_missing(self):
+        signature = inspect.signature(server.get_fingrid_dataset_series)
+        self.assertIsNone(signature.parameters["limit"].default.default)
+
+    def test_export_route_uses_no_default_limit_when_query_param_is_missing(self):
+        signature = inspect.signature(server.export_fingrid_dataset_csv)
+        self.assertIsNone(signature.parameters["limit"].default.default)
+
+    @mock.patch("server.os.environ", {"FINGRID_API_KEY": "test-key"})
+    @mock.patch("server.fingrid_service.sync_dataset")
+    @mock.patch("server.fingrid_catalog.list_dataset_configs", return_value=[{"dataset_id": "317"}])
+    def test_run_fingrid_hourly_sync_runs_incremental_sync_for_supported_datasets(
+        self,
+        mock_list_configs,
+        mock_sync_dataset,
+    ):
+        result = server.run_fingrid_hourly_sync()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["datasets_synced"], 1)
+        mock_sync_dataset.assert_called_once_with(self.db, dataset_id="317", mode="incremental")
+
+    @mock.patch("server.fingrid_service.sync_dataset")
+    def test_run_fingrid_hourly_sync_skips_when_api_key_is_missing(self, mock_sync_dataset):
+        with mock.patch.dict("server.os.environ", {}, clear=True):
+            result = server.run_fingrid_hourly_sync()
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "missing_api_key")
+        mock_sync_dataset.assert_not_called()

@@ -16,6 +16,10 @@ class FingridCatalogTests(unittest.TestCase):
         self.assertEqual(dataset["unit"], "EUR/MW")
         self.assertEqual(dataset["timezone"], "Europe/Helsinki")
         self.assertEqual(dataset["value_kind"], "reserve_capacity_price")
+        self.assertEqual(
+            dataset["supported_aggregations"],
+            ["raw", "1h", "2h", "4h", "day", "week", "month"],
+        )
         self.assertIn("month", dataset["supported_aggregations"])
         self.assertEqual(list_dataset_configs()[0]["dataset_id"], "317")
 

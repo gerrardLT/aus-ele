@@ -4,15 +4,20 @@ import io
 
 def build_fingrid_csv(series: list[dict]) -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=["timestamp", "timestamp_utc", "value", "unit"])
+    fieldnames = [
+        "timestamp",
+        "timestamp_utc",
+        "bucket_start",
+        "bucket_end",
+        "value",
+        "avg_value",
+        "peak_value",
+        "trough_value",
+        "sample_count",
+        "unit",
+    ]
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
     writer.writeheader()
     for row in series:
-        writer.writerow(
-            {
-                "timestamp": row["timestamp"],
-                "timestamp_utc": row["timestamp_utc"],
-                "value": row["value"],
-                "unit": row["unit"],
-            }
-        )
+        writer.writerow({key: row.get(key) for key in fieldnames})
     return buffer.getvalue()

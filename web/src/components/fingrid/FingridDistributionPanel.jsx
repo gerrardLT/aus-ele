@@ -1,18 +1,18 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-export default function FingridDistributionPanel({ payload, loading }) {
+export default function FingridDistributionPanel({ payload, loading, copy }) {
   const monthly = payload?.monthly_average_series || [];
   const yearly = payload?.yearly_average_series || [];
   const hourly = payload?.hourly_profile || [];
 
   if (loading) {
-    return <section className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">Loading distributions...</section>;
+    return <section className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">{copy.loadingDistributions}</section>;
   }
 
   return (
     <section className="grid gap-6">
       <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">Monthly Average</div>
+        <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">{copy.monthlyAverage}</div>
         <div className="h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={monthly}>
@@ -26,7 +26,7 @@ export default function FingridDistributionPanel({ payload, loading }) {
         </div>
       </div>
       <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">Yearly Average</div>
+        <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">{copy.yearlyAverage}</div>
         <div className="h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={yearly}>
@@ -40,7 +40,7 @@ export default function FingridDistributionPanel({ payload, loading }) {
         </div>
       </div>
       <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">Hourly Profile</div>
+        <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">{copy.hourlyProfile}</div>
         <div className="h-[220px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={hourly}>

@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import uvicorn
@@ -94,7 +95,16 @@ async def lifespan(app: FastAPI):
     # Startup actions
     logger.info("Starting AEMO NEM API server with built-in Scheduler...")
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_sync_scrapers, 'cron', hour=2, minute=0)
+    scheduler.add_job(run_sync_scrapers, 'cron', hour=2, minute=0, id="market-daily-sync")
+    scheduler.add_job(
+        run_fingrid_hourly_sync,
+        'cron',
+        minute=10,
+        id="fingrid-hourly-sync",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=15 * 60,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
     
@@ -264,6 +274,35 @@ def run_sync_scrapers():
     except Exception as e:
         logger.error(f"Error in data sync task: {e}")
 
+
+def _fingrid_sync_enabled() -> bool:
+    return bool(os.environ.get("FINGRID_API_KEY"))
+
+
+def run_fingrid_hourly_sync():
+    """Background task to incrementally sync Fingrid datasets once per hour."""
+    if not _fingrid_sync_enabled():
+        logger.info("Skipping Fingrid hourly sync because FINGRID_API_KEY is not configured.")
+        return {"status": "skipped", "reason": "missing_api_key", "datasets_synced": 0}
+
+    if not _FINGRID_SYNC_LOCK.acquire(blocking=False):
+        logger.info("Skipping Fingrid hourly sync because another Fingrid sync is already running.")
+        return {"status": "skipped", "reason": "already_running", "datasets_synced": 0}
+
+    try:
+        logger.info("Starting Fingrid hourly incremental sync...")
+        results = []
+        for dataset in fingrid_catalog.list_dataset_configs():
+            dataset_id = dataset["dataset_id"]
+            results.append(fingrid_service.sync_dataset(db, dataset_id=dataset_id, mode="incremental"))
+        logger.info("Completed Fingrid hourly incremental sync.")
+        return {"status": "ok", "datasets_synced": len(results), "results": results}
+    except Exception as e:
+        logger.error(f"Error in Fingrid hourly sync task: {e}")
+        raise
+    finally:
+        _FINGRID_SYNC_LOCK.release()
+
 @app.post("/api/sync_data")
 def sync_data(background_tasks: BackgroundTasks):
     """Trigger data scrape manually via background task."""
@@ -306,8 +345,8 @@ def get_fingrid_dataset_series(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
     tz: str = Query("Europe/Helsinki"),
-    aggregation: str = Query("raw", pattern="^(raw|hour|day|week|month)$"),
-    limit: int = Query(5000),
+    aggregation: str = Query("raw", pattern="^(raw|hour|1h|2h|4h|day|week|month)$"),
+    limit: Optional[int] = Query(None),
 ):
     try:
         return fingrid_service.get_dataset_series_payload(
@@ -341,8 +380,8 @@ def export_fingrid_dataset_csv(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
     tz: str = Query("Europe/Helsinki"),
-    aggregation: str = Query("raw", pattern="^(raw|hour|day|week|month)$"),
-    limit: int = Query(5000),
+    aggregation: str = Query("raw", pattern="^(raw|hour|1h|2h|4h|day|week|month)$"),
+    limit: Optional[int] = Query(None),
 ):
     payload = fingrid_service.get_dataset_series_payload(
         db,
@@ -1473,6 +1512,7 @@ INVESTMENT_BACKTEST_CACHE_SCOPE = "investment_backtest_v1"
 INVESTMENT_FCAS_CACHE_SCOPE = "investment_fcas_baseline_v1"
 _ANALYSIS_INFLIGHT_LOCK = threading.Lock()
 _ANALYSIS_INFLIGHT: Dict[str, dict] = {}
+_FINGRID_SYNC_LOCK = threading.Lock()
 
 def _analysis_data_version() -> str:
     return db.get_last_update_time() or "no_last_update"

@@ -126,49 +126,111 @@ def sync_dataset(
 
 
 def _bucket_key(local_dt, aggregation: str):
-    if aggregation in {"raw", "hour"}:
+    if aggregation in {"raw", "hour", "1h"}:
         return local_dt.replace(minute=0, second=0, microsecond=0)
+    if aggregation == "2h":
+        return local_dt.replace(hour=local_dt.hour - (local_dt.hour % 2), minute=0, second=0, microsecond=0)
+    if aggregation == "4h":
+        return local_dt.replace(hour=local_dt.hour - (local_dt.hour % 4), minute=0, second=0, microsecond=0)
     if aggregation == "day":
         return local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
     if aggregation == "week":
-        iso_year, iso_week, _ = local_dt.isocalendar()
-        return f"{iso_year}-W{iso_week:02d}"
+        return (local_dt - timedelta(days=local_dt.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
     if aggregation == "month":
-        return local_dt.strftime("%Y-%m-01T00:00:00")
+        return local_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     raise ValueError(f"Unsupported aggregation: {aggregation}")
 
 
+def _bucket_label(bucket_start: datetime, aggregation: str) -> str:
+    if aggregation == "week":
+        iso_year, iso_week, _ = bucket_start.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    if aggregation == "month":
+        return bucket_start.strftime("%Y-%m-01T00:00:00")
+    return bucket_start.isoformat()
+
+
+def _bucket_end(bucket_start: datetime, aggregation: str) -> datetime:
+    if aggregation in {"raw", "hour", "1h"}:
+        return bucket_start + timedelta(hours=1)
+    if aggregation == "2h":
+        return bucket_start + timedelta(hours=2)
+    if aggregation == "4h":
+        return bucket_start + timedelta(hours=4)
+    if aggregation == "day":
+        return bucket_start + timedelta(days=1)
+    if aggregation == "week":
+        return bucket_start + timedelta(days=7)
+    if aggregation == "month":
+        if bucket_start.month == 12:
+            return bucket_start.replace(year=bucket_start.year + 1, month=1)
+        return bucket_start.replace(month=bucket_start.month + 1)
+    raise ValueError(f"Unsupported aggregation: {aggregation}")
+
+
+def _normalize_aggregation(aggregation: str) -> str:
+    return "1h" if aggregation == "hour" else aggregation
+
+
 def _aggregate_rows(rows: list[dict], *, aggregation: str, tz_name: str) -> list[dict]:
-    if aggregation == "raw":
-        return [
-            {
-                "timestamp": row["timestamp_local"],
-                "timestamp_utc": row["timestamp_utc"],
-                "value": row["value"],
-                "unit": row["unit"],
-            }
-            for row in rows
-        ]
+    normalized_aggregation = _normalize_aggregation(aggregation)
+
+    if normalized_aggregation == "raw":
+        items = []
+        for row in rows:
+            bucket_start = datetime.fromisoformat(row["timestamp_local"])
+            bucket_end = _bucket_end(bucket_start, "1h")
+            items.append(
+                {
+                    "timestamp": row["timestamp_local"],
+                    "timestamp_utc": row["timestamp_utc"],
+                    "bucket_start": bucket_start.isoformat(),
+                    "bucket_end": bucket_end.isoformat(),
+                    "value": row["value"],
+                    "avg_value": row["value"],
+                    "peak_value": row["value"],
+                    "trough_value": row["value"],
+                    "sample_count": 1,
+                    "unit": row["unit"],
+                }
+            )
+        return items
 
     tz = ZoneInfo(tz_name)
     buckets = defaultdict(list)
     for row in rows:
         utc_dt = _parse_utc(row["timestamp_utc"])
         local_dt = utc_dt.astimezone(tz)
-        buckets[_bucket_key(local_dt, aggregation)].append(row["value"])
+        bucket_start = _bucket_key(local_dt, normalized_aggregation)
+        buckets[bucket_start].append(row["value"])
 
     items = []
-    for key, values in sorted(buckets.items(), key=lambda item: str(item[0])):
-        timestamp = key if isinstance(key, str) else key.isoformat()
+    for bucket_start, values in sorted(buckets.items(), key=lambda item: item[0]):
+        bucket_end = _bucket_end(bucket_start, normalized_aggregation)
+        avg_value = round(mean(values), 4)
+        peak_value = round(max(values), 4)
+        trough_value = round(min(values), 4)
         items.append(
             {
-                "timestamp": timestamp,
-                "timestamp_utc": timestamp,
-                "value": round(mean(values), 4),
+                "timestamp": _bucket_label(bucket_start, normalized_aggregation),
+                "timestamp_utc": bucket_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "bucket_start": bucket_start.isoformat(),
+                "bucket_end": bucket_end.isoformat(),
+                "value": avg_value,
+                "avg_value": avg_value,
+                "peak_value": peak_value,
+                "trough_value": trough_value,
+                "sample_count": len(values),
                 "unit": rows[0]["unit"] if rows else "EUR/MW",
             }
         )
     return items
+
+
+def _apply_series_limit(series: list[dict], limit: int | None) -> list[dict]:
+    if not limit or len(series) <= limit:
+        return series
+    return series[-limit:]
 
 
 def _build_summary_kpis(rows: list[dict]) -> dict:
@@ -230,14 +292,19 @@ def get_dataset_series_payload(
     end: str | None,
     aggregation: str,
     tz: str,
-    limit: int,
+    limit: int | None,
 ) -> dict:
     dataset = get_dataset_config(dataset_id)
-    rows = db.fetch_fingrid_series(dataset_id=dataset_id, start_utc=start, end_utc=end, limit=limit)
+    normalized_aggregation = _normalize_aggregation(aggregation)
+    raw_limit = limit if normalized_aggregation == "raw" else None
+    rows = db.fetch_fingrid_series(dataset_id=dataset_id, start_utc=start, end_utc=end, limit=raw_limit)
+    series = _aggregate_rows(rows, aggregation=normalized_aggregation, tz_name=tz)
+    if normalized_aggregation != "raw":
+        series = _apply_series_limit(series, limit)
     return {
         "dataset": dataset,
-        "query": {"start": start, "end": end, "aggregation": aggregation, "tz": tz, "limit": limit},
-        "series": _aggregate_rows(rows, aggregation=aggregation, tz_name=tz),
+        "query": {"start": start, "end": end, "aggregation": normalized_aggregation, "tz": tz, "limit": limit},
+        "series": series,
     }
 
 
