@@ -135,6 +135,53 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw_value.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _uniform_downsample_price_rows(rows, limit: int):
+    if not rows or len(rows) <= limit or limit is None or limit <= 0:
+        return [{"time": row[0], "price": round(row[1], 2)} for row in rows]
+
+    if limit == 1:
+        last_row = rows[-1]
+        return [{"time": last_row[0], "price": round(last_row[1], 2)}]
+
+    step = (len(rows) - 1) / float(limit - 1)
+    indices = []
+    seen = set()
+    for position in range(limit):
+        index = int(round(position * step))
+        index = max(0, min(index, len(rows) - 1))
+        if index not in seen:
+            seen.add(index)
+            indices.append(index)
+
+    if indices[-1] != len(rows) - 1:
+        indices[-1] = len(rows) - 1
+
+    return [{"time": rows[index][0], "price": round(rows[index][1], 2)} for index in indices]
+
+
+def _downsample_price_rows(rows, limit: int):
+    if not rows or len(rows) <= limit or limit is None or limit <= 0:
+        return [{"time": row[0], "price": round(row[1], 2)} for row in rows]
+
+    try:
+        import numpy as np
+        import lttbc
+
+        x = np.arange(len(rows), dtype=np.float64)
+        y = np.array([row[1] for row in rows], dtype=np.float64)
+        dx, dy = lttbc.downsample(x, y, limit)
+
+        data = []
+        for idx_flt, val in zip(dx, dy):
+            orig_idx = int(round(idx_flt))
+            orig_idx = max(0, min(orig_idx, len(rows) - 1))
+            data.append({"time": rows[orig_idx][0], "price": round(val, 2)})
+        return data
+    except Exception as exc:
+        logger.warning("Falling back to uniform price downsampling because LTTB failed: %s", exc)
+        return _uniform_downsample_price_rows(rows, limit)
+
+
 def _cors_allow_origins() -> list[str]:
     raw_value = os.environ.get("AUS_ELE_CORS_ALLOW_ORIGINS", "").strip()
     if not raw_value:
@@ -706,19 +753,7 @@ def get_price_trend(
             cursor.execute(query_data, tuple(params))
             rows = cursor.fetchall()
             
-            data = []
-            if len(rows) > limit:
-                import numpy as np
-                import lttbc
-                x = np.arange(len(rows), dtype=np.float64)
-                y = np.array([r[1] for r in rows], dtype=np.float64)
-                dx, dy = lttbc.downsample(x, y, limit)
-                for idx_flt, val in zip(dx, dy):
-                    orig_idx = int(round(idx_flt))
-                    data.append({"time": rows[orig_idx][0], "price": round(val, 2)})
-            else:
-                for r in rows:
-                    data.append({"time": r[0], "price": round(r[1], 2)})
+            data = _downsample_price_rows(rows, limit)
             
             # Calculate all statistics in a single highly optimized SQL query
             # This turns 6 separate full table scans into just 1

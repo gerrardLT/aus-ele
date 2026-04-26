@@ -428,6 +428,30 @@ class ApiLogicFixTests(unittest.TestCase):
 
         self.assertEqual(first, second)
 
+    def test_price_trend_falls_back_when_lttb_downsample_fails(self):
+        rows = []
+        for idx in range(1605):
+            minute = (idx * 5) % 60
+            hour = (idx * 5) // 60
+            day = 1 + (hour // 24)
+            hour = hour % 24
+            timestamp = f"2025-01-{day:02d} {hour:02d}:{minute:02d}:00"
+            rows.append((timestamp, float(idx % 300)))
+
+        original_import = __import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "lttbc":
+                raise ImportError("lttbc unavailable")
+            return original_import(name, globals, locals, fromlist, level)
+
+        with mock.patch("builtins.__import__", side_effect=fake_import):
+            data = server._downsample_price_rows(rows, 1500)
+
+        self.assertEqual(len(data), 1500)
+        self.assertEqual(data[0]["time"], "2025-01-01 00:00:00")
+        self.assertEqual(data[-1]["time"], rows[-1][0])
+
     def test_peak_analysis_uses_redis_response_cache(self):
         fake_cache = FakeResponseCache()
         self.db.set_last_update_time("2026-04-16 10:45:00")
