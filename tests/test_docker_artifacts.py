@@ -37,13 +37,17 @@ class DockerArtifactTests(unittest.TestCase):
     def test_web_dockerfile_and_lockfile_do_not_pin_unreachable_mirror(self):
         dockerfile_path = os.path.join(REPO_ROOT, "web", "Dockerfile")
         lockfile_path = os.path.join(REPO_ROOT, "web", "package-lock.json")
+        gitignore_path = os.path.join(REPO_ROOT, ".gitignore")
 
         with open(dockerfile_path, "r", encoding="utf-8") as dockerfile:
             dockerfile_content = dockerfile.read()
         with open(lockfile_path, "r", encoding="utf-8") as lockfile:
             lockfile_content = lockfile.read()
+        with open(gitignore_path, "r", encoding="utf-8") as gitignore:
+            gitignore_content = gitignore.read()
 
         self.assertIn("ARG NPM_REGISTRY", dockerfile_content)
+        self.assertIn("!web/package-lock.json", gitignore_content)
         self.assertNotIn("registry.npmmirror.com", lockfile_content)
 
 

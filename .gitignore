@@ -40,6 +40,7 @@ dist-ssr/
 *.local
 .npm
 package-lock.json
+!web/package-lock.json
 
 # IDEs
 .idea/
