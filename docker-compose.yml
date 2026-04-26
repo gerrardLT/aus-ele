@@ -30,6 +30,7 @@ services:
       dockerfile: web/Dockerfile
       args:
         VITE_API_BASE: ${VITE_API_BASE:-/api}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
     restart: unless-stopped
     ports:
       - "${WEB_HOST_PORT:-18080}:80"

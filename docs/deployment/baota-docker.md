@@ -62,9 +62,16 @@ WEB_HOST_PORT=28080
 API_HOST_PORT=28085
 REDIS_HOST_PORT=26379
 VITE_API_BASE=/api
+NPM_REGISTRY=https://registry.npmjs.org/
 ```
 
 Use different host ports if Baota already has other containers bound on the machine.
+
+If your server is in mainland China and `registry.npmjs.org` is slow or blocked, switch `NPM_REGISTRY` to a reachable mirror such as:
+
+```text
+NPM_REGISTRY=https://registry.npmmirror.com/
+```
 
 6. Make sure the project directory includes writable `data/` and `output/` folders.
 7. Start the stack with build enabled.

@@ -3,7 +3,9 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY web/package*.json /app/
-RUN npm ci
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+RUN npm config set registry "${NPM_REGISTRY}" \
+    && npm ci --no-audit --no-fund
 
 COPY web /app
 

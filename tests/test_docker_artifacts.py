@@ -34,6 +34,18 @@ class DockerArtifactTests(unittest.TestCase):
         self.assertIn("redis:", content)
         self.assertIn("./data:/app/data", content)
 
+    def test_web_dockerfile_and_lockfile_do_not_pin_unreachable_mirror(self):
+        dockerfile_path = os.path.join(REPO_ROOT, "web", "Dockerfile")
+        lockfile_path = os.path.join(REPO_ROOT, "web", "package-lock.json")
+
+        with open(dockerfile_path, "r", encoding="utf-8") as dockerfile:
+            dockerfile_content = dockerfile.read()
+        with open(lockfile_path, "r", encoding="utf-8") as lockfile:
+            lockfile_content = lockfile.read()
+
+        self.assertIn("ARG NPM_REGISTRY", dockerfile_content)
+        self.assertNotIn("registry.npmmirror.com", lockfile_content)
+
 
 if __name__ == "__main__":
     unittest.main()
