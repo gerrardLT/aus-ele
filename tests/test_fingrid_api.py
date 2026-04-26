@@ -115,6 +115,29 @@ class FingridApiTests(unittest.TestCase):
         signature = inspect.signature(server.export_fingrid_dataset_csv)
         self.assertIsNone(signature.parameters["limit"].default.default)
 
+    def test_cors_defaults_to_localhost_origins_without_credentials(self):
+        with mock.patch.dict("server.os.environ", {}, clear=True):
+            self.assertEqual(
+                server._cors_allow_origins(),
+                ["http://127.0.0.1:5173", "http://localhost:5173"],
+            )
+            self.assertFalse(server._cors_allow_credentials())
+
+    def test_cors_parses_explicit_origins_and_credentials_flag(self):
+        with mock.patch.dict(
+            "server.os.environ",
+            {
+                "AUS_ELE_CORS_ALLOW_ORIGINS": "https://example.com, https://app.example.com ",
+                "AUS_ELE_CORS_ALLOW_CREDENTIALS": "true",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                server._cors_allow_origins(),
+                ["https://example.com", "https://app.example.com"],
+            )
+            self.assertTrue(server._cors_allow_credentials())
+
     @mock.patch("server.os.environ", {"FINGRID_API_KEY": "test-key"})
     @mock.patch("server.fingrid_service.sync_dataset")
     @mock.patch("server.fingrid_catalog.list_dataset_configs", return_value=[{"dataset_id": "317"}])

@@ -711,11 +711,6 @@ function App() {
                   year={selectedYear}
                   region={selectedRegion}
                   apiBase={API_BASE}
-                  scopeNote={t.simulator.fullYearModelNote || (
-                    lang === 'zh'
-                      ? '该模块使用全年代表性参数，不跟随 month / quarter / day_type 子时段筛选。'
-                      : 'Uses full-year representative data. Month, quarter, and day-type filters do not apply here.'
-                  )}
                   scopeNote={simulatorScopeNote}
                   t={{...t.simulator, loadingMsg: t.loading_states.simulator}}
                   />
@@ -777,11 +772,6 @@ function App() {
                   year={selectedYear}
                   region={selectedRegion}
                   lang={lang}
-                  scopeNote={t.investment?.fullYearModelNote || (
-                    lang === 'zh'
-                      ? '该模块使用全年历史回测和年度现金流假设，不跟随 month / quarter / day_type 子时段筛选。'
-                      : 'Uses full-year historical and cash-flow assumptions. Month, quarter, and day-type filters do not apply here.'
-                  )}
                   scopeNote={investmentScopeNote}
                   t={t}
                   />

@@ -135,6 +135,19 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw_value.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _cors_allow_origins() -> list[str]:
+    raw_value = os.environ.get("AUS_ELE_CORS_ALLOW_ORIGINS", "").strip()
+    if not raw_value:
+        return ["http://127.0.0.1:5173", "http://localhost:5173"]
+
+    origins = [origin.strip() for origin in raw_value.split(",") if origin.strip()]
+    return origins or ["http://127.0.0.1:5173", "http://localhost:5173"]
+
+
+def _cors_allow_credentials() -> bool:
+    return _env_flag("AUS_ELE_CORS_ALLOW_CREDENTIALS", False)
+
+
 def _scheduler_timezone() -> ZoneInfo:
     return ZoneInfo(os.environ.get("AUS_ELE_SCHEDULER_TIMEZONE", "UTC"))
 
@@ -190,11 +203,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AEMO NEM Data API", lifespan=lifespan)
 
-# Allow CORS for the frontend Vite server
+# Allow CORS for local frontend development by default.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For dev, allow all. Restrict in prod.
-    allow_credentials=True,
+    allow_origins=_cors_allow_origins(),
+    allow_credentials=_cors_allow_credentials(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

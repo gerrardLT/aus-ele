@@ -104,7 +104,17 @@ test('forecast copy exposes localized horizon and mode labels', () => {
 test('GridForecast component avoids hardcoded desk labels and mojibake copy', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/GridForecast.jsx'), 'utf8');
 
-  for (const phrase of ['Signal Desk', 'Market Context', '淇', '甯']) {
+  for (const phrase of ['Signal Desk', 'Market Context', '娣?', '鐢?']) {
     assert.equal(source.includes(phrase), false, `component should not contain "${phrase}"`);
+  }
+});
+
+test('app shell and translations avoid known mojibake fragments', () => {
+  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  const translationsSource = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
+
+  for (const phrase of ['甯', '鍚', '璇', '鈻?', '鉁?', '鉂?']) {
+    assert.equal(appSource.includes(phrase), false, `App should not contain "${phrase}"`);
+    assert.equal(translationsSource.includes(phrase), false, `translations should not contain "${phrase}"`);
   }
 });
