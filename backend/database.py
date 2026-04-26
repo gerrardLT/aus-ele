@@ -3,6 +3,7 @@ import os
 import contextlib
 import logging
 import json
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
@@ -1288,3 +1289,85 @@ class DatabaseManager:
             cursor.execute("SELECT value FROM system_status WHERE key='last_update'")
             row = cursor.fetchone()
             return row[0] if row else None
+
+    def acquire_system_lock(
+        self,
+        name: str,
+        *,
+        owner: str,
+        ttl_seconds: int,
+        now_utc: datetime | None = None,
+    ) -> bool:
+        lock_key = f"lock:{name}"
+        now_utc = now_utc or datetime.now(timezone.utc)
+        expires_at = now_utc + timedelta(seconds=ttl_seconds)
+        payload = json.dumps(
+            {
+                "owner": owner,
+                "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+            },
+            sort_keys=True,
+        )
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute("SELECT value FROM system_status WHERE key = ?", (lock_key,))
+            row = cursor.fetchone()
+
+            if row:
+                try:
+                    current = json.loads(row[0])
+                except json.JSONDecodeError:
+                    current = {}
+                current_expires_at = current.get("expires_at")
+
+                expired = True
+                if current_expires_at:
+                    try:
+                        current_expiry_dt = datetime.fromisoformat(current_expires_at.replace("Z", "+00:00"))
+                        expired = current_expiry_dt <= now_utc
+                    except ValueError:
+                        expired = True
+
+                if not expired:
+                    conn.rollback()
+                    return False
+
+                cursor.execute(
+                    "UPDATE system_status SET value = ? WHERE key = ?",
+                    (payload, lock_key),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO system_status (key, value) VALUES (?, ?)",
+                    (lock_key, payload),
+                )
+
+            conn.commit()
+            return True
+
+    def release_system_lock(self, name: str, *, owner: str) -> bool:
+        lock_key = f"lock:{name}"
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute("SELECT value FROM system_status WHERE key = ?", (lock_key,))
+            row = cursor.fetchone()
+            if not row:
+                conn.rollback()
+                return False
+
+            try:
+                current = json.loads(row[0])
+            except json.JSONDecodeError:
+                current = {}
+
+            if current.get("owner") != owner:
+                conn.rollback()
+                return False
+
+            cursor.execute("DELETE FROM system_status WHERE key = ?", (lock_key,))
+            conn.commit()
+            return True

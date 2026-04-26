@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import threading
 import uvicorn
 from contextlib import asynccontextmanager
@@ -11,7 +12,9 @@ import logging
 from typing import Optional, Dict
 import datetime
 import subprocess
+from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from zoneinfo import ZoneInfo
 
 from database import DatabaseManager
 import grid_events
@@ -26,9 +29,43 @@ from response_cache import RedisResponseCache
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DB_PATH = "../data/aemo_data.db"
+BACKEND_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BACKEND_DIR.parent
+SCRAPERS_DIR = REPO_ROOT / "scrapers"
+
+
+def _load_env_file(env_path: str | os.PathLike[str] | None = None):
+    candidates = [Path(env_path)] if env_path else [REPO_ROOT / ".env", BACKEND_DIR / ".env"]
+    for candidate in candidates:
+        path = Path(candidate)
+        if not path.exists():
+            continue
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+        return path
+    return None
+
+
+_load_env_file()
+DB_PATH = os.environ.get("AUS_ELE_DB_PATH", str((REPO_ROOT / "data" / "aemo_data.db").resolve()))
 db = DatabaseManager(DB_PATH)
 response_cache = RedisResponseCache()
+
+SYNC_OWNER = f"{os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', 'host')}:{os.getpid()}"
+MARKET_SYNC_LOCK_NAME = "market_sync"
+FINGRID_SYNC_LOCK_NAME = "fingrid_sync"
+MARKET_SYNC_LOCK_TTL_SECONDS = int(os.environ.get("AUS_ELE_MARKET_SYNC_LOCK_TTL_SECONDS", "21600"))
+FINGRID_SYNC_LOCK_TTL_SECONDS = int(os.environ.get("AUS_ELE_FINGRID_SYNC_LOCK_TTL_SECONDS", "7200"))
 
 GRID_FORECAST_RESPONSE_CACHE_SCOPE = "api_grid_forecast_v1"
 EVENT_OVERLAY_RESPONSE_CACHE_SCOPE = "api_event_overlays_v1"
@@ -90,23 +127,60 @@ def _cacheable_param(value):
         return default
     return str(value)
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _scheduler_timezone() -> ZoneInfo:
+    return ZoneInfo(os.environ.get("AUS_ELE_SCHEDULER_TIMEZONE", "UTC"))
+
+
+def _scheduler_now() -> datetime.datetime:
+    return datetime.datetime.now(_scheduler_timezone())
+
+
+def _scheduler_enabled() -> bool:
+    return _env_flag("AUS_ELE_ENABLE_SCHEDULER", True)
+
+
+def _try_acquire_job_lock(lock_name: str, ttl_seconds: int) -> bool:
+    return db.acquire_system_lock(lock_name, owner=SYNC_OWNER, ttl_seconds=ttl_seconds)
+
+
+def _release_job_lock(lock_name: str):
+    db.release_system_lock(lock_name, owner=SYNC_OWNER)
+
+
+def _run_scraper(script_name: str, *args: str):
+    script_path = (SCRAPERS_DIR / script_name).resolve()
+    command = [sys.executable, str(script_path), *args]
+    subprocess.run(command, check=True, cwd=str(REPO_ROOT))
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup actions
     logger.info("Starting AEMO NEM API server with built-in Scheduler...")
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_sync_scrapers, 'cron', hour=2, minute=0, id="market-daily-sync")
-    scheduler.add_job(
-        run_fingrid_hourly_sync,
-        'cron',
-        minute=10,
-        id="fingrid-hourly-sync",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=15 * 60,
-    )
-    scheduler.start()
-    app.state.scheduler = scheduler
+    if _scheduler_enabled():
+        scheduler = AsyncIOScheduler(timezone=_scheduler_timezone())
+        scheduler.add_job(run_sync_scrapers, 'cron', hour=2, minute=0, id="market-daily-sync")
+        scheduler.add_job(
+            run_fingrid_hourly_sync,
+            'cron',
+            minute=10,
+            id="fingrid-hourly-sync",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=15 * 60,
+        )
+        scheduler.start()
+        app.state.scheduler = scheduler
+        logger.info("Internal scheduler enabled with timezone %s", _scheduler_timezone().key)
+    else:
+        logger.info("Internal scheduler disabled by AUS_ELE_ENABLE_SCHEDULER")
     
     yield
     # Shutdown actions
@@ -245,69 +319,134 @@ def get_grid_forecast_coverage(
         logger.error(f"Grid forecast coverage error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-def run_sync_scrapers():
+def run_sync_scrapers(lock_pre_acquired: bool = False):
     """Background task to run scrapers and update the database."""
+    lock_acquired = lock_pre_acquired
     try:
+        if not lock_acquired:
+            lock_acquired = _try_acquire_job_lock(MARKET_SYNC_LOCK_NAME, MARKET_SYNC_LOCK_TTL_SECONDS)
+            if not lock_acquired:
+                logger.info("Skipping market sync because another market sync is already running.")
+                return {"status": "skipped", "reason": "already_running"}
+
         logger.info("Starting Background Data Syncing Tasks...")
         # WEM and NEM Sync: Incremental (Last 14 days)
-        two_weeks_ago = (datetime.datetime.now() - datetime.timedelta(days=14)).strftime('%Y-%m-%d')
-        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        now_local = _scheduler_now()
+        two_weeks_ago = (now_local - datetime.timedelta(days=14)).strftime('%Y-%m-%d')
+        today = now_local.strftime('%Y-%m-%d')
         
         logger.info(f"Running WEM Scraper from {two_weeks_ago} to {today}...")
-        subprocess.run(["python", "../scrapers/aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today], check=True)
+        _run_scraper("aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today, "--db", DB_PATH)
 
         logger.info("Running WEM ESS slim sync for latest 30 days...")
-        subprocess.run(["python", "../scrapers/aemo_wem_ess_scraper.py", "--days", "30"], check=True)
+        _run_scraper("aemo_wem_ess_scraper.py", "--days", "30", "--db", DB_PATH)
         
         logger.info("Running NEM Scraper...")
-        start_month = (datetime.datetime.now() - datetime.timedelta(days=14)).strftime('%Y-%m')
-        end_month = datetime.datetime.now().strftime('%Y-%m')
-        subprocess.run(["python", "../scrapers/aemo_nem_scraper.py", "--start", start_month, "--end", end_month, "--fcas"], check=True)
+        start_month = (now_local - datetime.timedelta(days=14)).strftime('%Y-%m')
+        end_month = now_local.strftime('%Y-%m')
+        _run_scraper(
+            "aemo_nem_scraper.py",
+            "--start",
+            start_month,
+            "--end",
+            end_month,
+            "--db-path",
+            DB_PATH,
+            "--fcas",
+        )
 
         logger.info("Running Grid Event Scraper...")
-        subprocess.run(["python", "../scrapers/aemo_grid_event_scraper.py", "--days", "180"], check=True)
+        _run_scraper("aemo_grid_event_scraper.py", "--days", "180", "--db", DB_PATH)
 
         
         # Record Success Time
-        db.set_last_update_time(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        db.set_last_update_time(now_local.strftime('%Y-%m-%d %H:%M:%S'))
         logger.info("Data Syncing Completed successfully!")
+        return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error in data sync task: {e}")
+        return {"status": "error", "detail": str(e)}
+    finally:
+        if lock_acquired:
+            _release_job_lock(MARKET_SYNC_LOCK_NAME)
 
 
 def _fingrid_sync_enabled() -> bool:
     return bool(os.environ.get("FINGRID_API_KEY"))
 
 
-def run_fingrid_hourly_sync():
+def run_fingrid_dataset_sync(dataset_id: str, mode: str = "incremental", lock_pre_acquired: bool = False):
+    if not _fingrid_sync_enabled():
+        logger.info("Skipping Fingrid dataset sync because FINGRID_API_KEY is not configured.")
+        return {"status": "skipped", "reason": "missing_api_key", "dataset_id": dataset_id}
+
+    lock_acquired = lock_pre_acquired
+    if not lock_acquired:
+        lock_acquired = _try_acquire_job_lock(FINGRID_SYNC_LOCK_NAME, FINGRID_SYNC_LOCK_TTL_SECONDS)
+        if not lock_acquired:
+            logger.info("Skipping Fingrid dataset sync because another Fingrid sync is already running.")
+            return {"status": "skipped", "reason": "already_running", "dataset_id": dataset_id}
+
+    try:
+        return fingrid_service.sync_dataset(db, dataset_id=dataset_id, mode=mode)
+    except Exception as e:
+        logger.error("Error in Fingrid dataset sync task for dataset %s (%s): %s", dataset_id, mode, e)
+        return {"status": "error", "dataset_id": dataset_id, "mode": mode, "detail": str(e)}
+    finally:
+        if lock_acquired:
+            _release_job_lock(FINGRID_SYNC_LOCK_NAME)
+
+
+def run_fingrid_hourly_sync(lock_pre_acquired: bool = False):
     """Background task to incrementally sync Fingrid datasets once per hour."""
     if not _fingrid_sync_enabled():
         logger.info("Skipping Fingrid hourly sync because FINGRID_API_KEY is not configured.")
         return {"status": "skipped", "reason": "missing_api_key", "datasets_synced": 0}
 
-    if not _FINGRID_SYNC_LOCK.acquire(blocking=False):
-        logger.info("Skipping Fingrid hourly sync because another Fingrid sync is already running.")
-        return {"status": "skipped", "reason": "already_running", "datasets_synced": 0}
+    lock_acquired = lock_pre_acquired
+    if not lock_acquired:
+        lock_acquired = _try_acquire_job_lock(FINGRID_SYNC_LOCK_NAME, FINGRID_SYNC_LOCK_TTL_SECONDS)
+        if not lock_acquired:
+            logger.info("Skipping Fingrid hourly sync because another Fingrid sync is already running.")
+            return {"status": "skipped", "reason": "already_running", "datasets_synced": 0}
 
     try:
         logger.info("Starting Fingrid hourly incremental sync...")
         results = []
+        failures = []
         for dataset in fingrid_catalog.list_dataset_configs():
             dataset_id = dataset["dataset_id"]
-            results.append(fingrid_service.sync_dataset(db, dataset_id=dataset_id, mode="incremental"))
+            try:
+                results.append(fingrid_service.sync_dataset(db, dataset_id=dataset_id, mode="incremental"))
+            except Exception as e:
+                logger.error("Error syncing Fingrid dataset %s during hourly sync: %s", dataset_id, e)
+                failures.append({"dataset_id": dataset_id, "detail": str(e)})
+        if failures:
+            return {
+                "status": "error",
+                "datasets_synced": len(results),
+                "datasets_failed": len(failures),
+                "results": results,
+                "failures": failures,
+                "detail": "; ".join(f"{item['dataset_id']}: {item['detail']}" for item in failures),
+            }
         logger.info("Completed Fingrid hourly incremental sync.")
         return {"status": "ok", "datasets_synced": len(results), "results": results}
     except Exception as e:
         logger.error(f"Error in Fingrid hourly sync task: {e}")
-        raise
+        return {"status": "error", "datasets_synced": 0, "detail": str(e)}
     finally:
-        _FINGRID_SYNC_LOCK.release()
+        if lock_acquired:
+            _release_job_lock(FINGRID_SYNC_LOCK_NAME)
 
 @app.post("/api/sync_data")
 def sync_data(background_tasks: BackgroundTasks):
     """Trigger data scrape manually via background task."""
-    background_tasks.add_task(run_sync_scrapers)
-    return {"status": "Update started in background"}
+    if not _try_acquire_job_lock(MARKET_SYNC_LOCK_NAME, MARKET_SYNC_LOCK_TTL_SECONDS):
+        raise HTTPException(status_code=409, detail="Market sync already running")
+
+    background_tasks.add_task(run_sync_scrapers, True)
+    return {"status": "accepted", "detail": "Update started in background"}
 
 
 @app.get("/api/fingrid/datasets")
@@ -335,7 +474,13 @@ def sync_fingrid_dataset(
     except KeyError:
         raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
 
-    background_tasks.add_task(fingrid_service.sync_dataset, db, dataset_id=dataset_id, mode=mode)
+    if not _fingrid_sync_enabled():
+        raise HTTPException(status_code=503, detail="FINGRID_API_KEY is not configured")
+
+    if not _try_acquire_job_lock(FINGRID_SYNC_LOCK_NAME, FINGRID_SYNC_LOCK_TTL_SECONDS):
+        raise HTTPException(status_code=409, detail="Fingrid sync already running")
+
+    background_tasks.add_task(run_fingrid_dataset_sync, dataset_id, mode, True)
     return {"status": "accepted", "dataset_id": dataset_id, "mode": mode}
 
 
@@ -1512,7 +1657,6 @@ INVESTMENT_BACKTEST_CACHE_SCOPE = "investment_backtest_v1"
 INVESTMENT_FCAS_CACHE_SCOPE = "investment_fcas_baseline_v1"
 _ANALYSIS_INFLIGHT_LOCK = threading.Lock()
 _ANALYSIS_INFLIGHT: Dict[str, dict] = {}
-_FINGRID_SYNC_LOCK = threading.Lock()
 
 def _analysis_data_version() -> str:
     return db.get_last_update_time() or "no_last_update"

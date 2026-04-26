@@ -75,6 +75,7 @@ export default function FingridPage() {
   const customDateRangeValidationMessage = customDateRangeValidationCode
     ? copy.validation[customDateRangeValidationCode]
     : null;
+  const syncInProgress = syncing || statusPayload?.status?.sync_status === 'running';
 
   useEffect(() => {
     try {
@@ -196,18 +197,36 @@ export default function FingridPage() {
     [datasetId, timeWindow, tz, aggregation, requestLimit, customDateRangeValidationCode],
   );
 
+  const applyStatusPayload = (nextStatusPayload) => {
+    const nextRefreshKey = buildStatusRefreshKey(nextStatusPayload);
+    const previousRefreshKey = statusRefreshKeyRef.current;
+    statusRefreshKeyRef.current = nextRefreshKey;
+    setStatusPayload(nextStatusPayload);
+    if (previousRefreshKey && previousRefreshKey !== nextRefreshKey) {
+      setRefreshNonce((value) => value + 1);
+    }
+  };
+
   const handleSync = async () => {
+    if (syncInProgress) {
+      return;
+    }
+
     setSyncing(true);
+    setError(null);
     try {
-      await fetch(buildFingridSyncUrl(API_BASE, datasetId), { method: 'POST' });
-      const statusData = await fetchJson(buildFingridStatusUrl(API_BASE, datasetId));
-      const nextRefreshKey = buildStatusRefreshKey(statusData);
-      const previousRefreshKey = statusRefreshKeyRef.current;
-      statusRefreshKeyRef.current = nextRefreshKey;
-      setStatusPayload(statusData);
-      if (previousRefreshKey && previousRefreshKey !== nextRefreshKey) {
-        setRefreshNonce((value) => value + 1);
+      const syncResponse = await fetch(buildFingridSyncUrl(API_BASE, datasetId), { method: 'POST' });
+      const syncPayload = await syncResponse.json().catch(() => null);
+      if (syncResponse.status === 409) {
+        const statusData = await fetchJson(buildFingridStatusUrl(API_BASE, datasetId));
+        applyStatusPayload(statusData);
+        return;
       }
+      if (!syncResponse.ok) {
+        throw new Error(syncPayload?.detail || `Fingrid sync request failed (${syncResponse.status})`);
+      }
+      const statusData = await fetchJson(buildFingridStatusUrl(API_BASE, datasetId));
+      applyStatusPayload(statusData);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -229,7 +248,7 @@ export default function FingridPage() {
           tz={tz}
           onTimezoneChange={setTz}
           statusPayload={statusPayload}
-          syncing={syncing}
+          syncing={syncInProgress}
           onSync={handleSync}
           exportHref={exportHref}
           copy={copy}

@@ -42,6 +42,18 @@ test('FingridPage polls Fingrid status and refreshes datasets when sync metadata
   assert.match(source, /refreshNonce/);
 });
 
+test('FingridPage checks manual sync HTTP status before treating the request as successful', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FingridPage.jsx'), 'utf8');
+  assert.match(source, /syncResponse/);
+  assert.match(source, /!syncResponse\.ok/);
+});
+
+test('FingridPage treats backend running state as an active sync and handles 409 responses explicitly', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FingridPage.jsx'), 'utf8');
+  assert.match(source, /statusPayload\?\.\s*status\?\.\s*sync_status === 'running'/);
+  assert.match(source, /syncResponse\.status === 409/);
+});
+
 test('App exposes a navigation entry to the Fingrid page', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
   assert.match(source, /\/fingrid/);

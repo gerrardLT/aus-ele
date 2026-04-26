@@ -30,6 +30,24 @@ class FakeFingridClient:
         return self.payloads.pop(0)
 
 
+class FailingFingridClient:
+    def __init__(self, error):
+        self.error = error
+        self.calls = []
+
+    def fetch_dataset_window(
+        self,
+        dataset_id: str,
+        *,
+        start_time_utc: str,
+        end_time_utc: str,
+        page_size: int = 20000,
+        locale: str = "en",
+    ) -> list[dict]:
+        self.calls.append((dataset_id, start_time_utc, end_time_utc, page_size, locale))
+        raise self.error
+
+
 class FingridServiceSyncTests(unittest.TestCase):
     def setUp(self):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -71,6 +89,24 @@ class FingridServiceSyncTests(unittest.TestCase):
         status = self.db.fetch_fingrid_sync_state("317")
         self.assertEqual(status["sync_status"], "ok")
         self.assertEqual(status["last_synced_timestamp_utc"], "2026-01-01T01:00:00Z")
+
+    def test_sync_failure_marks_dataset_state_as_error(self):
+        client = FailingFingridClient(RuntimeError("403 blocked by upstream"))
+
+        with self.assertRaises(RuntimeError):
+            sync_dataset(
+                self.db,
+                dataset_id="317",
+                mode="backfill",
+                start="2026-01-01T00:00:00Z",
+                end="2026-01-31T00:00:00Z",
+                client=client,
+                ingested_at="2026-04-23T00:00:00Z",
+            )
+
+        status = self.db.fetch_fingrid_sync_state("317")
+        self.assertEqual(status["sync_status"], "error")
+        self.assertIn("403 blocked by upstream", status["last_error"])
 
     def test_summary_and_day_aggregation_use_helsinki_time(self):
         self.db.upsert_fingrid_dataset_catalog([

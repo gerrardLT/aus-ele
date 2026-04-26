@@ -66,6 +66,7 @@ def sync_dataset(
     client = client or FingridClient()
     now_utc = datetime.now(timezone.utc)
     ingested_at = ingested_at or _format_utc(now_utc)
+    previous_state = db.fetch_fingrid_sync_state(dataset_id) or {}
 
     if mode == "backfill":
         start_utc = _parse_utc(start or dataset["default_backfill_start"])
@@ -74,47 +75,65 @@ def sync_dataset(
         start_utc = _parse_utc(start) if start else now_utc - timedelta(days=lookback_days)
 
     end_utc = _parse_utc(end) if end else now_utc
+    backfill_started_at = _format_utc(now_utc) if mode == "backfill" else previous_state.get("backfill_started_at")
+    backfill_completed_at = None if mode == "backfill" else previous_state.get("backfill_completed_at")
 
     db.upsert_fingrid_sync_state(
         dataset_id=dataset_id,
-        last_success_at=None,
+        last_success_at=previous_state.get("last_success_at"),
         last_attempt_at=_format_utc(now_utc),
-        last_cursor=None,
-        last_synced_timestamp_utc=None,
+        last_cursor=previous_state.get("last_cursor"),
+        last_synced_timestamp_utc=previous_state.get("last_synced_timestamp_utc"),
         sync_status="running",
         last_error=None,
-        backfill_started_at=_format_utc(now_utc) if mode == "backfill" else None,
-        backfill_completed_at=None,
+        backfill_started_at=backfill_started_at,
+        backfill_completed_at=backfill_completed_at,
     )
 
     records_upserted = 0
     last_timestamp_utc = None
     windows_synced = 0
 
-    for window_start, window_end in _month_windows(start_utc, end_utc):
-        raw_rows = client.fetch_dataset_window(
-            dataset_id,
-            start_time_utc=_format_utc(window_start),
-            end_time_utc=_format_utc(window_end),
-        )
-        normalized_rows = [normalize_fingrid_row(dataset, row, ingested_at=ingested_at) for row in raw_rows]
-        db.upsert_fingrid_timeseries(normalized_rows)
-        windows_synced += 1
-        records_upserted += len(normalized_rows)
-        if normalized_rows:
-            last_timestamp_utc = normalized_rows[-1]["timestamp_utc"]
+    try:
+        for window_start, window_end in _month_windows(start_utc, end_utc):
+            raw_rows = client.fetch_dataset_window(
+                dataset_id,
+                start_time_utc=_format_utc(window_start),
+                end_time_utc=_format_utc(window_end),
+            )
+            normalized_rows = [normalize_fingrid_row(dataset, row, ingested_at=ingested_at) for row in raw_rows]
+            db.upsert_fingrid_timeseries(normalized_rows)
+            windows_synced += 1
+            records_upserted += len(normalized_rows)
+            if normalized_rows:
+                last_timestamp_utc = normalized_rows[-1]["timestamp_utc"]
 
-    db.upsert_fingrid_sync_state(
-        dataset_id=dataset_id,
-        last_success_at=_format_utc(now_utc),
-        last_attempt_at=_format_utc(now_utc),
-        last_cursor=last_timestamp_utc,
-        last_synced_timestamp_utc=last_timestamp_utc,
-        sync_status="ok",
-        last_error=None,
-        backfill_started_at=None,
-        backfill_completed_at=_format_utc(now_utc) if mode == "backfill" else None,
-    )
+        completed_at = datetime.now(timezone.utc)
+        db.upsert_fingrid_sync_state(
+            dataset_id=dataset_id,
+            last_success_at=_format_utc(completed_at),
+            last_attempt_at=_format_utc(completed_at),
+            last_cursor=last_timestamp_utc or previous_state.get("last_cursor"),
+            last_synced_timestamp_utc=last_timestamp_utc or previous_state.get("last_synced_timestamp_utc"),
+            sync_status="ok",
+            last_error=None,
+            backfill_started_at=backfill_started_at,
+            backfill_completed_at=_format_utc(completed_at) if mode == "backfill" else previous_state.get("backfill_completed_at"),
+        )
+    except Exception as exc:
+        failed_at = datetime.now(timezone.utc)
+        db.upsert_fingrid_sync_state(
+            dataset_id=dataset_id,
+            last_success_at=previous_state.get("last_success_at"),
+            last_attempt_at=_format_utc(failed_at),
+            last_cursor=last_timestamp_utc or previous_state.get("last_cursor"),
+            last_synced_timestamp_utc=last_timestamp_utc or previous_state.get("last_synced_timestamp_utc"),
+            sync_status="error",
+            last_error=str(exc),
+            backfill_started_at=backfill_started_at,
+            backfill_completed_at=backfill_completed_at,
+        )
+        raise
 
     return {
         "dataset_id": dataset_id,
