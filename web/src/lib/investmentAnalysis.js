@@ -181,6 +181,14 @@ export function buildInvestmentRequestKey(region) {
   return region || '';
 }
 
+export function formatPercentageValue(value, decimals = 2) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return '-';
+  }
+
+  return `${Number(value).toFixed(decimals)}%`;
+}
+
 export function shouldAutoRunInvestment({
   isVisible,
   isLoading,

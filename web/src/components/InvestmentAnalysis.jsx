@@ -14,6 +14,7 @@ import {
 } from 'recharts';
 import {
   buildInvestmentRequestKey,
+  formatPercentageValue,
   getInvestmentCopy,
   shouldAutoRunInvestment,
 } from '../lib/investmentAnalysis';
@@ -376,11 +377,11 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
                 <KpiCard label={copy.kpis.npv || 'NPV'} value={fmt(metrics.npv)} tone={metrics.npv > 0 ? 'good' : 'bad'} sub={`Discount ${(params.discount_rate * 100).toFixed(1)}%`} />
-                <KpiCard label={copy.kpis.irr || 'IRR'} value={metrics.irr !== null && metrics.irr !== undefined ? `${metrics.irr}%` : '-'} tone={metrics.irr > params.discount_rate * 100 ? 'good' : 'warn'} sub="Unlevered" />
+                <KpiCard label={copy.kpis.irr || 'IRR'} value={formatPercentageValue(metrics.irr)} tone={metrics.irr > params.discount_rate * 100 ? 'good' : 'warn'} sub="Unlevered" />
                 <KpiCard label="Debt Cap" value={fmt(metrics.debt_capacity)} tone="brand" sub={`Avg DSCR ${metrics.dscr_avg ? metrics.dscr_avg.toFixed(2) : '-'}x`} />
-                <KpiCard label="Levered IRR" value={metrics.levered_irr !== null && metrics.levered_irr !== undefined ? `${(metrics.levered_irr * 100).toFixed(2)}%` : '-'} tone="good" sub="Equity Return" />
+                <KpiCard label="Levered IRR" value={formatPercentageValue(metrics.levered_irr !== null && metrics.levered_irr !== undefined ? metrics.levered_irr * 100 : null)} tone="good" sub="Equity Return" />
                 <KpiCard label={copy.kpis.payback || 'Payback'} value={metrics.payback_years ? `${metrics.payback_years} yrs` : 'Over Life'} tone={metrics.payback_years ? 'good' : 'warn'} sub={`Life ${params.project_life_years} yrs`} />
-                <KpiCard label="ROI" value={`${metrics.roi_pct}%`} tone="brand" sub="Total Return" />
+                <KpiCard label="ROI" value={formatPercentageValue(metrics.roi_pct)} tone="brand" sub="Total Return" />
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-5">

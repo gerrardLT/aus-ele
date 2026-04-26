@@ -4,7 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getInvestmentCopy, shouldAutoRunInvestment } from './investmentAnalysis.js';
+import {
+  formatPercentageValue,
+  getInvestmentCopy,
+  shouldAutoRunInvestment,
+} from './investmentAnalysis.js';
 import { translations } from '../translations.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +54,13 @@ test('shouldAutoRunInvestment only auto-runs when section is visible and current
     }),
     false,
   );
+});
+
+test('formatPercentageValue renders percentages with two decimals and preserves empty values', () => {
+  assert.equal(formatPercentageValue(12.3456), '12.35%');
+  assert.equal(formatPercentageValue(0), '0.00%');
+  assert.equal(formatPercentageValue(null), '-');
+  assert.equal(formatPercentageValue(undefined), '-');
 });
 
 test('investment copy resolves bilingual labels from translations', () => {
