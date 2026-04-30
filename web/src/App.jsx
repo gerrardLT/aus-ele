@@ -1,5 +1,5 @@
-import { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+﻿import { Suspense, lazy, useState, useEffect, useCallback, useRef } from 'react';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { ArrowRight, Activity, Database, ChevronUp, List } from 'lucide-react';
 import PriceChart from './components/PriceChart';
 import SummaryStats from './components/SummaryStats';
@@ -30,7 +30,65 @@ function SectionFallback({ minHeight = '320px' }) {
   );
 }
 
+function computeWindowSummaryMetrics(points = []) {
+  const numericPrices = points
+    .map((point) => Number(point?.price))
+    .filter((value) => Number.isFinite(value));
+
+  if (!numericPrices.length) {
+    return {
+      stats: { min: 0, max: 0, avg: 0 },
+      advancedStats: {
+        neg_ratio: 0,
+        neg_avg: null,
+        neg_min: null,
+        pos_avg: null,
+        pos_max: null,
+        days_below_100: 0,
+        days_above_300: 0,
+      },
+    };
+  }
+
+  const negativePrices = numericPrices.filter((value) => value < 0);
+  const positivePrices = numericPrices.filter((value) => value > 0);
+  const byDay = new Map();
+
+  points.forEach((point) => {
+    const dayKey = String(point?.time || '').slice(0, 10);
+    const price = Number(point?.price);
+    if (!dayKey || !Number.isFinite(price)) {
+      return;
+    }
+    const dayValues = byDay.get(dayKey) || [];
+    dayValues.push(price);
+    byDay.set(dayKey, dayValues);
+  });
+
+  return {
+    stats: {
+      min: Number(Math.min(...numericPrices).toFixed(2)),
+      max: Number(Math.max(...numericPrices).toFixed(2)),
+      avg: Number((numericPrices.reduce((sum, value) => sum + value, 0) / numericPrices.length).toFixed(2)),
+    },
+    advancedStats: {
+      neg_ratio: Number(((negativePrices.length / numericPrices.length) * 100).toFixed(2)),
+      neg_avg: negativePrices.length
+        ? Number((negativePrices.reduce((sum, value) => sum + value, 0) / negativePrices.length).toFixed(2))
+        : null,
+      neg_min: negativePrices.length ? Number(Math.min(...negativePrices).toFixed(2)) : null,
+      pos_avg: positivePrices.length
+        ? Number((positivePrices.reduce((sum, value) => sum + value, 0) / positivePrices.length).toFixed(2))
+        : null,
+      pos_max: positivePrices.length ? Number(Math.max(...positivePrices).toFixed(2)) : null,
+      days_below_100: [...byDay.values()].filter((values) => values.some((value) => value < -100)).length,
+      days_above_300: [...byDay.values()].filter((values) => values.some((value) => value > 300)).length,
+    },
+  };
+}
+
 function App() {
+  const prefersReducedMotion = useReducedMotion();
   const [lang, setLang] = useState(() => {
     try {
       return localStorage.getItem('app_lang') || 'zh';
@@ -45,6 +103,7 @@ function App() {
   const [selectedDayType, setSelectedDayType] = useState('ALL');
   const [selectedRegion, setSelectedRegion] = useState('NSW1');
   const [chartData, setChartData] = useState(null);
+  const [visibleChartData, setVisibleChartData] = useState([]);
   const [eventOverlay, setEventOverlay] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -52,7 +111,7 @@ function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showToc, setShowToc] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
-  const [showMonthFilter, setShowMonthFilter] = useState(false);
+  const [showMonthFilter, setShowMonthFilter] = useState(true);
   const [activeSection, setActiveSection] = useState('');
   const [showStickyFilter, setShowStickyFilter] = useState(false);
   const filterPanelRef = useRef(null);
@@ -117,14 +176,26 @@ function App() {
   }, []);
 
   const t = translations[lang];
+  const sectionLinks = [
+    { id: 'sec-overview', label: lang === 'zh' ? '总览' : 'Overview' },
+    { id: 'sec-forecast', label: t.forecast?.sectionLabel || (lang === 'zh' ? '电网预测' : 'Forecast') },
+    { id: 'sec-negative', label: lang === 'zh' ? '负电价' : 'Negative Price' },
+    { id: 'sec-arbitrage', label: lang === 'zh' ? '套利分析' : 'Arbitrage' },
+    { id: 'sec-fcas', label: 'FCAS' },
+    { id: 'sec-simulator', label: lang === 'zh' ? '盈利模拟' : 'Simulator' },
+    { id: 'sec-stacking', label: lang === 'zh' ? '收入叠加' : 'Stacking' },
+    { id: 'sec-charging', label: lang === 'zh' ? '充电窗口' : 'Charging' },
+    { id: 'sec-cycle', label: lang === 'zh' ? '循环成本' : 'Cycle Cost' },
+    { id: 'sec-investment', label: lang === 'zh' ? '投资分析' : 'Investment' },
+  ];
   const simulatorScopeNote = t.simulator.fullYearModelNote || (
     lang === 'zh'
-      ? '该模块使用全年代表性参数，不跟随 month / quarter / day_type 子时段筛选；事件与预测信号仅用于说明，不会自动注入模拟器收益结果。'
+      ? '使用全年代表性参数；month / quarter / day_type 筛选不作用于本模块，事件与预测信号仅用于说明。'
       : 'Uses full-year representative data. Month, quarter, and day-type filters do not apply here. Event and forecast signals are explanatory only and are not injected into simulator results.'
   );
   const investmentScopeNote = t.investment?.fullYearModelNote || (
     lang === 'zh'
-      ? '该模块使用全年历史回测和年度现金流假设，不跟随 month / quarter / day_type 子时段筛选；事件与预测信号不会自动改写收益、NPV、IRR 或回本期。'
+      ? '使用全年历史与现金流假设；month / quarter / day_type 筛选不作用于本模块，事件与预测信号不会自动改写收益、NPV、IRR 或回本期。'
       : 'Uses full-year historical and cash-flow assumptions. Month, quarter, and day-type filters do not apply here. Event and forecast signals do not automatically change revenue, NPV, IRR, or payback.'
   );
 
@@ -172,13 +243,13 @@ function App() {
       const res = await fetch(`${API_BASE}/sync_data`, { method: 'POST' });
       if (res.ok) {
          // Simple alert for now as per requirement
-         alert(lang === 'zh' ? '✅ 数据同步已在后台启动！爬取过程可能需要几分钟的时间。' : '✅ Data sync started in background! This may take a few minutes.');
+         alert(lang === 'zh' ? '数据同步已在后台启动，可能需要几分钟。' : 'Data sync started in background. This may take a few minutes.');
       } else {
-         alert('❌ Update failed. Please check server logs.');
+         alert(lang === 'zh' ? '更新失败，请检查服务日志。' : 'Update failed. Please check server logs.');
       }
     } catch(e) {
       console.error(e);
-      alert('❌ Error triggering update.');
+      alert(lang === 'zh' ? '触发更新时发生错误。' : 'Error triggering update.');
     }
     setTimeout(() => setIsSyncing(false), 2000);
   };
@@ -216,6 +287,7 @@ function App() {
     ])
       .then(([priceData, overlayData]) => {
         setChartData(priceData);
+        setVisibleChartData(Array.isArray(priceData?.data) ? priceData.data : []);
         setEventOverlay(overlayData);
         setError(false);
         setLoading(false);
@@ -227,70 +299,122 @@ function App() {
       });
   }, [selectedYear, selectedMonth, selectedQuarter, selectedDayType, selectedRegion]);
 
+    const visibleSummaryMetrics = computeWindowSummaryMetrics(
+      visibleChartData.length ? visibleChartData : (chartData?.data || [])
+    );
+
     const tocSections = [
-      { id: 'sec-overview', label: lang === 'zh' ? '市场总览' : 'Overview', shortLabel: '总览' },
+      { id: 'sec-overview', label: lang === 'zh' ? '市场总览' : 'Overview', shortLabel: lang === 'zh' ? '总览' : 'Overview' },
       { id: 'sec-forecast', label: t.forecast?.sectionLabel || (lang === 'zh' ? '电网预测' : 'Grid Forecast'), shortLabel: lang === 'zh' ? '预测' : 'Forecast' },
-      { id: 'sec-negative', label: lang === 'zh' ? '负电价分布' : 'Negative Price', shortLabel: '负电价' },
-      { id: 'sec-arbitrage', label: lang === 'zh' ? '储能套利' : 'Arbitrage', shortLabel: '套利' },
+      { id: 'sec-negative', label: lang === 'zh' ? '负电价分布' : 'Negative Price', shortLabel: lang === 'zh' ? '负电价' : 'Negative' },
+      { id: 'sec-arbitrage', label: lang === 'zh' ? '储能套利' : 'Arbitrage', shortLabel: lang === 'zh' ? '套利' : 'Arbitrage' },
       { id: 'sec-fcas', label: lang === 'zh' ? 'FCAS 分析' : 'FCAS', shortLabel: 'FCAS' },
-      { id: 'sec-simulator', label: lang === 'zh' ? '盈利模拟' : 'Simulator', shortLabel: '模拟' },
-      { id: 'sec-stacking', label: lang === 'zh' ? '收入叠加' : 'Stacking', shortLabel: '叠加' },
-      { id: 'sec-charging', label: lang === 'zh' ? '充电窗口' : 'Charging', shortLabel: '充电' },
-      { id: 'sec-cycle', label: lang === 'zh' ? '循环成本' : 'Cycle Cost', shortLabel: '循环' },
-      { id: 'sec-investment', label: lang === 'zh' ? '投资分析' : 'Investment', shortLabel: '投资' },
+      { id: 'sec-simulator', label: lang === 'zh' ? '盈利模拟' : 'Simulator', shortLabel: lang === 'zh' ? '模拟' : 'Sim' },
+      { id: 'sec-stacking', label: lang === 'zh' ? '收入叠加' : 'Stacking', shortLabel: lang === 'zh' ? '叠加' : 'Stack' },
+      { id: 'sec-charging', label: lang === 'zh' ? '充电窗口' : 'Charging', shortLabel: lang === 'zh' ? '充电' : 'Charge' },
+      { id: 'sec-cycle', label: lang === 'zh' ? '循环成本' : 'Cycle Cost', shortLabel: lang === 'zh' ? '循环' : 'Cycle' },
+      { id: 'sec-investment', label: lang === 'zh' ? '投资分析' : 'Investment', shortLabel: lang === 'zh' ? '投资' : 'Invest' },
     ];
 
     return (
     <div className="min-h-screen pb-20">
 
-      {/* Floating TOC Toggle Button — shrinks when panel is open */}
-      {!loading && !error && (
-        <motion.button
-          onClick={() => setShowToc(prev => !prev)}
-          animate={showToc
-            ? { width: 28, height: 28, left: 8, top: 'calc(50% - 160px)' }
-            : { width: 40, height: 40, left: 16, top: '50%' }
-          }
-          transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
-          className="fixed -translate-y-1/2 z-[51] flex items-center justify-center bg-[var(--color-inverted)] text-[var(--color-inverted-text)] rounded-full shadow-lg"
-          aria-label="Toggle navigation"
-          title={lang === 'zh' ? '模块导航' : 'Section Navigation'}
-        >
-          {showToc ? <ChevronUp size={14} className="rotate-[-90deg]" /> : <List size={18} />}
-        </motion.button>
-      )}
+      <div className="mx-auto flex min-h-screen w-full gap-0 max-[1100px]:block">
 
-      {/* Compact TOC Panel — flush left edge */}
-      <AnimatePresence>
-        {showToc && (
-          <motion.nav
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
-            className="fixed left-2 top-1/2 -translate-y-1/2 z-50 backdrop-blur-lg bg-[#2a2a2a]/60 rounded-xl shadow-2xl py-2.5 px-1.5"
-          >
-            {tocSections.map(sec => (
-              <button
-                key={sec.id}
-                onClick={() => { scrollToSection(sec.id); setShowToc(false); }}
-                className={`flex items-center gap-2.5 w-full text-left px-3 py-[7px] text-[13px] font-sans transition-all rounded-lg whitespace-nowrap
-                  ${activeSection === sec.id
-                    ? 'text-white font-semibold'
-                    : 'text-white/60 hover:text-white/90'
+      <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 overflow-hidden border-r border-white/8 bg-[#13161A] px-4 py-5 text-[#F3F5F7] md:block max-[1100px]:hidden">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top_left,rgba(110,168,255,0.14),transparent_60%)]" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-[linear-gradient(to_bottom,transparent,rgba(255,255,255,0.08),transparent)]" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-[linear-gradient(to_top,rgba(255,255,255,0.02),transparent)]" />
+
+        <div className="relative border-b border-white/8 pb-4">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">
+            {t.nav.brand}
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <motion.span
+              aria-hidden="true"
+              className="inline-block h-2 w-2 rounded-full bg-[#7FB0FF]"
+              animate={prefersReducedMotion ? undefined : { opacity: [0.45, 1, 0.45], scale: [1, 1.18, 1] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <span className="text-[10px] uppercase tracking-[0.18em] text-white/38">
+              {lang === 'zh' ? '研究工作台' : 'Research Desk'}
+            </span>
+          </div>
+          <div className="mt-2 pr-3 text-sm leading-6 text-white/58">
+            {t.header.title1} {t.header.title2}
+          </div>
+        </div>
+
+        <div className="relative mt-4">
+          <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/38">
+            {lang === 'zh' ? '市场模块' : 'Market Modules'}
+          </div>
+          <div className="mt-2 grid gap-1">
+            {sectionLinks.map((item) => {
+              const isActive = activeSection === item.id || (!activeSection && item.id === 'sec-overview');
+              return (
+                <motion.button
+                  key={item.id}
+                  onClick={() => scrollToSection(item.id)}
+                  whileHover={prefersReducedMotion ? undefined : { x: 3 }}
+                  whileTap={prefersReducedMotion ? undefined : { scale: 0.988 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  className={`relative flex min-h-[40px] items-center overflow-hidden rounded-lg px-3 text-left text-sm transition-colors ${
+                    isActive
+                      ? 'text-white'
+                      : 'border border-transparent text-white/62 hover:text-white'
                   }`}
-              >
-                <span className={`flex-shrink-0 rounded-full transition-all duration-200 ${
-                  activeSection === sec.id
-                    ? 'w-1.5 h-1.5 bg-white'
-                    : 'w-1 h-1 bg-white/30'
-                }`} />
-                {sec.shortLabel || sec.label}
-              </button>
-            ))}
-          </motion.nav>
-        )}
-      </AnimatePresence>
+                >
+                  {isActive ? (
+                    <motion.span
+                      layoutId="sidebar-active-item"
+                      className="absolute inset-0 rounded-lg border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.14),rgba(255,255,255,0.06))] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_30px_rgba(0,0,0,0.22)]"
+                      transition={{ type: 'spring', stiffness: 380, damping: 34, mass: 0.7 }}
+                    />
+                  ) : (
+                    <span className="absolute inset-0 rounded-lg bg-transparent transition-colors duration-200 hover:bg-white/6" />
+                  )}
+                  <span className={`absolute left-1 top-1 bottom-1 w-0.5 rounded-full bg-[#8AB7FF] transition-opacity duration-200 ${isActive ? 'opacity-100' : 'opacity-0'}`} />
+                  <span className={`relative z-10 transition-transform duration-200 ${isActive ? 'translate-x-1 font-medium' : ''}`}>
+                    {item.label}
+                  </span>
+                </motion.button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="relative mt-5 border-t border-white/8 pt-4">
+          <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/38">
+            {lang === 'zh' ? '其他入口' : 'Other Views'}
+          </div>
+          <div className="mt-2 grid gap-1">
+            <motion.a
+              href="/fingrid"
+              whileHover={prefersReducedMotion ? undefined : { x: 3 }}
+              whileTap={prefersReducedMotion ? undefined : { scale: 0.988 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="relative flex min-h-[40px] items-center overflow-hidden rounded-lg px-3 text-sm text-white/56 transition-colors hover:text-white"
+            >
+              <span className="absolute inset-0 rounded-lg bg-transparent transition-colors duration-200 hover:bg-white/6" />
+              <span className="relative z-10">{t.nav.fingrid || 'Fingrid'}</span>
+            </motion.a>
+            <motion.a
+              href="/developer"
+              whileHover={prefersReducedMotion ? undefined : { x: 3 }}
+              whileTap={prefersReducedMotion ? undefined : { scale: 0.988 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="relative flex min-h-[40px] items-center overflow-hidden rounded-lg px-3 text-sm text-white/56 transition-colors hover:text-white"
+            >
+              <span className="absolute inset-0 rounded-lg bg-transparent transition-colors duration-200 hover:bg-white/6" />
+              <span className="relative z-10">{t.nav.developerPortal || 'Developer Portal'}</span>
+            </motion.a>
+          </div>
+        </div>
+      </aside>
+
+      <div className="min-w-0 flex-1 pl-1 pt-2">
 
       {/* Back to Top Button */}
       <AnimatePresence>
@@ -307,7 +431,7 @@ function App() {
           </motion.button>
         )}
       </AnimatePresence>
-      {/* Sticky Compact Filter Bar — appears when main filters scroll out of view */}
+      {/* Sticky Compact Filter Bar 鈥?appears when main filters scroll out of view */}
       <AnimatePresence>
         {showStickyFilter && !loading && !error && (
           <motion.div
@@ -321,7 +445,7 @@ function App() {
               {/* Left: Year selector */}
               <div className="flex items-center gap-1">
                 <span className="text-[10px] font-bold tracking-widest text-[var(--color-muted)] uppercase mr-2 hidden sm:inline">
-                  {lang === 'zh' ? '年份' : 'YEAR'}
+                  {lang === 'zh' ? '骞翠唤' : 'YEAR'}
                 </span>
                 {years.map(y => (
                   <button
@@ -351,7 +475,7 @@ function App() {
               {/* Right: Region selector */}
               <div className="flex items-center gap-1">
                 <span className="text-[10px] font-bold tracking-widest text-[var(--color-muted)] uppercase mr-2 hidden sm:inline">
-                  {lang === 'zh' ? '区域' : 'REGION'}
+                  {lang === 'zh' ? '鍖哄煙' : 'REGION'}
                 </span>
                 {['NSW1', 'QLD1', 'VIC1', 'SA1', 'TAS1', 'WEM'].map(r => (
                   <button
@@ -372,78 +496,61 @@ function App() {
         )}
       </AnimatePresence>
 
-      {/* 极简无边框导航 Minimal Text-based Nav */}
-      <nav className="w-full border-b border-[var(--color-border)] py-3 mb-8">
-        <div className="grid-container flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Activity size={20} />
-            <span className="font-serif font-semibold text-lg hover:italic transition-all cursor-default">
-              {t.nav.brand}
-            </span>
+      <main className="grid-container">
+
+        <motion.header
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: "easeOut" }}
+          className="col-span-12 mb-6 flex flex-col gap-4 border-b border-[var(--color-border)] pb-5 lg:flex-row lg:items-center lg:justify-between"
+        >
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-2">
+            <h1 className="text-2xl font-bold leading-tight md:text-3xl">
+              {t.header.title1} {t.header.title2}
+            </h1>
           </div>
-          <div className="flex items-center space-x-6 text-sm font-sans tracking-wide text-[var(--color-muted)]">
-            <span className="hidden md:inline">{t.nav.subtitle}</span>
-            {lastUpdate && <span className="hidden lg:inline text-xs border border-[var(--color-border)] rounded-full px-3 py-1 bg-[var(--color-bg)]">{lastUpdate}</span>}
-            <a
-              href="/fingrid"
-              className="px-3 py-1.5 border border-[var(--color-border)] rounded hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)] transition-colors min-h-[44px] inline-flex items-center"
-            >
-              {lang === 'zh' ? '芬兰 Fingrid' : 'Fingrid'}
-            </a>
+          <div className="flex flex-wrap items-center gap-2 text-sm font-sans text-[var(--color-muted)]">
+            {lastUpdate ? (
+              <span className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs">
+                {lastUpdate}
+              </span>
+            ) : null}
             <button
-               onClick={handleSync}
-               disabled={isSyncing}
-               title="Trigger Background Data Sync"
-               className="flex items-center gap-2 px-3 py-1.5 border border-[var(--color-border)] rounded hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)] transition-colors min-h-[44px]"
+              onClick={handleSync}
+              disabled={isSyncing}
+              title="Trigger Background Data Sync"
+              className="flex min-h-[40px] items-center gap-2 rounded border border-[var(--color-border)] px-3 py-1.5 transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
             >
-               <svg className={isSyncing ? "animate-spin w-4 h-4" : "w-4 h-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-               </svg>
-               <span className="hidden sm:inline">{lang === 'zh' ? (isSyncing ? '同步中' : '同步数据') : (isSyncing ? 'Syncing' : 'Sync')}</span>
+              <svg className={isSyncing ? "h-4 w-4 animate-spin" : "h-4 w-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>{isSyncing ? (t.nav.syncing || 'Syncing') : (t.nav.sync || 'Sync')}</span>
             </button>
             <button
               aria-label="Toggle language"
               title="Toggle language"
               onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
-              className="px-3 py-1.5 border border-[var(--color-border)] rounded hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)] transition-colors min-h-[44px]"
+              className="min-h-[40px] rounded border border-[var(--color-border)] px-3 py-1.5 transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
             >
               {t.nav.toggleOptions}
             </button>
           </div>
-        </div>
-      </nav>
-
-      <main className="grid-container">
-
-        {/* Header / Typography Focus */}
-        <motion.header
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          className="col-span-12 md:col-span-12 mb-6 flex flex-col md:flex-row md:items-end justify-between items-start gap-4"
-        >
-          <h1 className="text-2xl md:text-3xl font-bold leading-tight">
-            {t.header.title1} {t.header.title2}
-          </h1>
-          <p className="text-[var(--color-text)]/60 font-sans max-w-2xl text-base leading-relaxed mb-1">
-            {t.header.description}
-          </p>
         </motion.header>
 
         {/* Filters Panel (Black/White minimal controls) */}
-        <div ref={filterPanelRef} className="col-span-12 border-t border-[var(--color-border)] pt-4 mb-6 flex flex-col gap-6">
+        <div ref={filterPanelRef} className="col-span-12 mb-5 flex flex-col gap-4.5">
 
           {/* Top row: Year & Region */}
-          <div className="flex flex-col md:flex-row justify-between gap-8 md:gap-4">
+          <div className="flex flex-col justify-between gap-6 md:flex-row md:gap-4">
 
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2.5">
               <span className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">{t.filters.yearSelect}</span>
               <div className="flex flex-wrap gap-2">
                 {years.map(y => (
                   <button
                     key={y}
                     onClick={() => setSelectedYear(y)}
-                    className={`px-4 py-1.5 min-h-[36px] font-sans text-sm transition-colors
+                    className={`px-3.5 py-1 min-h-[32px] font-sans text-[13px] transition-colors
                       ${selectedYear === y
                         ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
                         : 'bg-transparent text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
@@ -455,14 +562,14 @@ function App() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 md:items-end w-full md:w-auto">
+            <div className="flex w-full flex-col gap-2.5 md:w-auto md:items-end">
               <span className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">{t.filters.regionSelect}</span>
               <div className="flex flex-wrap gap-2 md:justify-end">
                 {['NSW1', 'QLD1', 'VIC1', 'SA1', 'TAS1', 'WEM'].map(r => (
                   <button
                     key={r}
                     onClick={() => setSelectedRegion(r)}
-                    className={`px-4 py-1.5 min-h-[36px] font-sans text-sm transition-colors border-b-2
+                    className={`px-3.5 py-1 min-h-[32px] font-sans text-[13px] transition-colors border-b-2
                       ${selectedRegion === r
                         ? 'border-[var(--color-text)] text-[var(--color-text)] font-medium'
                         : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-text)]/30'
@@ -477,16 +584,16 @@ function App() {
           </div>
 
           {/* Middle row: Quarter & Day Type */}
-          <div className="flex flex-col md:flex-row justify-between gap-8 md:gap-4 border-t border-dashed border-[var(--color-border)] pt-6">
+          <div className="flex flex-col justify-between gap-6 border-t border-dashed border-[var(--color-border)] pt-5 md:flex-row md:gap-4">
 
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2.5">
               <span className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">{t.filters.quarterSelect}</span>
               <div className="flex flex-wrap gap-2">
                 {['ALL', 'Q1', 'Q2', 'Q3', 'Q4'].map(q => (
                   <button
                     key={q}
                     onClick={() => { setSelectedQuarter(q); if (q !== 'ALL') setSelectedMonth('ALL'); }}
-                    className={`px-5 py-2 min-h-[44px] font-sans text-sm transition-colors rounded-full border
+                    className={`px-4 py-1.5 min-h-[38px] font-sans text-[13px] transition-colors rounded-full border
                       ${selectedQuarter === q
                         ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)] border-[var(--color-inverted)]'
                         : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]'
@@ -498,14 +605,14 @@ function App() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 md:items-end w-full md:w-auto">
+            <div className="flex w-full flex-col gap-2.5 md:w-auto md:items-end">
               <span className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">{t.filters.dayTypeSelect}</span>
               <div className="flex flex-wrap gap-2 md:justify-end">
                 {['ALL', 'WEEKDAY', 'WEEKEND'].map(d => (
                   <button
                     key={d}
                     onClick={() => setSelectedDayType(d)}
-                    className={`px-5 py-2 min-h-[44px] font-sans text-sm transition-colors rounded-full border
+                    className={`px-4 py-1.5 min-h-[38px] font-sans text-[13px] transition-colors rounded-full border
                       ${selectedDayType === d
                         ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)] border-[var(--color-inverted)]'
                         : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]'
@@ -520,27 +627,26 @@ function App() {
           </div>
 
           {/* Bottom row: Month (collapsible) + Reset */}
-          <div className="flex flex-col gap-3 border-t border-dashed border-[var(--color-border)] pt-6">
+          <div className="flex flex-col gap-2.5 border-t border-dashed border-[var(--color-border)] pt-5">
             <div className="flex items-center justify-between">
               <button
                 onClick={() => setShowMonthFilter(prev => !prev)}
                 className="flex items-center gap-2 text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase hover:text-[var(--color-text)] transition-colors"
               >
                 {t.filters.monthSelect}
-                <span className={`transition-transform duration-200 ${showMonthFilter ? 'rotate-90' : ''}`}>▶</span>
+                <span className={`transition-transform duration-200 ${showMonthFilter ? 'rotate-90' : ''}`}>+</span>
                 {selectedMonth !== 'ALL' && (
                   <span className="ml-1 px-2 py-0.5 bg-[var(--color-inverted)] text-[var(--color-inverted-text)] rounded-full text-[10px] font-medium normal-case">
-                    {lang === 'zh' ? `${parseInt(selectedMonth)}月` : `M${selectedMonth}`}
+                    {lang === 'zh' ? `${parseInt(selectedMonth, 10)}月` : `M${selectedMonth}`}
                   </span>
                 )}
               </button>
-              {/* Reset All Filters */}
               {(selectedMonth !== 'ALL' || selectedQuarter !== 'ALL' || selectedDayType !== 'ALL') && (
                 <button
                   onClick={() => { setSelectedMonth('ALL'); setSelectedQuarter('ALL'); setSelectedDayType('ALL'); }}
                   className="text-xs font-sans text-[var(--color-muted)] hover:text-[var(--color-error)] transition-colors underline underline-offset-2"
                 >
-                  {lang === 'zh' ? '重置筛选' : 'Reset Filters'}
+                  {t.filters.resetFilters || 'Reset Filters'}
                 </button>
               )}
             </div>
@@ -554,20 +660,20 @@ function App() {
                   className="overflow-hidden"
                 >
                   <div className="flex flex-wrap gap-2 pt-1">
-                    {['ALL', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'].map(m => {
+                    {['ALL', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'].map((m) => {
                       const monthLabels = lang === 'zh'
-                        ? ['全年综合', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+                        ? ['全年', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
                         : ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                      const idx = m === 'ALL' ? 0 : parseInt(m);
+                      const idx = m === 'ALL' ? 0 : parseInt(m, 10);
                       return (
                         <button
                           key={m}
                           onClick={() => { setSelectedMonth(m); if (m !== 'ALL') setSelectedQuarter('ALL'); }}
-                          className={`px-4 py-2 min-h-[40px] font-sans text-sm transition-colors rounded-full border
-                            ${selectedMonth === m
+                          className={`px-3.5 py-1.5 min-h-[36px] font-sans text-[13px] transition-colors rounded-full border ${
+                            selectedMonth === m
                               ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)] border-[var(--color-inverted)]'
                               : 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]'
-                            }`}
+                          }`}
                         >
                           {monthLabels[idx]}
                         </button>
@@ -630,8 +736,8 @@ function App() {
               {/* Left Column: Stats */}
               <div id="sec-overview" className="col-span-12 md:col-span-3 scroll-mt-24">
                 <SummaryStats
-                  stats={chartData?.stats}
-                  advancedStats={chartData?.advanced_stats}
+                  stats={visibleSummaryMetrics.stats}
+                  advancedStats={visibleSummaryMetrics.advancedStats}
                   t={{ ...t.summary_stats, ...t.advanced_metrics }}
                 />
               </div>
@@ -639,7 +745,13 @@ function App() {
               {/* Right Column: Chart */}
               <div className="col-span-12 md:col-span-9">
                 <div className="h-[500px]">
-                  <PriceChart data={chartData?.data} t={t.price_chart} overlay={eventOverlay} locale={lang} />
+                  <PriceChart
+                    data={chartData?.data}
+                    t={t.price_chart}
+                    overlay={eventOverlay}
+                    locale={lang}
+                    onWindowDataChange={setVisibleChartData}
+                  />
                 </div>
               </div>
 
@@ -795,6 +907,8 @@ function App() {
         </div>
 
       </main>
+      </div>
+      </div>
     </div>
   )
 }

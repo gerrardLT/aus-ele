@@ -2,7 +2,7 @@
 
 @theme {
   --color-primary: #0047FF; /* The "One Key Color" */
-  --color-bg: #FFFFFF;
+  --color-bg: #F5F7FA;
   --color-surface: #F9FAFB;
   --color-surface-hover: #F3F4F6;
   --color-text: #050505;
@@ -39,9 +39,9 @@
     grid-template-columns: repeat(12, minmax(0, 1fr));
     gap: 1.5rem; /* 24px */
     width: 100%;
-    max-width: 1440px;
+    max-width: none;
     margin: 0 auto;
-    padding: 0 2rem;
+    padding: 0 clamp(28px, 3vw, 56px);
   }
 
   /* Custom ultra-minimal scrollbar */

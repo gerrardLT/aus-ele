@@ -24,7 +24,7 @@ export default function FingridSeriesChart({ payload, loading, error, copy }) {
   if (loading) {
     return (
       <section className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        {copy?.loadingChart || 'Loading chart...'}
+        {copy?.loadingChart}
       </section>
     );
   }
@@ -34,9 +34,20 @@ export default function FingridSeriesChart({ payload, loading, error, copy }) {
   }
 
   const series = payload?.series || [];
+  if (series.length === 0) {
+    return (
+      <section className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">{copy?.seriesTitle}</div>
+        <div className="text-sm text-[var(--color-muted)]">
+          {copy?.emptyChart}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-      <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">{copy?.seriesTitle || 'Time Series'}</div>
+      <div className="mb-4 text-sm uppercase tracking-widest text-[var(--color-muted)]">{copy?.seriesTitle}</div>
       <div className="h-[360px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={series}>

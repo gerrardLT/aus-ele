@@ -3,11 +3,15 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import FingridPage from './pages/FingridPage.jsx'
+import DeveloperPortalPage from './pages/DeveloperPortalPage.jsx'
 import { resolveRootPage } from './lib/pageRouter.js'
 
-const rootElement = resolveRootPage(globalThis.location?.pathname || '/') === 'fingrid'
+const rootPage = resolveRootPage(globalThis.location?.pathname || '/')
+const rootElement = rootPage === 'fingrid'
   ? <FingridPage />
-  : <App />
+  : rootPage === 'developer'
+    ? <DeveloperPortalPage />
+    : <App />
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

@@ -6,6 +6,9 @@ const FORECAST_COPY = {
       subtitle: 'Forward-looking risk and opportunity forecast using official market and event signals.',
       signalDesk: 'Signal Desk',
       marketContext: 'Market Context',
+      horizon24h: '24h',
+      horizon7d: '7d',
+      horizon30d: '30d',
       horizonNotes: {
         '24h': '24h mode is predispatch-led and highlights the next actionable charge and discharge windows.',
         '7d': '7d mode switches to a daily regime outlook instead of pretending to be a point-by-point price forecast.',
@@ -107,7 +110,17 @@ const FORECAST_COPY = {
       notAvailable: 'n/a',
       noDrivers: 'No verified forward driver was found in the selected horizon.',
       noWindows: 'No strong forward window was flagged in the selected horizon.',
+      keyDrivers: 'Key Drivers',
+      futureWindows: 'Future Windows',
+      signal: 'signal',
+      source: 'source',
       originalSignal: 'Original source signal',
+      sourceLink: 'Source link',
+      bands: {
+        critical: 'critical',
+        elevated: 'elevated',
+        stable: 'stable',
+      },
     },
   },
   zh: {
@@ -117,6 +130,9 @@ const FORECAST_COPY = {
       subtitle: '基于官方市场与事件信号的未来风险与机会前瞻。',
       signalDesk: '信号总览',
       marketContext: '市场上下文',
+      horizon24h: '24 ??',
+      horizon7d: '7 ?',
+      horizon30d: '30 ?',
       horizonNotes: {
         '24h': '24 小时模式以官方预调度为主，用于识别最近的充放电机会窗口。',
         '7d': '7 天模式切换为日度风险展望，不再伪装成逐点价格预测。',
@@ -218,7 +234,17 @@ const FORECAST_COPY = {
       notAvailable: '暂无',
       noDrivers: '所选预测周期内暂无已验证的前瞻驱动。',
       noWindows: '所选预测周期内暂无强信号窗口。',
+      keyDrivers: '关键驱动',
+      futureWindows: '未来窗口',
+      signal: '信号',
+      source: '来源',
       originalSignal: '原始来源信号',
+      sourceLink: '来源链接',
+      bands: {
+        critical: '高压',
+        elevated: '抬升',
+        stable: '平稳',
+      },
     },
   },
 };
@@ -396,6 +422,17 @@ export function getForecastSeverityCopy(severity, locale = 'en') {
 
 export function getForecastText(locale = 'en') {
   return getCopy(locale);
+}
+
+export function getForecastBandCopy(score, locale = 'en') {
+  const labels = getCopy(locale).generic.bands;
+  if (score >= 75) {
+    return labels.critical;
+  }
+  if (score >= 55) {
+    return labels.elevated;
+  }
+  return labels.stable;
 }
 
 export function getForecastSourceStatusItems(payload, locale = 'en') {

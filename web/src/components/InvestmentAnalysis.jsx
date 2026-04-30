@@ -18,6 +18,8 @@ import {
   getInvestmentCopy,
   shouldAutoRunInvestment,
 } from '../lib/investmentAnalysis';
+import DataQualityBadge from './DataQualityBadge';
+import { getDataGradeCaveat, getResultMetadata } from '../lib/resultMetadata';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
 
@@ -73,16 +75,16 @@ const FIELD_GROUPS = [
       { key: 'project_life_years', labelKey: 'project_life_years', step: 1, min: 1, suffix: 'yr' },
       { key: 'fcas_revenue_per_mw_year', labelKey: 'fcas_revenue_per_mw_year', step: 5000, min: 0, suffix: '$/MW/yr' },
       { key: 'capacity_payment_per_mw_year', labelKey: 'capacity_payment_per_mw_year', step: 10000, min: 0, suffix: '$/MW/yr' },
-      { key: 'forecast_inefficiency', labelKey: 'forecast_inefficiency', step: 0.05, min: 0, max: 1, suffix: '%', pct: true, label: 'Forecast Loss' },
-      { key: 'fcas_activation_probability', labelKey: 'fcas_activation_probability', step: 0.05, min: 0, max: 1, suffix: '%', pct: true, label: 'FCAS Activation' },
+      { key: 'forecast_inefficiency', labelKey: 'forecast_inefficiency', step: 0.05, min: 0, max: 1, suffix: '%', pct: true },
+      { key: 'fcas_activation_probability', labelKey: 'fcas_activation_probability', step: 0.05, min: 0, max: 1, suffix: '%', pct: true },
     ],
   },
   {
-    titleKey: 'Project Finance',
+    titleKey: 'projectFinance',
     fields: [
-      { key: 'cost_of_debt', labelKey: 'cost_of_debt', step: 0.01, min: 0, max: 1, suffix: '%', pct: true, label: 'Cost of Debt' },
-      { key: 'target_dscr', labelKey: 'target_dscr', step: 0.05, min: 1, max: 3, suffix: 'x', label: 'Target DSCR' },
-      { key: 'debt_tenor_years', labelKey: 'debt_tenor_years', step: 1, min: 1, suffix: 'yr', label: 'Debt Tenor' },
+      { key: 'cost_of_debt', labelKey: 'cost_of_debt', step: 0.01, min: 0, max: 1, suffix: '%', pct: true },
+      { key: 'target_dscr', labelKey: 'target_dscr', step: 0.05, min: 1, max: 3, suffix: 'x' },
+      { key: 'debt_tenor_years', labelKey: 'debt_tenor_years', step: 1, min: 1, suffix: 'yr' },
     ],
   },
 ];
@@ -115,6 +117,15 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
   const [loadedKey, setLoadedKey] = useState(null);
   const requestKey = buildInvestmentRequestKey(region);
   const copy = useMemo(() => getInvestmentCopy(lang, t), [lang, t]);
+  const resultMetadata = getResultMetadata(result);
+  const sectionMetadata = result?.metadata
+    ? resultMetadata
+    : {
+        data_grade: region === 'WEM' ? 'preview' : 'analytical',
+        unit: 'AUD',
+        warnings: region === 'WEM' ? ['preview_only'] : [],
+      };
+  const previewCaveat = region === 'WEM' ? getDataGradeCaveat(sectionMetadata.data_grade, lang) : '';
 
   useEffect(() => {
     const node = sectionRef.current;
@@ -200,7 +211,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
       const data = await response.json();
 
       if (!response.ok || data.error) {
-        throw new Error(data.error || data.detail || 'Request failed');
+        throw new Error(data.error || data.detail || copy.statuses.requestFailed);
       }
 
       setResult(data);
@@ -234,9 +245,23 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVisible, requestKey, loadedKey, loading]);
 
-  const cashFlows = result?.scenarios?.[0]?.cash_flows?.filter((row) => row.year > 0) || [];
+  const cashFlows = useMemo(() => (
+    (result?.scenarios?.[0]?.cash_flows || [])
+      .filter((row) => row.year > 0)
+      .map((row) => ({
+        ...row,
+        revenue: row.total_revenue ?? row.revenue ?? 0,
+        cumulative: row.cumulative_cash_flow ?? row.cumulative ?? 0,
+      }))
+  ), [result]);
   const metrics = result?.base_metrics || {};
   const mc = result?.monte_carlo;
+  const backtest_observed = result?.backtest_observed || null;
+  const backtest_reference = result?.backtest_reference || null;
+  const backtest_fallback_used = Boolean(result?.backtest_fallback_used);
+  const noStandardizedBacktestCoverage = result?.arbitrage_baseline_source === 'no_standardized_backtest_data';
+  const primaryBacktestDriver = backtest_reference?.drivers?.[0] || null;
+  const backtestSourceYears = backtest_reference?.inputs?.map((item) => item.year).filter(Boolean).join(', ') || '-';
 
   const capexPreview = useMemo(() => (
     (params.capex_per_kwh * params.power_mw * params.duration_hours * 1000) + params.grid_connection_cost
@@ -251,10 +276,10 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
   };
 
   const assumptionChips = [
-    { label: copy.kpis.fcasMode || 'FCAS Mode', value: params.fcas_revenue_mode },
-    { label: copy.kpis.uiYear || 'Year', value: year || '-' },
+    { label: copy.kpis.fcasMode, value: params.fcas_revenue_mode },
+    { label: copy.kpis.uiYear, value: year || '-' },
   ];
-  const lazyLoadNote = isVisible ? (copy.lazyVisible || 'Loading...') : (copy.lazyHidden || 'Hidden');
+  const lazyLoadNote = isVisible ? copy.lazyVisible : (copy.lazyHidden || copy.statuses.hidden);
 
   return (
     <div ref={sectionRef} className="col-span-12 mt-16 border-t border-[var(--color-border)] pt-12">
@@ -270,9 +295,19 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
         </div>
       </div>
 
+      <div className="mb-6">
+        <DataQualityBadge metadata={sectionMetadata} lang={lang} />
+      </div>
+
       {scopeNote && (
         <div className="mb-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
           {scopeNote}
+        </div>
+      )}
+
+      {previewCaveat && (
+        <div className="mb-8 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
+          {previewCaveat}
         </div>
       )}
 
@@ -292,15 +327,15 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
             <div className="space-y-6 p-4">
               <div>
                 <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--color-muted)]">
-                  {copy.fcasRevenueMode || 'FCAS Revenue Mode'}
+                  {copy.fcasRevenueMode}
                 </label>
                 <select
                   value={params.fcas_revenue_mode}
                   onChange={(e) => setParams((prev) => ({ ...prev, fcas_revenue_mode: e.target.value }))}
                   className="w-full rounded border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm"
                 >
-                  <option value="auto">{copy.modeAuto || 'Auto'}</option>
-                  <option value="manual">{copy.modeManual || 'Manual'}</option>
+                  <option value="auto">{copy.modeAuto}</option>
+                  <option value="manual">{copy.modeManual}</option>
                 </select>
               </div>
 
@@ -312,7 +347,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                     onChange={(e) => setParams((prev) => ({ ...prev, monte_carlo_enabled: e.target.checked }))}
                     className="rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
                   />
-                  Run Monte Carlo Simulation (P10/P50/P90)
+                  {copy.monteCarloToggle}
                 </label>
               </div>
 
@@ -328,7 +363,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                       return (
                         <label key={field.key} className={`block ${disabled ? 'opacity-50' : ''}`}>
                           <div className="mb-1 flex items-center justify-between text-xs">
-                            <span className="text-[var(--color-muted)]">{copy.fields[field.labelKey]}</span>
+                            <span className="text-[var(--color-muted)]">{copy.fields[field.labelKey] || copy.fieldLabels[field.labelKey]}</span>
                             <span className="font-mono font-bold">
                               {field.pct ? `${(value * 100).toFixed(2)}${field.suffix}` : `${Number(value).toLocaleString()} ${field.suffix}`}
                             </span>
@@ -376,12 +411,12 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
           {result && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-                <KpiCard label={copy.kpis.npv || 'NPV'} value={fmt(metrics.npv)} tone={metrics.npv > 0 ? 'good' : 'bad'} sub={`Discount ${(params.discount_rate * 100).toFixed(1)}%`} />
-                <KpiCard label={copy.kpis.irr || 'IRR'} value={formatPercentageValue(metrics.irr)} tone={metrics.irr > params.discount_rate * 100 ? 'good' : 'warn'} sub="Unlevered" />
-                <KpiCard label="Debt Cap" value={fmt(metrics.debt_capacity)} tone="brand" sub={`Avg DSCR ${metrics.dscr_avg ? metrics.dscr_avg.toFixed(2) : '-'}x`} />
-                <KpiCard label="Levered IRR" value={formatPercentageValue(metrics.levered_irr !== null && metrics.levered_irr !== undefined ? metrics.levered_irr * 100 : null)} tone="good" sub="Equity Return" />
-                <KpiCard label={copy.kpis.payback || 'Payback'} value={metrics.payback_years ? `${metrics.payback_years} yrs` : 'Over Life'} tone={metrics.payback_years ? 'good' : 'warn'} sub={`Life ${params.project_life_years} yrs`} />
-                <KpiCard label="ROI" value={formatPercentageValue(metrics.roi_pct)} tone="brand" sub="Total Return" />
+                <KpiCard label={copy.kpis.npv} value={fmt(metrics.npv)} tone={metrics.npv > 0 ? 'good' : 'bad'} sub={`${copy.kpiSubs.discount} ${(params.discount_rate * 100).toFixed(1)}%`} />
+                <KpiCard label={copy.kpis.irr} value={formatPercentageValue(metrics.irr)} tone={metrics.irr > params.discount_rate * 100 ? 'good' : 'warn'} sub={copy.kpiSubs.unlevered} />
+                <KpiCard label={copy.kpis.debtCap} value={fmt(metrics.debt_capacity)} tone="brand" sub={`${copy.kpiSubs.avgDscr} ${metrics.dscr_avg ? metrics.dscr_avg.toFixed(2) : '-'}x`} />
+                <KpiCard label={copy.kpis.leveredIrr} value={formatPercentageValue(metrics.levered_irr !== null && metrics.levered_irr !== undefined ? metrics.levered_irr * 100 : null)} tone="good" sub={copy.kpiSubs.equityReturn} />
+                <KpiCard label={copy.kpis.payback} value={metrics.payback_years ? `${metrics.payback_years} ${copy.kpiSubs.years}` : copy.kpis.overLife} tone={metrics.payback_years ? 'good' : 'warn'} sub={`${copy.kpiSubs.life} ${params.project_life_years} ${copy.kpiSubs.years}`} />
+                <KpiCard label={copy.kpis.roi} value={formatPercentageValue(metrics.roi_pct)} tone="brand" sub={copy.kpiSubs.totalReturn} />
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
@@ -392,6 +427,73 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                   </div>
                 ))}
               </div>
+
+              {backtest_observed && (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  <div className="rounded-lg border border-[var(--color-border)] p-4">
+                    <h4 className="mb-3 text-sm font-bold uppercase tracking-wider">
+                      {copy.backtestObservedTitle}
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <SummaryBlock
+                        label={copy.grossEnergyRevenue}
+                        value={fmt(backtest_observed.gross_energy_revenue)}
+                      />
+                      <SummaryBlock
+                        label={copy.netEnergyRevenue}
+                        value={fmt(backtest_observed.net_energy_revenue)}
+                      />
+                      <SummaryBlock
+                        label={copy.observedNetArbitrage}
+                        value={fmt(result?.baseline_revenue?.arbitrage_net_observed)}
+                      />
+                      <SummaryBlock
+                        label={copy.equivalentCycles}
+                        value={backtest_observed.equivalent_cycles?.toFixed?.(2) ?? '-'}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
+                    <h4 className="mb-3 text-sm font-bold uppercase tracking-wider">
+                      {copy.backtestTraceTitle}
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <SummaryBlock
+                        label={copy.methodologyVersion}
+                        value={backtest_observed.methodology_version || '-'}
+                      />
+                      <SummaryBlock
+                        label={copy.driverCount}
+                        value={`${backtest_reference?.drivers?.length || 0}`}
+                      />
+                      <SummaryBlock
+                        label={copy.timelinePoints}
+                        value={`${primaryBacktestDriver?.timeline_points ?? '-'}`}
+                      />
+                      <SummaryBlock
+                        label={copy.sourceYears}
+                        value={backtestSourceYears}
+                      />
+                    </div>
+                    {backtest_fallback_used && (
+                      <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        {copy.statuses.legacyFallbackActive}
+                      </div>
+                    )}
+                    {noStandardizedBacktestCoverage && (
+                      <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        <div className="font-bold">
+                          {copy.noBacktestCoverageTitle}
+                        </div>
+                        <div className="mt-1">
+                          {copy.noBacktestCoverageBody}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {result.assumptions?.length > 0 && (
                 <div className="rounded-lg border border-[var(--color-border)] p-4">
@@ -406,11 +508,11 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
 
               {mc && (
                 <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
-                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">Monte Carlo Probability Outcomes (NPV)</h4>
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">{copy.monteCarloToggle}</h4>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <SummaryBlock label="P90 (Downside / Conservative)" value={fmt(mc.npv_p90)} />
-                    <SummaryBlock label="P50 (Base Case / Expected)" value={fmt(mc.npv_p50)} />
-                    <SummaryBlock label="P10 (Upside / Optimistic)" value={fmt(mc.npv_p10)} />
+                    <SummaryBlock label={copy.monteCarloLabels.p90} value={fmt(mc.npv_p90)} />
+                    <SummaryBlock label={copy.monteCarloLabels.p50} value={fmt(mc.npv_p50)} />
+                    <SummaryBlock label={copy.monteCarloLabels.p10} value={fmt(mc.npv_p10)} />
                   </div>
                 </div>
               )}
@@ -451,6 +553,9 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                       <thead>
                         <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                           <th className="p-2 text-left">{copy.year}</th>
+                          <th className="p-2 text-right">{copy.tableHeaders.arbitrage}</th>
+                          <th className="p-2 text-right">{copy.tableHeaders.fcas}</th>
+                          <th className="p-2 text-right">{copy.tableHeaders.capacity}</th>
                           <th className="p-2 text-right">{copy.revenue}</th>
                           <th className="p-2 text-right">{copy.opex}</th>
                           <th className="p-2 text-right">{copy.net}</th>
@@ -461,7 +566,10 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                       <tbody>
                         {cashFlows.map((row) => (
                           <tr key={row.year} className="border-b border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]">
-                            <td className="p-2 font-bold">Y{row.year}</td>
+                            <td className="p-2 font-bold">{copy.yearPrefix}{row.year}</td>
+                            <td className="p-2 text-right">{fmt(row.revenue_arbitrage)}</td>
+                            <td className="p-2 text-right">{fmt(row.revenue_fcas)}</td>
+                            <td className="p-2 text-right">{fmt(row.revenue_capacity)}</td>
                             <td className="p-2 text-right text-[var(--color-primary)]">{fmt(row.revenue)}</td>
                             <td className="p-2 text-right text-[#ef4444]">{fmt(row.opex)}</td>
                             <td className="p-2 text-right font-bold" style={{ color: row.net_cash_flow >= 0 ? '#22c55e' : '#ef4444' }}>

@@ -67,3 +67,6 @@ tmp_*.out.log
 tmp_*.err.log
 data/fingrid_backfill_*.log
 data/fingrid_backfill_*.err.log
+backend-dev.log
+data_lake/
+.superpowers/

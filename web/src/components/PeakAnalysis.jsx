@@ -126,7 +126,7 @@ export default function PeakAnalysis({
           <p className="text-sm text-[var(--color-muted)] font-sans">{t.subtitle}</p>
         </div>
         <div className="text-xs text-[var(--color-muted)] tracking-widest uppercase font-bold">
-          STORAGE ARBITRAGE
+          {t.eyebrow}
         </div>
       </div>
 
@@ -177,7 +177,7 @@ export default function PeakAnalysis({
 
       {loading ? (
         <div className="h-64 flex items-center justify-center text-[var(--color-muted)] font-serif text-lg">
-          {t.loadingMsg || 'Loading...'}
+          {t.loadingMsg}
         </div>
       ) : data?.data?.length > 0 ? (
         <>
@@ -246,7 +246,7 @@ export default function PeakAnalysis({
                   <th className="text-right py-3 px-2 text-xs tracking-widest uppercase font-bold">{t.spread} 4h</th>
                   <th className="text-right py-3 px-2 text-xs tracking-widest uppercase font-bold">{t.spread} 6h</th>
                   <th className="text-right py-3 px-2 text-xs tracking-widest uppercase text-[var(--color-muted)]">{t.netSpread} 4h</th>
-                  <th className="text-left py-3 px-2 text-xs tracking-widest uppercase text-[var(--color-muted)]">Events</th>
+                  <th className="text-left py-3 px-2 text-xs tracking-widest uppercase text-[var(--color-muted)]">{t.eventsColumn}</th>
                 </tr>
               </thead>
               <tbody>

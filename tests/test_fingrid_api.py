@@ -31,10 +31,36 @@ class FingridApiTests(unittest.TestCase):
     def test_dataset_list_and_status_return_payloads(self):
         with mock.patch("server.fingrid_service.seed_dataset_catalog") as seed_catalog:
             seed_catalog.side_effect = lambda db: None
-            with mock.patch("server.fingrid_catalog.list_dataset_configs", return_value=[{"dataset_id": "317"}]):
+            with mock.patch(
+                "server.fingrid_catalog.list_dataset_configs",
+                return_value=[{"dataset_id": "317"}, {"dataset_id": "319"}],
+            ):
                 datasets = server.get_fingrid_datasets()
 
         self.assertEqual(datasets["datasets"][0]["dataset_id"], "317")
+        self.assertEqual(datasets["datasets"][1]["dataset_id"], "319")
+
+    def test_finland_market_model_route_returns_multi_source_payload(self):
+        with mock.patch(
+            "server.build_finland_market_model_payload",
+            return_value={
+                "country": "Finland",
+                "market": "Finland",
+                "model_status": "partial-live",
+                "sources": [
+                    {"source_key": "fingrid", "status": "live"},
+                    {"source_key": "nord_pool", "status": "planned"},
+                    {"source_key": "entsoe", "status": "planned"},
+                ],
+                "summary": {"live_dataset_count": 2},
+                "metadata": {"market": "FINLAND"},
+            },
+        ):
+            payload = server.get_finland_market_model()
+
+        self.assertEqual(payload["country"], "Finland")
+        self.assertEqual(payload["sources"][0]["source_key"], "fingrid")
+        self.assertEqual(payload["summary"]["live_dataset_count"], 2)
 
     def test_load_env_file_populates_process_environment(self):
         handle, env_path = tempfile.mkstemp(suffix=".env")
@@ -114,6 +140,39 @@ class FingridApiTests(unittest.TestCase):
     def test_export_route_uses_no_default_limit_when_query_param_is_missing(self):
         signature = inspect.signature(server.export_fingrid_dataset_csv)
         self.assertIsNone(signature.parameters["limit"].default.default)
+
+    def test_fingrid_status_route_rejects_internal_scope_violation(self):
+        scope = {
+            "organization_id": "org_a",
+            "workspace_id": "ws_a",
+            "allowed_regions": ["NSW1"],
+            "allowed_markets": ["NEM"],
+        }
+        with self.assertRaises(HTTPException) as ctx:
+            server.get_fingrid_dataset_status("317", access_scope=scope)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_fingrid_series_route_rejects_internal_scope_violation(self):
+        scope = {
+            "organization_id": "org_a",
+            "workspace_id": "ws_a",
+            "allowed_regions": ["NSW1"],
+            "allowed_markets": ["NEM"],
+        }
+        with self.assertRaises(HTTPException) as ctx:
+            server.get_fingrid_dataset_series("317", access_scope=scope)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_fingrid_summary_route_rejects_internal_scope_violation(self):
+        scope = {
+            "organization_id": "org_a",
+            "workspace_id": "ws_a",
+            "allowed_regions": ["NSW1"],
+            "allowed_markets": ["NEM"],
+        }
+        with self.assertRaises(HTTPException) as ctx:
+            server.get_fingrid_dataset_summary("317", access_scope=scope)
+        self.assertEqual(ctx.exception.status_code, 403)
 
     def test_cors_defaults_to_localhost_origins_without_credentials(self):
         with mock.patch.dict("server.os.environ", {}, clear=True):

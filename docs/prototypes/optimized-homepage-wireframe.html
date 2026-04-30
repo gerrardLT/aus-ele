@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>优化后首页原型</title>
+  <style>
+    :root {
+      --bg: #08111f;
+      --panel: #0e1a2b;
+      --panel-2: #13233a;
+      --line: rgba(203, 225, 255, 0.14);
+      --text: #eef5ff;
+      --muted: #93a7c2;
+      --accent: #6fd3ff;
+      --accent-2: #87ffb0;
+      --warn: #ffd66b;
+      --danger: #ff7e7e;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(80, 164, 255, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(111, 211, 255, 0.12), transparent 26%),
+        linear-gradient(180deg, #07101d 0%, #091423 45%, #07101c 100%);
+    }
+
+    .shell {
+      width: min(1480px, calc(100% - 32px));
+      margin: 18px auto;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .sidebar,
+    .band,
+    .panel,
+    .signal-card,
+    .mini-card,
+    .nav-item {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 18px;
+      border-radius: 22px;
+      padding: 18px 14px;
+      display: grid;
+      gap: 14px;
+      min-height: calc(100vh - 36px);
+    }
+
+    .sidebar-brand {
+      display: grid;
+      gap: 6px;
+      padding: 6px 6px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .sidebar-brand strong {
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .sidebar-brand span {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .nav-group {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav-title {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 0 6px;
+    }
+
+    .nav-item {
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .nav-item.active {
+      background: rgba(240, 247, 255, 0.94);
+      color: #09111c;
+      font-weight: 700;
+    }
+
+    .main {
+      display: grid;
+      gap: 18px;
+    }
+
+    .band {
+      border-radius: 22px;
+      padding: 18px 20px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .page-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .page-title {
+      margin: 0;
+      font-size: clamp(22px, 3vw, 30px);
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .page-desc {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .action-row,
+    .filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 10px 14px;
+      color: var(--muted);
+      font-size: 13px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.35fr 0.95fr;
+      gap: 18px;
+    }
+
+    .hero-left,
+    .hero-right,
+    .stack,
+    .mini-list,
+    .note-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .lead {
+      font-size: 15px;
+      line-height: 1.7;
+      color: var(--muted);
+      max-width: 74ch;
+    }
+
+    .signal-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .signal-card {
+      border-radius: 18px;
+      padding: 14px;
+    }
+
+    .signal-label {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .signal-value {
+      margin-top: 10px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .signal-note {
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+
+    .focus {
+      border-radius: 18px;
+      padding: 16px;
+      border: 1px solid rgba(111, 211, 255, 0.35);
+      background:
+        linear-gradient(180deg, rgba(67, 135, 255, 0.18), rgba(15, 26, 43, 0.26)),
+        linear-gradient(135deg, rgba(111, 211, 255, 0.1), transparent 58%);
+      box-shadow: var(--shadow);
+    }
+
+    .focus-title,
+    .mini-card h3,
+    .panel h3 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .focus-body {
+      margin-top: 12px;
+      font-size: 20px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .mini-card,
+    .panel {
+      border-radius: 18px;
+      padding: 14px 16px;
+    }
+
+    .mini-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+      font-size: 13px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 0.95fr 1.45fr 0.95fr;
+      gap: 16px;
+    }
+
+    .note {
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 10px 12px;
+      color: #d9e9ff;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .note.secondary {
+      color: var(--muted);
+    }
+
+    .chart {
+      position: relative;
+      height: 280px;
+      border-radius: 18px;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(75, 146, 255, 0.12), transparent 70%),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+        rgba(255, 255, 255, 0.015);
+      background-size: auto, 54px 100%, 100% 48px, auto;
+    }
+
+    .chart::before {
+      content: "";
+      position: absolute;
+      inset: auto 18px 58px 18px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2) 38%, var(--warn) 70%, var(--danger));
+      transform: skewY(-5deg) translateY(-30px);
+      box-shadow: 0 0 28px rgba(111, 211, 255, 0.35);
+    }
+
+    .chart::after {
+      content: "主图：价格趋势 / 预测带 / 事件叠加";
+      position: absolute;
+      left: 16px;
+      bottom: 14px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .prototype-note {
+      border-radius: 18px;
+      padding: 16px 18px;
+      background: rgba(255, 214, 107, 0.08);
+      border: 1px solid rgba(255, 214, 107, 0.24);
+      color: #ffe7a5;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 1180px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+        min-height: auto;
+      }
+
+      .hero,
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .signal-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(100% - 16px, 1480px);
+      }
+
+      .signal-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .page-head {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <strong>AEMO Workspace</strong>
+        <span>侧边导航常驻显示，作为 SaaS 平台主导航。</span>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-title">Market Views</div>
+        <div class="nav-item active">Overview</div>
+        <div class="nav-item">Forecast</div>
+        <div class="nav-item">Negative Price</div>
+        <div class="nav-item">Arbitrage</div>
+        <div class="nav-item">FCAS</div>
+        <div class="nav-item">Charging</div>
+        <div class="nav-item">Cycle Cost</div>
+        <div class="nav-item">Investment</div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-title">Other Modules</div>
+        <div class="nav-item">Fingrid</div>
+        <div class="nav-item">Developer</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="band topbar">
+        <div class="page-head">
+          <h1 class="page-title">澳洲国家电力市场</h1>
+          <div class="page-desc">一个高保真、极简的研究工作台，用于观察澳洲电网的价格波动、负电价与异常结算特征。</div>
+        </div>
+        <div class="action-row">
+          <div class="chip">Workspace: Australia Desk</div>
+          <div class="chip">Data Quality: A-</div>
+          <div class="chip">Last Update: 14:20</div>
+        </div>
+      </section>
+
+      <section class="band hero">
+        <div class="hero-left">
+          <div class="lead">
+            首页仍然保留总览判断，但标题说明不再单独占用一整行大 Hero 区域，而是收成轻量页头。
+          </div>
+          <div class="signal-grid">
+            <div class="signal-card">
+              <div class="signal-label">Primary Signal</div>
+              <div class="signal-value">负价窗口扩大</div>
+              <div class="signal-note">NSW1 / VIC1 午间低价明显，充电机会变强</div>
+            </div>
+            <div class="signal-card">
+              <div class="signal-label">Risk</div>
+              <div class="signal-value">FCAS 偏紧</div>
+              <div class="signal-note">傍晚频控价格抬升，波动风险高于周均</div>
+            </div>
+            <div class="signal-card">
+              <div class="signal-label">Best Region</div>
+              <div class="signal-value">NSW1</div>
+              <div class="signal-note">套利价差与事件叠加信号最强</div>
+            </div>
+            <div class="signal-card">
+              <div class="signal-label">Action</div>
+              <div class="signal-value">先看 Forecast</div>
+              <div class="signal-note">然后切到 Arbitrage / FCAS 深入分析</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-right">
+          <div class="focus">
+            <div class="focus-title">Recommended Path</div>
+            <div class="focus-body">Forecast → Arbitrage → FCAS → Investment</div>
+          </div>
+
+          <div class="mini-card">
+            <h3>Watchlist</h3>
+            <div class="mini-list">
+              <div class="mini-row"><span>NSW1 12:00-14:00</span><span>Charge window</span></div>
+              <div class="mini-row"><span>VIC1 18:00-20:00</span><span>Discharge spike</span></div>
+              <div class="mini-row"><span>QLD1</span><span>Forecast confidence down</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="filters">
+          <div class="chip">Year: 2025</div>
+          <div class="chip">Region: NSW1</div>
+          <div class="chip">Horizon: 7D</div>
+          <div class="chip">Advanced Filters</div>
+        </div>
+      </section>
+
+      <section class="band workspace">
+        <div class="stack">
+          <div class="panel">
+            <h3>Overview Summary</h3>
+            <div class="note-list">
+              <div class="note">市场状态：高波动 / 中等紧张</div>
+              <div class="note">负电价信号：增强</div>
+              <div class="note">建议优先区域：NSW1</div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Data Trust</h3>
+            <div class="note-list">
+              <div class="note secondary">Source: AEMO + event overlays</div>
+              <div class="note secondary">Freshness: 18 min</div>
+              <div class="note secondary">Warnings: 1 active</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Main Chart Area</h3>
+          <div class="chart"></div>
+        </div>
+
+        <div class="stack">
+          <div class="panel">
+            <h3>Drivers</h3>
+            <div class="note-list">
+              <div class="note secondary">Solar oversupply</div>
+              <div class="note secondary">Reserve tightness</div>
+              <div class="note secondary">Recent event overlay hit</div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Quick Jump</h3>
+            <div class="note-list">
+              <div class="note secondary">Open full Forecast module</div>
+              <div class="note secondary">Open FCAS stack details</div>
+              <div class="note secondary">Run investment scenario</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="prototype-note">
+        本版只改了两点：标题说明收成轻量页头；左侧导航改成常驻侧边栏。
+      </section>
+    </main>
+  </div>
+</body>
+</html>

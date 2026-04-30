@@ -1,5 +1,7 @@
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, ConfigDict
+from starlette.middleware.base import BaseHTTPMiddleware
 import hashlib
 import json
 import os
@@ -9,14 +11,19 @@ import threading
 import uvicorn
 from contextlib import asynccontextmanager
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 import datetime
 import subprocess
+import uuid
 from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from zoneinfo import ZoneInfo
+import time
 
+from data_quality import compute_quality_snapshots, summarize_quality_snapshots
+from alerts import evaluate_alert_rules as run_alert_evaluation
 from database import DatabaseManager
+from fcas_opportunity import summarize_nem_fcas_opportunity
 import grid_events
 import grid_forecast
 from fingrid import catalog as fingrid_catalog
@@ -24,14 +31,194 @@ from fingrid import service as fingrid_service
 from fingrid.export import build_fingrid_csv
 from network_fees import get_default_fee, get_window_sizes, get_all_fees, get_settlement_interval
 from collections import defaultdict
+from result_metadata import build_result_metadata
 from response_cache import RedisResponseCache
+from models.bess_backtest_params import BessBacktestParams
+from models.financial_params import InvestmentParams
+from engines.bess_backtest_v1 import run_bess_backtest_v1
+from finland_market_model import build_finland_market_model_payload
+from lineage import build_job_lineage_payload, build_source_freshness_payload
+from logging_support import (
+    install_json_log_formatter_if_enabled,
+    install_structured_log_sink_if_configured,
+    install_trace_log_record_factory,
+)
+from openlineage_support import get_openlineage_status
+from access_control import (
+    ORG_ROLE_PERMISSIONS,
+    accept_membership_invite,
+    authenticate_access_token,
+    authenticate_org_actor,
+    authenticate_session_token,
+    assert_scope_allows_region_market,
+    accept_workspace_invite,
+    build_workspace_access_scope,
+    check_organization_permission,
+    check_workspace_permission,
+    create_membership_invite,
+    create_workspace_invite,
+    ensure_organization_membership_from_domain_policy,
+    issue_oidc_session,
+    issue_access_token,
+    join_organization_by_domain,
+    logout_session,
+    reactivate_organization_member,
+    reissue_membership_invite,
+    remove_organization_member,
+    resolve_principal_for_oidc_claims,
+    login_with_password,
+    refresh_session_access_token,
+    revoke_membership_invite,
+    revoke_workspace_invite,
+    set_principal_password,
+    seed_organization,
+    seed_organization_membership,
+    seed_principal,
+    seed_workspace,
+    seed_workspace_membership,
+    suspend_organization_member,
+    transfer_organization_owner,
+)
+from external_api_v1 import (
+    authenticate_external_api_key,
+    build_external_api_billing_ledger,
+    build_external_api_billing_summary,
+    build_external_api_error,
+    build_external_sla_status,
+    check_external_api_quota,
+    meter_external_api_usage,
+    paginate_items,
+    seed_external_api_client,
+    summarize_external_api_quota,
+    wrap_external_response,
+)
+from job_framework import JobOrchestrator, JobRegistry
+from market_screening import build_market_screening_payload
+from oidc_client import build_authorization_redirect, parse_discovery_document
+from reports import generate_report_payload
+from storage_lake import LocalArtifactLake
+from telemetry import (
+    build_collector_governance_status,
+    configure_telemetry,
+    get_current_trace_id,
+    get_current_span_id,
+    get_telemetry_status,
+    record_request_metric,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+install_trace_log_record_factory(
+    trace_id_supplier=get_current_trace_id,
+    span_id_supplier=get_current_span_id,
+)
+install_json_log_formatter_if_enabled()
+install_structured_log_sink_if_configured()
+
+
+class AlertRuleUpsert(BaseModel):
+    name: str
+    rule_type: str
+    market: str
+    region_or_zone: str | None = None
+    config: dict = Field(default_factory=dict)
+    channel_type: str
+    channel_target: str
+    enabled: bool = True
+    organization_id: str | None = None
+    workspace_id: str | None = None
+
+
+class JobCreateRequest(BaseModel):
+    job_type: str
+    queue_name: str
+    source_key: str
+    payload: dict = Field(default_factory=dict)
+    priority: int = 100
+    max_attempts: int = 3
+
+
+class DataQualitySummaryPayload(BaseModel):
+    summary: dict = Field(default_factory=dict)
+    markets: dict = Field(default_factory=dict)
+
+
+class DataQualityMarketRowsPayload(BaseModel):
+    items: list[dict] = Field(default_factory=list)
+
+
+class DataQualityIssueRowsPayload(BaseModel):
+    items: list[dict] = Field(default_factory=list)
+
+
+class ObservabilityStatusPayload(BaseModel):
+    sources: list[dict] = Field(default_factory=list)
+    job_summary: dict = Field(default_factory=dict)
+    telemetry: dict = Field(default_factory=dict)
+    openlineage: dict = Field(default_factory=dict)
+    collector: dict = Field(default_factory=dict)
+
+
+class ExternalApiErrorPayload(BaseModel):
+    code: str
+    message: str
+    retryable: bool = False
+
+
+class LooseObjectPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class AlertRuleListPayload(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AlertStateListPayload(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AlertDeliveryLogListPayload(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AcceptedJobActionPayload(BaseModel):
+    status: str
+    detail: str | None = None
+    job_id: str | None = None
+    dataset_id: str | None = None
+    mode: str | None = None
+    job: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+
+
+class JobListPayload(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class JobEventListPayload(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RunNextJobPayload(BaseModel):
+    status: str
+    result: dict[str, Any] | None = None
+
+
+class FingridDatasetCatalogPayload(BaseModel):
+    datasets: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AvailableYearsPayload(BaseModel):
+    years: list[int] = Field(default_factory=list)
+
+
+class NetworkFeesPayload(BaseModel):
+    fees: dict[str, Any] = Field(default_factory=dict)
 
 BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parent
 SCRAPERS_DIR = REPO_ROOT / "scrapers"
+LAKE_ROOT = Path(os.environ.get("AUS_ELE_LAKE_ROOT", REPO_ROOT / "data_lake")).resolve()
 
 
 def _load_env_file(env_path: str | os.PathLike[str] | None = None):
@@ -78,6 +265,7 @@ INVESTMENT_RESPONSE_REDIS_SCOPE = "api_investment_analysis_v1"
 DEFAULT_RESPONSE_CACHE_TTL_SECONDS = 6 * 60 * 60
 EVENT_OVERLAY_CACHE_TTL_SECONDS = 30 * 60
 INVESTMENT_RESPONSE_CACHE_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_FCAS_OPPORTUNITY_DURATION_HOURS = 4.0
 GRID_FORECAST_CACHE_TTL_SECONDS = {
     "24h": 60 * 60,
     "7d": 6 * 60 * 60,
@@ -90,8 +278,368 @@ def _stable_cache_key(payload: dict) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _scope_cache_payload(payload: dict, *, organization_id: str | None, workspace_id: str | None) -> dict:
+    return {
+        "organization_id": organization_id,
+        "workspace_id": workspace_id,
+        **payload,
+    }
+
+
+def _scope_analysis_payload(payload: dict, *, organization_id: str | None, workspace_id: str | None) -> dict:
+    return {
+        "organization_id": organization_id,
+        "workspace_id": workspace_id,
+        **payload,
+    }
+
+
 def _market_data_version() -> str:
     return db.get_last_update_time() or "no_last_update"
+
+
+def _region_timezone(region: str) -> str:
+    region_timezones = {
+        "NSW1": "Australia/Sydney",
+        "QLD1": "Australia/Brisbane",
+        "VIC1": "Australia/Melbourne",
+        "SA1": "Australia/Adelaide",
+        "TAS1": "Australia/Hobart",
+        "WEM": "Australia/Perth",
+    }
+    return region_timezones.get(region, "Australia/Sydney")
+
+
+def _attach_price_trend_metadata(payload: dict, *, region: str) -> dict:
+    market = "WEM" if region == "WEM" else "NEM"
+    data_version = _market_data_version()
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="AUD/MWh",
+        interval_minutes=get_settlement_interval(region),
+        data_grade="preview" if market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={},
+        freshness={"last_updated_at": data_version},
+        source_name="AEMO",
+        source_version=data_version,
+        methodology_version="price_trend_v1",
+        warnings=[],
+    )
+    return payload
+
+
+def _attach_fingrid_metadata(payload: dict, dataset_id: str) -> dict:
+    dataset = payload.get("dataset") or fingrid_catalog.get_dataset_config(dataset_id)
+    payload["metadata"] = build_result_metadata(
+        market="FINGRID",
+        region_or_zone=dataset_id,
+        timezone=dataset.get("timezone", "Europe/Helsinki"),
+        currency="EUR",
+        unit=dataset.get("unit", "EUR"),
+        interval_minutes=None,
+        data_grade="analytical-preview",
+        data_quality_score=None,
+        coverage={},
+        freshness={},
+        source_name="Fingrid",
+        source_version=dataset.get("dataset_code", dataset_id),
+        methodology_version="fingrid_status_v1",
+        warnings=[],
+    )
+    return payload
+
+
+def _infer_interval_hours_from_timestamps(timestamps: list[str], default_minutes: int) -> list[float]:
+    if not timestamps:
+        return []
+
+    default_hours = default_minutes / 60.0
+    intervals = []
+    for idx in range(len(timestamps)):
+        if idx + 1 < len(timestamps):
+            try:
+                current_ts = datetime.datetime.fromisoformat(timestamps[idx].replace("Z", "+00:00"))
+                next_ts = datetime.datetime.fromisoformat(timestamps[idx + 1].replace("Z", "+00:00"))
+                delta_hours = (next_ts - current_ts).total_seconds() / 3600.0
+                intervals.append(delta_hours if delta_hours > 0 else default_hours)
+            except Exception:
+                intervals.append(default_hours)
+        else:
+            intervals.append(intervals[-1] if intervals else default_hours)
+    return intervals
+
+
+def _fetch_bess_backtest_intervals(params: BessBacktestParams) -> list[dict]:
+    with db.get_connection() as conn:
+        try:
+            if params.market == "WEM":
+                db.ensure_wem_ess_tables(conn)
+                rows = conn.execute(
+                    f"""
+                    SELECT dispatch_interval, energy_price
+                    FROM {db.WEM_ESS_MARKET_TABLE}
+                    WHERE dispatch_interval LIKE ?
+                    ORDER BY dispatch_interval
+                    """,
+                    (f"{params.year}-%",),
+                ).fetchall()
+                default_interval_minutes = 5
+            else:
+                table_name = f"trading_price_{params.year}"
+                rows = conn.execute(
+                    f"""
+                    SELECT settlement_date, rrp_aud_mwh
+                    FROM {table_name}
+                    WHERE region_id = ?
+                    ORDER BY settlement_date
+                    """,
+                    (params.region,),
+                ).fetchall()
+                default_interval_minutes = get_settlement_interval(params.region)
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+
+    timestamps = [row[0] for row in rows]
+    interval_hours = _infer_interval_hours_from_timestamps(timestamps, default_interval_minutes)
+    return [
+        {
+            "timestamp": row[0],
+            "price": float(row[1] or 0.0),
+            "interval_hours": interval_hours[idx],
+        }
+        for idx, row in enumerate(rows)
+    ]
+
+
+def _attach_bess_backtest_metadata(payload: dict, params: BessBacktestParams) -> dict:
+    payload["metadata"] = build_result_metadata(
+        market=params.market,
+        region_or_zone=params.region,
+        timezone=_region_timezone(params.region),
+        currency="AUD",
+        unit="AUD",
+        interval_minutes=5 if params.market == "WEM" else get_settlement_interval(params.region),
+        data_grade="preview" if params.market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={"timeline_points": payload.get("timeline_points", 0)},
+        freshness={"last_updated_at": _market_data_version()},
+        source_name="AEMO",
+        source_version=_market_data_version(),
+        methodology_version="bess_backtest_v1",
+        warnings=list(payload.get("warnings", [])),
+    )
+    return payload
+
+
+def _attach_bess_backtest_coverage_metadata(payload: dict, params: BessBacktestParams) -> dict:
+    payload["metadata"] = build_result_metadata(
+        market=params.market,
+        region_or_zone=params.region,
+        timezone=_region_timezone(params.region),
+        currency="AUD",
+        unit="AUD",
+        interval_minutes=5 if params.market == "WEM" else get_settlement_interval(params.region),
+        data_grade="preview" if params.market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={"interval_count": payload.get("interval_count", 0)},
+        freshness={"last_updated_at": _market_data_version()},
+        source_name="AEMO",
+        source_version=_market_data_version(),
+        methodology_version="bess_backtest_coverage_v1",
+        warnings=[] if params.market != "WEM" else ["preview_only"],
+    )
+    return payload
+
+
+def _attach_peak_analysis_metadata(payload: dict, *, region: str) -> dict:
+    market = "WEM" if region == "WEM" else "NEM"
+    data_version = _market_data_version()
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="AUD/MWh",
+        interval_minutes=get_settlement_interval(region),
+        data_grade="preview" if market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={"row_count": len(payload.get("data", []))},
+        freshness={"last_updated_at": data_version},
+        source_name="AEMO",
+        source_version=data_version,
+        methodology_version="peak_analysis_v1",
+        warnings=[] if market != "WEM" else ["preview_only"],
+    )
+    return payload
+
+
+def _attach_hourly_price_profile_metadata(payload: dict, *, region: str) -> dict:
+    market = "WEM" if region == "WEM" else "NEM"
+    data_version = _market_data_version()
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="AUD/MWh",
+        interval_minutes=get_settlement_interval(region),
+        data_grade="preview" if market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={"hour_count": len(payload.get("hourly", []))},
+        freshness={"last_updated_at": data_version},
+        source_name="AEMO",
+        source_version=data_version,
+        methodology_version="hourly_price_profile_v1",
+        warnings=[] if market != "WEM" else ["preview_only"],
+    )
+    return payload
+
+
+def _attach_event_overlay_metadata(payload: dict, *, region: str, data_version: str | None = None) -> dict:
+    existing = dict(payload.get("metadata") or {})
+    market = existing.get("market") or ("WEM" if region == "WEM" else "NEM")
+    version = data_version or _event_overlay_data_version()
+    base = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="event-state",
+        interval_minutes=5 if market == "WEM" else get_settlement_interval(region),
+        data_grade="preview" if market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={
+            "coverage_quality": existing.get("coverage_quality", "none"),
+            "state_count": len(payload.get("states", [])),
+            "event_count": len(payload.get("events", [])),
+        },
+        freshness={"last_updated_at": _market_data_version()},
+        source_name="AEMO",
+        source_version=version,
+        methodology_version="event_overlays_v1",
+        warnings=list(existing.get("warnings") or ([] if market != "WEM" else ["preview_only"])),
+    )
+    payload["metadata"] = {**base, **existing}
+    return payload
+
+
+def _attach_grid_forecast_metadata(payload: dict, *, region: str, data_version: str | None = None) -> dict:
+    existing = dict(payload.get("metadata") or {})
+    market = existing.get("market") or ("WEM" if region == "WEM" else "NEM")
+    version = data_version or _grid_forecast_data_version()
+    coverage_payload = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    warnings = list(existing.get("warnings") or [])
+    if market == "WEM" and "preview_only" not in warnings:
+        warnings.append("preview_only")
+    base = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="mixed",
+        interval_minutes=5 if market == "WEM" else get_settlement_interval(region),
+        data_grade="preview" if market == "WEM" else "analytical-preview",
+        data_quality_score=None,
+        coverage={
+            "coverage_quality": existing.get("coverage_quality", "none"),
+            "recent_history_points": coverage_payload.get("recent_history_points"),
+            "forward_points": coverage_payload.get("forward_points"),
+            "event_count": coverage_payload.get("event_count"),
+        },
+        freshness={
+            "last_updated_at": _market_data_version(),
+            "issued_at": existing.get("issued_at"),
+        },
+        source_name="AEMO",
+        source_version=version,
+        methodology_version="grid_forecast_v1",
+        warnings=warnings,
+    )
+    payload["metadata"] = {**base, **existing}
+    return payload
+
+
+def _attach_fcas_analysis_metadata(payload: dict, *, region: str) -> dict:
+    market = "WEM" if region == "WEM" else "NEM"
+    data_version = _market_data_version()
+    interval_minutes = 5 if market == "WEM" else get_settlement_interval(region)
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="AUD/MW/year",
+        interval_minutes=interval_minutes,
+        data_grade="preview" if market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={"row_count": len(payload.get("data", []))},
+        freshness={"last_updated_at": data_version},
+        source_name="AEMO",
+        source_version=data_version,
+        methodology_version="fcas_analysis_v1",
+        warnings=[] if market != "WEM" else ["preview_only"],
+    )
+    return payload
+
+
+def _attach_investment_metadata(payload: dict, *, region: str) -> dict:
+    market = "WEM" if region == "WEM" else "NEM"
+    data_version = _market_data_version()
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="AUD/year",
+        interval_minutes=None,
+        data_grade="preview" if market == "WEM" else "analytical",
+        data_quality_score=None,
+        coverage={"cash_flow_years": len(payload.get("cash_flows", []))},
+        freshness={"last_updated_at": data_version},
+        source_name="AEMO",
+        source_version=data_version,
+        methodology_version="investment_analysis_v1",
+        warnings=[] if market != "WEM" else ["preview_only"],
+    )
+    return payload
+
+
+def _run_standardized_bess_backtest(backtest_params: BessBacktestParams) -> dict | None:
+    intervals = _fetch_bess_backtest_intervals(backtest_params)
+    if not intervals:
+        return None
+
+    result = run_bess_backtest_v1(backtest_params, intervals)
+    summary = result["summary"]
+    return {
+        "annual_revenue": summary["gross_revenue"],
+        "annual_net_revenue": summary["net_revenue"],
+        "annual_cycles": summary["equivalent_cycles"],
+        "backtest_mode": "optimized_hindsight",
+        "revenue_scope": "trajectory_gross_energy",
+        "methodology_version": "bess_backtest_v1",
+        "timeline_points": len(result["timeline"]),
+        "input": backtest_params.model_dump(mode="json"),
+        "summary": {
+            "gross_revenue": summary["gross_revenue"],
+            "net_revenue": summary["net_revenue"],
+            "equivalent_cycles": summary["equivalent_cycles"],
+            "charge_throughput_mwh": summary["charge_throughput_mwh"],
+            "discharge_throughput_mwh": summary["discharge_throughput_mwh"],
+            "soc_start_mwh": summary["soc_start_mwh"],
+            "soc_end_mwh": summary["soc_end_mwh"],
+            "soc_min_mwh": summary["soc_min_mwh"],
+            "soc_max_mwh": summary["soc_max_mwh"],
+            "costs": dict(summary["costs"]),
+            "warnings": list(summary["warnings"]),
+        },
+    }
 
 
 def _event_overlay_data_version() -> str:
@@ -207,6 +755,232 @@ def _scheduler_enabled() -> bool:
     return _env_flag("AUS_ELE_ENABLE_SCHEDULER", True)
 
 
+def _job_worker_enabled() -> bool:
+    return _env_flag("AUS_ELE_ENABLE_JOB_WORKER", True)
+
+
+def _job_worker_poll_seconds() -> float:
+    try:
+        return float(os.environ.get("AUS_ELE_JOB_WORKER_POLL_SECONDS", "2"))
+    except ValueError:
+        return 2.0
+
+
+def _job_worker_queue_names() -> list[str] | None:
+    raw = os.environ.get("AUS_ELE_JOB_WORKER_QUEUES", "")
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    return items or None
+
+
+def _utc_timestamp() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _default_oidc_discovery_document(provider: dict) -> dict:
+    issuer = provider["issuer"].rstrip("/")
+    return parse_discovery_document(
+        {
+            "issuer": provider["issuer"],
+            "authorization_endpoint": f"{issuer}/authorize",
+            "token_endpoint": f"{issuer}/token",
+            "userinfo_endpoint": f"{issuer}/userinfo",
+            "jwks_uri": f"{issuer}/jwks",
+        }
+    )
+
+
+def _metered_v1_call(*, x_api_key: str | None, endpoint: str, http_method: str, request_units: int, handler):
+    started_at = time.perf_counter()
+    client = None
+    status_code = 200
+    try:
+        client = authenticate_external_api_key(db, x_api_key)
+        check_external_api_quota(db, client=client, request_units=request_units)
+        payload = handler(client)
+        if isinstance(payload, dict):
+            meta = payload.setdefault("meta", {})
+            if isinstance(meta, dict):
+                meta["quota"] = summarize_external_api_quota(db, client=client)
+        return payload
+    except HTTPException as exc:
+        status_code = exc.status_code
+        if isinstance(exc.detail, str):
+            if exc.status_code == 403:
+                exc.detail = build_external_api_error(code="access_denied", message=exc.detail)
+            elif exc.status_code == 404:
+                exc.detail = build_external_api_error(code="not_found", message=exc.detail)
+            elif exc.status_code >= 500:
+                exc.detail = build_external_api_error(code="internal_error", message=exc.detail, retryable=True)
+            else:
+                exc.detail = build_external_api_error(code="request_error", message=exc.detail)
+        raise
+    finally:
+        if client is not None:
+            latency_ms = round((time.perf_counter() - started_at) * 1000)
+            meter_external_api_usage(
+                db,
+                client_id=client["client_id"],
+                endpoint=endpoint,
+                http_method=http_method,
+                status_code=status_code,
+                request_units=request_units,
+                latency_ms=latency_ms,
+                api_version="v1",
+            )
+
+
+def _build_request_trace_id(endpoint: str) -> str:
+    current_trace_id = get_current_trace_id()
+    if current_trace_id:
+        return current_trace_id
+    suffix = endpoint.strip("/").replace("/", ".") or "root"
+    return f"req.{suffix}.{uuid.uuid4().hex[:12]}"
+
+
+def _require_workspace_actor(x_access_token: str | None) -> dict:
+    return authenticate_access_token(db, x_access_token)
+
+
+def _require_session_actor(x_session_token: str | None) -> dict:
+    return authenticate_session_token(db, x_session_token)
+
+
+def _assert_scope_allows_internal_query(scope: dict, *, region: str | None = None, market: str | None = None):
+    return assert_scope_allows_region_market(scope, region=region, market=market)
+
+
+def _filter_scope_market_items(items: list[dict], access_scope: dict | None) -> list[dict]:
+    if not access_scope:
+        return items
+    allowed_markets = set(access_scope.get("allowed_markets") or [])
+    if not allowed_markets:
+        return items
+    return [item for item in items if item.get("market") in allowed_markets]
+
+
+def _filter_scope_region_market_items(items: list[dict], access_scope: dict | None) -> list[dict]:
+    if not access_scope:
+        return items
+    allowed_markets = set(access_scope.get("allowed_markets") or [])
+    allowed_regions = set(access_scope.get("allowed_regions") or [])
+    filtered = []
+    for item in items:
+        market = item.get("market")
+        region = item.get("region_or_zone")
+        if allowed_markets and market not in allowed_markets:
+            continue
+        if allowed_regions and market in {"NEM", "WEM"} and region not in allowed_regions:
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _assert_artifact_scope(artifact: dict, scope: dict):
+    if artifact.get("organization_id") and artifact["organization_id"] != scope.get("organization_id"):
+        raise HTTPException(status_code=403, detail="Artifact organization mismatch")
+    if artifact.get("workspace_id") and artifact["workspace_id"] != scope.get("workspace_id"):
+        raise HTTPException(status_code=403, detail="Artifact workspace mismatch")
+    return True
+
+
+def _assert_job_scope(job: dict, scope: dict):
+    if job.get("organization_id") and job["organization_id"] != scope.get("organization_id"):
+        raise HTTPException(status_code=403, detail="Job organization mismatch")
+    if job.get("workspace_id") and job["workspace_id"] != scope.get("workspace_id"):
+        raise HTTPException(status_code=403, detail="Job workspace mismatch")
+    return True
+
+
+def _matches_text_query(values: list[str | None], query: str | None) -> bool:
+    if not query:
+        return True
+    needle = query.strip().lower()
+    if not needle:
+        return True
+    return any(needle in (value or "").lower() for value in values)
+
+
+def _build_organization_member_view(membership: dict) -> dict:
+    principal = db.fetch_principal(membership["principal_id"])
+    return {
+        **membership,
+        "principal": principal,
+    }
+
+
+def _filter_organization_audit_items(
+    items: list[dict],
+    *,
+    organization_id: str,
+    query: str | None = None,
+) -> list[dict]:
+    filtered = []
+    for item in items:
+        detail = item.get("detail_json") or {}
+        detail_org_id = detail.get("organization_id")
+        target_matches = item.get("target_type") == "organization" and item.get("target_id") == organization_id
+        if detail_org_id != organization_id and not target_matches:
+            continue
+        if not _matches_text_query(
+            [
+                item.get("action"),
+                item.get("target_type"),
+                item.get("target_id"),
+                item.get("actor_principal_id"),
+                json.dumps(detail, sort_keys=True, ensure_ascii=False),
+            ],
+            query,
+        ):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _build_client_access_scope(client: dict) -> dict:
+    workspace_id = client.get("workspace_id")
+    organization_id = client.get("organization_id")
+    if not workspace_id:
+        return {
+            "organization_id": organization_id,
+            "workspace_id": None,
+            "principal_id": None,
+            "workspace_role": None,
+            "allowed_regions": [],
+            "allowed_markets": [],
+        }
+    workspace = db.fetch_workspace(workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=401, detail="Invalid workspace scope")
+    if organization_id and workspace.get("organization_id") != organization_id:
+        raise HTTPException(status_code=403, detail="Workspace organization mismatch")
+    policy = db.fetch_workspace_policy(workspace_id) or {
+        "allowed_regions_json": [],
+        "allowed_markets_json": [],
+    }
+    return {
+        "organization_id": workspace.get("organization_id"),
+        "workspace_id": workspace_id,
+        "principal_id": None,
+        "workspace_role": None,
+        "allowed_regions": list(policy.get("allowed_regions_json") or []),
+        "allowed_markets": list(policy.get("allowed_markets_json") or []),
+    }
+
+
+def _assert_workspace_scope(client: dict, *, region: str | None = None, market: str | None = None):
+    scope = _build_client_access_scope(client)
+    return _assert_scope_allows_internal_query(scope, region=region, market=market)
+
+
+def _resolve_scoped_workspace_id(access_scope: dict | None, workspace_id: str | None = None) -> str | None:
+    if not access_scope:
+        return workspace_id
+    scope_workspace_id = access_scope.get("workspace_id")
+    if workspace_id is not None and scope_workspace_id and workspace_id != scope_workspace_id:
+        raise HTTPException(status_code=403, detail="Workspace scope mismatch")
+    return workspace_id or scope_workspace_id
+
+
 def _try_acquire_job_lock(lock_name: str, ttl_seconds: int) -> bool:
     return db.acquire_system_lock(lock_name, owner=SYNC_OWNER, ttl_seconds=ttl_seconds)
 
@@ -220,15 +994,174 @@ def _run_scraper(script_name: str, *args: str):
     command = [sys.executable, str(script_path), *args]
     subprocess.run(command, check=True, cwd=str(REPO_ROOT))
 
+
+job_registry = JobRegistry()
+artifact_lake = LocalArtifactLake(str(LAKE_ROOT))
+job_orchestrator = JobOrchestrator(
+    db,
+    registry=job_registry,
+    lake=artifact_lake,
+    worker_id="api-worker-1",
+    source_rate_limits={
+        "aemo": 60,
+        "fingrid": 10,
+        "reporting": 1,
+    },
+)
+
+
+def enqueue_job(*, job_type: str, payload: dict, queue_name: str, source_key: str, priority: int = 100, max_attempts: int = 3):
+    return job_orchestrator.enqueue(
+        job_type,
+        payload=payload,
+        queue_name=queue_name,
+        source_key=source_key,
+        priority=priority,
+        max_attempts=max_attempts,
+    )
+
+
+def _find_open_job(*, job_type: str, source_key: str):
+    for job in db.list_jobs(limit=500):
+        if job["job_type"] == job_type and job["source_key"] == source_key and job["status"] in {"queued", "running"}:
+            return job
+    return None
+
+
+def enqueue_market_sync_job(*, manual: bool = False):
+    existing = _find_open_job(job_type="market_sync", source_key="aemo")
+    if existing:
+        return existing
+    return enqueue_job(
+        job_type="market_sync",
+        payload={"manual": manual},
+        queue_name="sync",
+        source_key="aemo",
+        priority=40 if manual else 60,
+        max_attempts=2,
+    )
+
+
+def enqueue_fingrid_dataset_sync_job(*, dataset_id: str, mode: str):
+    existing = _find_open_job(job_type="fingrid_dataset_sync", source_key="fingrid")
+    if existing and existing["payload_json"].get("dataset_id") == dataset_id and existing["payload_json"].get("mode") == mode:
+        return existing
+    return enqueue_job(
+        job_type="fingrid_dataset_sync",
+        payload={"dataset_id": dataset_id, "mode": mode},
+        queue_name="sync",
+        source_key="fingrid",
+        priority=50,
+        max_attempts=3,
+    )
+
+
+def enqueue_fingrid_hourly_sync_job():
+    existing = _find_open_job(job_type="fingrid_hourly_sync", source_key="fingrid")
+    if existing:
+        return existing
+    return enqueue_job(
+        job_type="fingrid_hourly_sync",
+        payload={"mode": "incremental"},
+        queue_name="sync",
+        source_key="fingrid",
+        priority=70,
+        max_attempts=2,
+    )
+
+
+def enqueue_report_generation_job(
+    *,
+    report_type: str,
+    year: int,
+    region: str,
+    month: str | None = None,
+    workspace_id: str | None = None,
+    organization_id: str | None = None,
+):
+    return enqueue_job(
+        job_type="report_generate",
+        payload={
+            "report_type": report_type,
+            "year": year,
+            "region": region,
+            "month": month,
+            "workspace_id": workspace_id,
+            "organization_id": organization_id,
+        },
+        queue_name="reports",
+        source_key="reporting",
+        priority=80,
+        max_attempts=2,
+    )
+
+
+def _register_job_handlers():
+    job_registry.register(
+        "market_sync",
+        lambda job, context: run_sync_scrapers(bool(job["payload_json"].get("manual"))),
+    )
+    job_registry.register(
+        "fingrid_dataset_sync",
+        lambda job, context: run_fingrid_dataset_sync(
+            job["payload_json"]["dataset_id"],
+            str(job["payload_json"].get("mode", "incremental")),
+        ),
+    )
+    job_registry.register(
+        "fingrid_hourly_sync",
+        lambda job, context: run_fingrid_hourly_sync(),
+    )
+    job_registry.register(
+        "report_generate",
+        lambda job, context: generate_report(
+            report_type=job["payload_json"]["report_type"],
+            year=int(job["payload_json"]["year"]),
+            region=str(job["payload_json"]["region"]),
+            month=job["payload_json"].get("month"),
+            organization_id=job["payload_json"].get("organization_id"),
+            workspace_id=job["payload_json"].get("workspace_id"),
+        ),
+    )
+
+
+_register_job_handlers()
+
+
+class JobWorkerService:
+    def __init__(self, orchestrator: JobOrchestrator, *, queue_names: list[str] | None = None):
+        self.orchestrator = orchestrator
+        self.queue_names = list(queue_names) if queue_names else None
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run_loop, name="aus-ele-job-worker", daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        self.thread.join(timeout=5)
+
+    def _run_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                result = self.orchestrator.run_once(queue_names=self.queue_names)
+                if result is None:
+                    self.stop_event.wait(_job_worker_poll_seconds())
+                    continue
+            except Exception as exc:
+                logger.error("Job worker loop error: %s", exc)
+                self.stop_event.wait(_job_worker_poll_seconds())
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup actions
     logger.info("Starting AEMO NEM API server with built-in Scheduler...")
     if _scheduler_enabled():
         scheduler = AsyncIOScheduler(timezone=_scheduler_timezone())
-        scheduler.add_job(run_sync_scrapers, 'cron', hour=2, minute=0, id="market-daily-sync")
+        scheduler.add_job(enqueue_market_sync_job, 'cron', hour=2, minute=0, id="market-daily-sync")
         scheduler.add_job(
-            run_fingrid_hourly_sync,
+            enqueue_fingrid_hourly_sync_job,
             'cron',
             minute=10,
             id="fingrid-hourly-sync",
@@ -241,14 +1174,74 @@ async def lifespan(app: FastAPI):
         logger.info("Internal scheduler enabled with timezone %s", _scheduler_timezone().key)
     else:
         logger.info("Internal scheduler disabled by AUS_ELE_ENABLE_SCHEDULER")
+
+    if _job_worker_enabled():
+        worker = JobWorkerService(job_orchestrator, queue_names=_job_worker_queue_names())
+        worker.start()
+        app.state.job_worker = worker
+        logger.info(
+            "Internal job worker enabled with poll interval %ss and queues %s",
+            _job_worker_poll_seconds(),
+            ",".join(_job_worker_queue_names() or ["*"]),
+        )
+    else:
+        logger.info("Internal job worker disabled by AUS_ELE_ENABLE_JOB_WORKER")
     
     yield
     # Shutdown actions
     logger.info("Shutting down AEMO NEM API server...")
     if hasattr(app.state, 'scheduler'):
         app.state.scheduler.shutdown()
+    if hasattr(app.state, 'job_worker'):
+        app.state.job_worker.stop()
 
 app = FastAPI(title="AEMO NEM Data API", lifespan=lifespan)
+
+OPENAPI_ERROR_RESPONSES = {
+    500: {
+        "description": "Internal server error",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Internal server error",
+                }
+            }
+        },
+    }
+}
+
+OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES = {
+    404: {
+        "description": "Resource or source data not found",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "No data available for year 2026",
+                }
+            }
+        },
+    },
+    **OPENAPI_ERROR_RESPONSES,
+}
+
+EXTERNAL_API_ERROR_RESPONSES = {
+    401: {
+        "model": ExternalApiErrorPayload,
+        "description": "Missing or invalid API key.",
+    },
+    403: {
+        "model": ExternalApiErrorPayload,
+        "description": "Workspace, market, or region access denied.",
+    },
+    404: {
+        "model": ExternalApiErrorPayload,
+        "description": "Requested external API resource was not found.",
+    },
+    500: {
+        "model": ExternalApiErrorPayload,
+        "description": "Internal server error.",
+    },
+}
 
 # Allow CORS for local frontend development by default.
 app.add_middleware(
@@ -258,6 +1251,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class TraceHeaderMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        record_request_metric(endpoint=request.url.path, method=request.method)
+        trace_id = get_current_trace_id()
+        if trace_id:
+            response.headers["X-Trace-Id"] = trace_id
+        return response
+
+
+app.add_middleware(TraceHeaderMiddleware)
+configure_telemetry(app)
 
 
 @app.get("/api/summary")
@@ -272,7 +1279,1534 @@ def get_summary():
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/event-overlays")
+@app.post("/api/data-quality/refresh")
+def refresh_data_quality():
+    try:
+        snapshots = compute_quality_snapshots(db)
+        db.replace_data_quality_snapshots(snapshots)
+        return {"status": "ok", "snapshots_refreshed": len(snapshots)}
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+    except Exception as exc:
+        logger.error("Error refreshing data quality snapshots: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/data-quality/summary", response_model=DataQualitySummaryPayload)
+def get_data_quality_summary(access_scope: Optional[dict] = None):
+    try:
+        rows = db.fetch_data_quality_snapshots()
+        rows = _filter_scope_market_items(rows, access_scope)
+        return summarize_quality_snapshots(rows)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Error fetching data quality summary: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/data-quality/markets", response_model=DataQualityMarketRowsPayload)
+def get_data_quality_markets(access_scope: Optional[dict] = None):
+    try:
+        items = db.fetch_data_quality_snapshots(scope="market")
+        return {"items": _filter_scope_market_items(items, access_scope)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Error fetching market data quality rows: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/data-quality/issues", response_model=DataQualityIssueRowsPayload)
+def get_data_quality_issues(
+    market: Optional[str] = Query(None, description="Optional market code filter"),
+    access_scope: Optional[dict] = None,
+):
+    try:
+        if access_scope and market:
+            _assert_scope_allows_internal_query(access_scope, market=market)
+        items = db.fetch_data_quality_issues(market=market)
+        return {"items": _filter_scope_market_items(items, access_scope)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Error fetching data quality issues: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/api/market-screening",
+    summary="Get cross-market screening ranking",
+    description="Returns ranked screening candidates for NEM regions, WEM, and Finland using heuristic spread, volatility, opportunity, and data-quality dimensions.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=LooseObjectPayload,
+)
+def get_market_screening(
+    year: int = Query(..., description="Year to evaluate"),
+    access_scope: Optional[dict] = None,
+):
+    try:
+        payload = build_market_screening_payload(db, year=year)
+        payload["items"] = _filter_scope_region_market_items(payload.get("items", []), access_scope)
+        if isinstance(payload.get("summary"), dict):
+            payload["summary"]["candidate_count"] = len(payload["items"])
+            payload["summary"]["markets_covered"] = sorted({item["market"] for item in payload["items"]})
+        return payload
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Market screening error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def create_alert_rule(payload: AlertRuleUpsert):
+    now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    record = {
+        "rule_id": f"al_{uuid.uuid4().hex[:12]}",
+        "name": payload.name,
+        "rule_type": payload.rule_type,
+        "market": payload.market,
+        "region_or_zone": payload.region_or_zone,
+        "config": payload.config,
+        "channel_type": payload.channel_type,
+        "channel_target": payload.channel_target,
+        "enabled": payload.enabled,
+        "organization_id": payload.organization_id,
+        "workspace_id": payload.workspace_id,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    return db.upsert_alert_rule(record)
+
+
+def list_alert_rules(workspace_id: str | None = None, access_scope: dict | None = None):
+    scoped_workspace_id = _resolve_scoped_workspace_id(access_scope, workspace_id)
+    return {"items": db.fetch_alert_rules(workspace_id=scoped_workspace_id)}
+
+
+def list_alert_states(workspace_id: str | None = None, access_scope: dict | None = None):
+    scoped_workspace_id = _resolve_scoped_workspace_id(access_scope, workspace_id)
+    return {"items": db.fetch_alert_states(workspace_id=scoped_workspace_id)}
+
+
+def list_alert_delivery_logs(limit: int = 100, workspace_id: str | None = None, access_scope: dict | None = None):
+    scoped_workspace_id = _resolve_scoped_workspace_id(access_scope, workspace_id)
+    return {"items": db.fetch_alert_delivery_logs(limit=limit, workspace_id=scoped_workspace_id)}
+
+
+def evaluate_alert_rules(sender=None, workspace_id: str | None = None, access_scope: dict | None = None):
+    scoped_workspace_id = _resolve_scoped_workspace_id(access_scope, workspace_id)
+    return run_alert_evaluation(db, sender=sender, workspace_id=scoped_workspace_id)
+
+
+def generate_report(
+    *,
+    report_type: str,
+    year: int,
+    region: str,
+    month: str | None = None,
+    organization_id: str | None = None,
+    workspace_id: str | None = None,
+    access_scope: dict | None = None,
+):
+    if access_scope:
+        _assert_scope_allows_internal_query(
+            access_scope,
+            region=region,
+            market="WEM" if region == "WEM" else "NEM",
+        )
+    scoped_workspace_id = _resolve_scoped_workspace_id(access_scope, workspace_id)
+    return generate_report_payload(
+        db,
+        report_type=report_type,
+        year=year,
+        region=region,
+        month=month,
+        organization_id=organization_id or (access_scope or {}).get("organization_id"),
+        workspace_id=scoped_workspace_id,
+    )
+
+
+@app.post("/api/alerts/rules", response_model=LooseObjectPayload)
+def create_alert_rule_route(payload: AlertRuleUpsert):
+    try:
+        return create_alert_rule(payload)
+    except Exception as exc:
+        logger.error("Create alert rule error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/alerts/rules", response_model=AlertRuleListPayload)
+def list_alert_rules_route(workspace_id: Optional[str] = Query(None)):
+    try:
+        return list_alert_rules(workspace_id=workspace_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List alert rules error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/alerts/states", response_model=AlertStateListPayload)
+def list_alert_states_route(workspace_id: Optional[str] = Query(None)):
+    try:
+        return list_alert_states(workspace_id=workspace_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List alert states error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/alerts/delivery-logs", response_model=AlertDeliveryLogListPayload)
+def list_alert_delivery_logs_route(
+    limit: int = Query(100, ge=1, le=500),
+    workspace_id: Optional[str] = Query(None),
+):
+    try:
+        return list_alert_delivery_logs(limit=limit, workspace_id=workspace_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List alert delivery logs error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/alerts/evaluate", response_model=LooseObjectPayload)
+def evaluate_alert_rules_route(workspace_id: Optional[str] = Query(None)):
+    try:
+        return evaluate_alert_rules(workspace_id=workspace_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Evaluate alert rules error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/reports/generate", response_model=LooseObjectPayload)
+def generate_report_route(
+    report_type: str = Query(..., pattern="^(monthly_market_report|investment_memo_draft)$"),
+    year: int = Query(...),
+    region: str = Query(...),
+    month: Optional[str] = Query(None),
+):
+    try:
+        return generate_report(report_type=report_type, year=year, region=region, month=month)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Generate report error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/reports/jobs", response_model=AcceptedJobActionPayload)
+def enqueue_report_route(
+    report_type: str = Query(..., pattern="^(monthly_market_report|investment_memo_draft)$"),
+    year: int = Query(...),
+    region: str = Query(...),
+    month: Optional[str] = Query(None),
+):
+    try:
+        job = enqueue_report_generation_job(report_type=report_type, year=year, region=region, month=month)
+        return {"status": "accepted", "job_id": job["job_id"], "job": job}
+    except Exception as exc:
+        logger.error("Enqueue report job error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/jobs", response_model=AcceptedJobActionPayload)
+def create_job_route(payload: JobCreateRequest):
+    try:
+        job = enqueue_job(
+            job_type=payload.job_type,
+            payload=payload.payload,
+            queue_name=payload.queue_name,
+            source_key=payload.source_key,
+            priority=payload.priority,
+            max_attempts=payload.max_attempts,
+        )
+        return {"status": "accepted", "job_id": job["job_id"], "job": job}
+    except Exception as exc:
+        logger.error("Create job route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/jobs", response_model=JobListPayload)
+def list_jobs_route(
+    status: Optional[str] = Query(None),
+    queue_name: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    access_scope: dict | None = None,
+):
+    try:
+        items = db.list_jobs(status=status, queue_name=queue_name, limit=limit)
+        if access_scope:
+            items = [
+                item
+                for item in items
+                if item.get("organization_id") == access_scope.get("organization_id")
+                and item.get("workspace_id") == access_scope.get("workspace_id")
+            ]
+        return {"items": items}
+    except Exception as exc:
+        logger.error("List jobs route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/jobs/{job_id}", response_model=LooseObjectPayload)
+def get_job_route(job_id: str, access_scope: dict | None = None):
+    try:
+        job = db.fetch_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if access_scope:
+            _assert_job_scope(job, access_scope)
+        return job
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Get job route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/jobs/{job_id}/events", response_model=JobEventListPayload)
+def get_job_events_route(job_id: str, access_scope: dict | None = None):
+    try:
+        job = db.fetch_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if access_scope:
+            _assert_job_scope(job, access_scope)
+        return {"items": db.list_job_events(job_id)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Get job events route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/jobs/{job_id}/lineage", response_model=LooseObjectPayload)
+def get_job_lineage_route(job_id: str, access_scope: dict | None = None):
+    try:
+        payload = build_job_lineage_payload(db, job_id)
+        if access_scope:
+            _assert_job_scope(payload["job"], access_scope)
+        return payload
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Get job lineage route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/jobs/{job_id}/cancel", response_model=AcceptedJobActionPayload)
+def cancel_job_route(job_id: str, access_scope: dict | None = None):
+    try:
+        if access_scope:
+            job = db.fetch_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found or not cancellable")
+            _assert_job_scope(job, access_scope)
+        if not db.cancel_job(job_id):
+            raise HTTPException(status_code=404, detail="Job not found or not cancellable")
+        return {"status": "accepted", "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Cancel job route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/jobs/{job_id}/retry", response_model=AcceptedJobActionPayload)
+def retry_job_route(job_id: str, access_scope: dict | None = None):
+    try:
+        if access_scope:
+            job = db.fetch_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found or not retryable")
+            _assert_job_scope(job, access_scope)
+        if not db.retry_job(job_id, next_run_after=_utc_timestamp()):
+            raise HTTPException(status_code=404, detail="Job not found or not retryable")
+        db.append_job_event(job_id, "retry_queued", {}, _utc_timestamp())
+        return {"status": "accepted", "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Retry job route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/jobs/run-next", response_model=RunNextJobPayload)
+def run_next_job_route(queue_names: str | None = Query(None), access_scope: dict | None = None):
+    try:
+        queue_names_value = queue_names if isinstance(queue_names, str) else None
+        queue_name_items = [item.strip() for item in (queue_names_value or "").split(",") if item.strip()] or None
+        if access_scope:
+            result = job_orchestrator.run_once_scoped(
+                organization_id=access_scope.get("organization_id"),
+                workspace_id=access_scope.get("workspace_id"),
+                queue_names=queue_name_items,
+            )
+        else:
+            result = job_orchestrator.run_once(queue_names=queue_name_items)
+        return {"status": "idle" if result is None else "ok", "result": result}
+    except Exception as exc:
+        logger.error("Run-next job route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/observability/status", response_model=ObservabilityStatusPayload)
+def get_observability_status(access_scope: dict | None = None):
+    try:
+        payload = build_source_freshness_payload(db)
+        payload["telemetry"] = get_telemetry_status()
+        payload["openlineage"] = get_openlineage_status()
+        payload["collector"] = build_collector_governance_status(payload["telemetry"], payload["openlineage"])
+        if not access_scope:
+            return payload
+        queued = db.list_jobs(status="queued", limit=500)
+        running = db.list_jobs(status="running", limit=500)
+        queued = [job for job in queued if job.get("organization_id") == access_scope.get("organization_id") and job.get("workspace_id") == access_scope.get("workspace_id")]
+        running = [job for job in running if job.get("organization_id") == access_scope.get("organization_id") and job.get("workspace_id") == access_scope.get("workspace_id")]
+        sources = []
+        for source in payload.get("sources", []):
+            if source.get("source_key") == "job_system":
+                sources.append(
+                    {
+                        **source,
+                        "queued_jobs": len(queued),
+                        "running_jobs": len(running),
+                        "status": "busy" if running else "idle",
+                    }
+                )
+            else:
+                sources.append(source)
+        return {
+            **payload,
+            "sources": sources,
+            "job_summary": {"queued": len(queued), "running": len(running)},
+        }
+    except Exception as exc:
+        logger.error("Observability status route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations")
+def create_organization_route(name: str = Query(...)):
+    try:
+        return seed_organization(db, name=name)
+    except Exception as exc:
+        logger.error("Create organization route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/organizations")
+def list_organizations_route():
+    try:
+        return {"items": db.list_organizations()}
+    except Exception as exc:
+        logger.error("List organizations route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/members")
+def add_organization_member_route(
+    organization_id: str,
+    principal_id: str = Query(...),
+    role: str = Query(...),
+    status: str = Query("active"),
+):
+    try:
+        return seed_organization_membership(
+            db,
+            organization_id=organization_id,
+            principal_id=principal_id,
+            role=role,
+            status=status,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Add organization member route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/organizations/{organization_id}/members")
+def list_organization_members_route(
+    organization_id: str,
+    principal_id: str = Query(...),
+    status: Optional[str] = None,
+    role: Optional[str] = None,
+    query: Optional[str] = None,
+):
+    try:
+        authenticate_org_actor(db, organization_id, principal_id)
+        items = [
+            _build_organization_member_view(item)
+            for item in db.list_organization_memberships(organization_id, status=status, role=role)
+        ]
+        if query:
+            items = [
+                item
+                for item in items
+                if _matches_text_query(
+                    [
+                        item["principal_id"],
+                        item["role"],
+                        item["status"],
+                        item.get("principal", {}).get("email"),
+                        item.get("principal", {}).get("display_name"),
+                    ],
+                    query,
+                )
+            ]
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List organization members route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/invites")
+def create_organization_invite_route(
+    organization_id: str,
+    principal_id: str = Query(...),
+    email: str = Query(...),
+    target_role: str = Query(...),
+    expires_at: str = Query(...),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, principal_id)
+        return create_membership_invite(
+            db,
+            actor=actor,
+            organization_id=organization_id,
+            workspace_id=None,
+            target_scope_type="organization",
+            email=email,
+            target_role=target_role,
+            expires_at=expires_at,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Create organization invite route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/organizations/{organization_id}/invites")
+def list_organization_invites_route(
+    organization_id: str,
+    principal_id: str = Query(...),
+    status: Optional[str] = Query(None),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, principal_id)
+        check_organization_permission(actor, "member_manage")
+        return {"items": db.list_membership_invites(organization_id, status=status)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List organization invites route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/invites/{invite_id}/revoke")
+def revoke_organization_invite_route(
+    invite_id: str,
+    organization_id: str = Query(...),
+    principal_id: str = Query(...),
+    revoke_reason: str = Query("manual_revoke"),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, principal_id)
+        return revoke_membership_invite(db, actor=actor, invite_id=invite_id, revoke_reason=revoke_reason)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Revoke organization invite route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/invites/{invite_id}/reissue")
+def reissue_organization_invite_route(
+    invite_id: str,
+    organization_id: str = Query(...),
+    principal_id: str = Query(...),
+    expires_at: str = Query(...),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, principal_id)
+        return reissue_membership_invite(db, actor=actor, invite_id=invite_id, expires_at=expires_at)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Reissue organization invite route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/organizations/invites/accept")
+def accept_organization_invite_route(invite_token: str = Query(...), display_name: str = Query(...)):
+    try:
+        return accept_membership_invite(db, invite_token=invite_token, display_name=display_name)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Accept organization invite route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/members/{principal_id}/suspend")
+def suspend_organization_member_route(
+    organization_id: str,
+    principal_id: str,
+    actor_principal_id: str = Query(...),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        return suspend_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Suspend organization member route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/members/{principal_id}/reactivate")
+def reactivate_organization_member_route(
+    organization_id: str,
+    principal_id: str,
+    actor_principal_id: str = Query(...),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        return reactivate_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Reactivate organization member route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/members/{principal_id}/remove")
+def remove_organization_member_route(
+    organization_id: str,
+    principal_id: str,
+    actor_principal_id: str = Query(...),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        return remove_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Remove organization member route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/members/bulk-update")
+def bulk_update_organization_members_route(
+    organization_id: str,
+    actor_principal_id: str = Query(...),
+    principal_ids: str = Query(..., description="Comma-separated principal ids"),
+    operation: str = Query(..., description="suspend | reactivate | remove"),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        targets = [item.strip() for item in principal_ids.split(",") if item.strip()]
+        items = []
+        for principal_id in targets:
+            if operation == "suspend":
+                items.append(suspend_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id))
+            elif operation == "reactivate":
+                items.append(reactivate_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id))
+            elif operation == "remove":
+                items.append(remove_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id))
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported bulk operation")
+        return {"organization_id": organization_id, "operation": operation, "items": items}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Bulk update organization members route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/owner-transfer")
+def transfer_organization_owner_route(
+    organization_id: str,
+    actor_principal_id: str = Query(...),
+    new_owner_principal_id: str = Query(...),
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        return transfer_organization_owner(
+            db,
+            actor=actor,
+            organization_id=organization_id,
+            new_owner_principal_id=new_owner_principal_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Transfer organization owner route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/organizations/{organization_id}/audit-logs")
+def list_organization_audit_logs_route(
+    organization_id: str,
+    principal_id: str = Query(...),
+    action: Optional[str] = None,
+    target_type: Optional[str] = None,
+    actor_principal_id: Optional[str] = None,
+    query: Optional[str] = None,
+    limit: int = 100,
+):
+    try:
+        actor = authenticate_org_actor(db, organization_id, principal_id)
+        check_organization_permission(actor, "read_audit")
+        items = db.fetch_audit_logs(
+            action=action,
+            target_type=target_type,
+            actor_principal_id=actor_principal_id,
+            limit=limit,
+        )
+        items = _filter_organization_audit_items(items, organization_id=organization_id, query=query)
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List organization audit logs route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/principals")
+def create_principal_route(email: str = Query(...), display_name: str = Query(...)):
+    try:
+        return seed_principal(db, email=email, display_name=display_name)
+    except Exception as exc:
+        logger.error("Create principal route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/oidc/providers")
+def create_oidc_provider_route(
+    organization_id: str,
+    provider_key: str = Query(...),
+    issuer: str = Query(...),
+    discovery_url: str = Query(...),
+    client_id: str = Query(...),
+    client_secret: str = Query(...),
+    scopes: str = Query("openid,email,profile"),
+):
+    try:
+        if not db.fetch_organization(organization_id):
+            raise HTTPException(status_code=404, detail="Organization not found")
+        return db.upsert_oidc_provider(
+            {
+                "provider_id": f"op_{provider_key}_{organization_id}",
+                "organization_id": organization_id,
+                "provider_key": provider_key,
+                "issuer": issuer,
+                "discovery_url": discovery_url,
+                "client_id": client_id,
+                "client_secret_encrypted": client_secret,
+                "scopes_json": [item.strip() for item in scopes.split(",") if item.strip()],
+                "enabled": 1,
+                "created_at": _utc_timestamp(),
+                "updated_at": _utc_timestamp(),
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Create OIDC provider route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/domains")
+def create_organization_domain_route(
+    organization_id: str,
+    domain: str = Query(...),
+    join_mode: str = Query("invite_only"),
+):
+    try:
+        if not db.fetch_organization(organization_id):
+            raise HTTPException(status_code=404, detail="Organization not found")
+        return db.upsert_organization_domain(
+            {
+                "domain_id": f"dom_{uuid.uuid4().hex[:12]}",
+                "organization_id": organization_id,
+                "domain": domain.strip().lower(),
+                "verified_at": None,
+                "join_mode": join_mode,
+                "created_at": _utc_timestamp(),
+                "updated_at": _utc_timestamp(),
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Create organization domain route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/password/set")
+def set_password_route(principal_id: str = Query(...), password: str = Query(...)):
+    try:
+        return set_principal_password(db, principal_id=principal_id, password=password)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Set password route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/login")
+def login_route(email: str = Query(...), password: str = Query(...), workspace_id: str = Query(...)):
+    try:
+        return login_with_password(db, email=email, password=password, workspace_id=workspace_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Login route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/domain-join")
+def domain_join_route(
+    organization_id: str = Query(...),
+    email: str = Query(...),
+    display_name: str = Query(...),
+    password: str = Query(...),
+):
+    try:
+        return join_organization_by_domain(
+            db,
+            organization_id=organization_id,
+            email=email,
+            display_name=display_name,
+            password=password,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Domain join route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/oidc/start")
+def start_oidc_login_route(
+    organization_id: str = Query(...),
+    provider_key: str = Query(...),
+    redirect_uri: str = Query(...),
+):
+    try:
+        provider = db.fetch_oidc_provider_by_key(organization_id, provider_key)
+        if not provider or not provider.get("enabled"):
+            raise HTTPException(status_code=404, detail="OIDC provider not found")
+        state = uuid.uuid4().hex
+        nonce = uuid.uuid4().hex
+        discovery = _default_oidc_discovery_document(provider)
+        return {
+            "organization_id": organization_id,
+            "provider_key": provider_key,
+            "state": state,
+            "nonce": nonce,
+            "authorization_url": build_authorization_redirect(
+                provider=provider,
+                discovery=discovery,
+                redirect_uri=redirect_uri,
+                state=state,
+                nonce=nonce,
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Start OIDC login route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/auth/oidc/callback")
+def complete_oidc_callback_route(
+    organization_id: str = Query(...),
+    provider_key: str = Query(...),
+    subject: str = Query(...),
+    email: str = Query(...),
+    email_verified: bool = Query(...),
+    display_name: str = Query(...),
+    workspace_id: str = Query(...),
+    state: str = Query(...),
+    expected_state: str = Query(...),
+    nonce: str = Query(...),
+    expected_nonce: str = Query(...),
+):
+    try:
+        if state != expected_state:
+            raise HTTPException(status_code=401, detail="Invalid OIDC state")
+        if nonce != expected_nonce:
+            raise HTTPException(status_code=401, detail="Invalid OIDC nonce")
+
+        provider = db.fetch_oidc_provider_by_key(organization_id, provider_key)
+        if not provider or not provider.get("enabled"):
+            raise HTTPException(status_code=404, detail="OIDC provider not found")
+
+        workspace = db.fetch_workspace(workspace_id)
+        if not workspace or workspace["organization_id"] != organization_id:
+            raise HTTPException(status_code=403, detail="Workspace mismatch")
+
+        domain = email.split("@", 1)[-1].strip().lower()
+        domain_record = db.fetch_organization_domain_by_name(domain)
+        if not domain_record or domain_record["organization_id"] != organization_id:
+            raise HTTPException(status_code=403, detail="Organization domain mismatch")
+
+        resolved = resolve_principal_for_oidc_claims(
+            db,
+            provider_key=provider_key,
+            subject=subject,
+            email=email.strip().lower(),
+            email_verified=email_verified,
+            display_name=display_name,
+        )
+        org_membership, _, _ = ensure_organization_membership_from_domain_policy(
+            db,
+            organization_id=organization_id,
+            principal_id=resolved["principal"]["principal_id"],
+            email=email.strip().lower(),
+        )
+        membership = db.fetch_workspace_membership(workspace_id, resolved["principal"]["principal_id"])
+        if membership is None:
+            raise HTTPException(status_code=403, detail="Workspace access denied")
+
+        session = issue_oidc_session(
+            db,
+            principal_id=resolved["principal"]["principal_id"],
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            auth_identity_id=resolved["auth_identity"]["auth_identity_id"],
+            auth_method="oidc",
+        )
+        return {
+            "principal": resolved["principal"],
+            "auth_identity": resolved["auth_identity"],
+            "organization_membership": org_membership,
+            "session": session,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Complete OIDC callback route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/auth/session")
+def get_session_route(x_session_token: Optional[str] = Header(None, alias="X-Session-Token")):
+    try:
+        return _require_session_actor(x_session_token)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Get session route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/refresh")
+def refresh_session_route(x_session_token: Optional[str] = Header(None, alias="X-Session-Token")):
+    try:
+        return refresh_session_access_token(db, x_session_token)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Refresh session route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/logout")
+def logout_route(x_session_token: Optional[str] = Header(None, alias="X-Session-Token")):
+    try:
+        logout_session(db, x_session_token)
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Logout route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/workspaces")
+def create_workspace_route(organization_id: str = Query(...), name: str = Query(...)):
+    try:
+        return seed_workspace(db, organization_id=organization_id, name=name)
+    except Exception as exc:
+        logger.error("Create workspace route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/workspaces")
+def list_workspaces_route(organization_id: Optional[str] = Query(None)):
+    try:
+        return {"items": db.list_workspaces(organization_id=organization_id)}
+    except Exception as exc:
+        logger.error("List workspaces route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/workspaces/{workspace_id}/members")
+def add_workspace_member_route(workspace_id: str, principal_id: str = Query(...), role: str = Query(...)):
+    try:
+        return seed_workspace_membership(db, workspace_id=workspace_id, principal_id=principal_id, role=role)
+    except Exception as exc:
+        logger.error("Add workspace member route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/workspaces/{workspace_id}/members")
+def list_workspace_members_route(workspace_id: str, x_access_token: Optional[str] = Header(None, alias="X-Access-Token")):
+    try:
+        actor = _require_workspace_actor(x_access_token)
+        if actor["workspace"]["workspace_id"] != workspace_id:
+            raise HTTPException(status_code=403, detail="Workspace mismatch")
+        check_workspace_permission(actor, "member_manage")
+        return {"items": db.list_workspace_memberships(workspace_id)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List workspace members route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/workspaces/{workspace_id}/invites")
+def create_workspace_invite_route(
+    workspace_id: str,
+    email: str = Query(...),
+    role: str = Query(...),
+    x_access_token: Optional[str] = Header(None, alias="X-Access-Token"),
+):
+    try:
+        actor = _require_workspace_actor(x_access_token)
+        return create_workspace_invite(db, actor=actor, workspace_id=workspace_id, email=email, role=role)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Create workspace invite route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/invites/{invite_id}/revoke")
+def revoke_workspace_invite_route(invite_id: str, x_access_token: Optional[str] = Header(None, alias="X-Access-Token")):
+    try:
+        actor = _require_workspace_actor(x_access_token)
+        return revoke_workspace_invite(db, actor=actor, invite_id=invite_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Revoke workspace invite route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/invites/accept")
+def accept_workspace_invite_route(
+    invite_token: str = Query(...),
+    display_name: str = Query(...),
+    password: str = Query(...),
+):
+    try:
+        return accept_workspace_invite(db, invite_token=invite_token, display_name=display_name, password=password)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Accept workspace invite route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/access-tokens")
+def create_access_token_route(principal_id: str = Query(...), workspace_id: str = Query(...)):
+    try:
+        return issue_access_token(db, principal_id=principal_id, workspace_id=workspace_id)
+    except Exception as exc:
+        logger.error("Create access token route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/workspaces/{workspace_id}/export-permission")
+def get_workspace_export_permission_route(workspace_id: str, x_access_token: Optional[str] = Header(None, alias="X-Access-Token")):
+    try:
+        actor = _require_workspace_actor(x_access_token)
+        if actor["workspace"]["workspace_id"] != workspace_id:
+            raise HTTPException(status_code=403, detail="Workspace mismatch")
+        allowed = "export" in set()
+        try:
+            check_workspace_permission(actor, "export")
+            allowed = True
+        except HTTPException:
+            allowed = False
+        return {
+            "workspace_id": workspace_id,
+            "principal_id": actor["principal"]["principal_id"],
+            "role": actor["membership"]["role"],
+            "allowed": allowed,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Get export permission route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/audit-logs")
+def list_audit_logs_route(
+    x_access_token: Optional[str] = Header(None, alias="X-Access-Token"),
+    workspace_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+):
+    try:
+        actor = _require_workspace_actor(x_access_token)
+        check_workspace_permission(actor, "read_audit")
+        scoped_workspace_id = workspace_id or actor["workspace"]["workspace_id"]
+        if scoped_workspace_id != actor["workspace"]["workspace_id"]:
+            raise HTTPException(status_code=403, detail="Workspace mismatch")
+        return {"items": db.fetch_audit_logs(workspace_id=scoped_workspace_id, limit=limit)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List audit logs route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/external-api/billing-summary", response_model=LooseObjectPayload)
+def get_external_api_billing_summary_route(
+    client_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+):
+    try:
+        return {
+            **build_external_api_billing_summary(db, client_id=client_id, limit=limit),
+            "ledger": build_external_api_billing_ledger(db, client_id=client_id, limit=limit),
+        }
+    except Exception as exc:
+        logger.error("External API billing summary route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/v1/status", responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_status(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    trace_id = _build_request_trace_id("/api/v1/status")
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/status",
+        http_method="GET",
+        request_units=1,
+        handler=lambda client: wrap_external_response(
+            endpoint="status",
+            data=build_external_sla_status(db, api_version="v1"),
+            api_version="v1",
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        ),
+    )
+
+
+@app.get("/api/v1/prices", responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_prices(
+    year: int = Query(...),
+    region: str = Query(...),
+    month: Optional[str] = Query(None),
+    quarter: Optional[str] = Query(None),
+    day_type: Optional[str] = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    trace_id = _build_request_trace_id("/api/v1/prices")
+    def handler(client):
+        _assert_workspace_scope(client, region=region, market="NEM" if region != "WEM" else "WEM")
+        payload = get_price_trend(year=year, region=region, month=month, quarter=quarter, day_type=day_type, limit=5000)
+        paged = paginate_items(payload.get("data", []), offset=offset, limit=limit)
+        return wrap_external_response(
+            endpoint="prices",
+            data={
+                "market_context": {
+                    "region": payload.get("region"),
+                    "year": payload.get("year"),
+                    "stats": payload.get("stats", {}),
+                    "metadata": payload.get("metadata", {}),
+                },
+                "items": paged["items"],
+            },
+            api_version="v1",
+            pagination=paged["pagination"],
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+                "lineage": {
+                    "source_version": payload.get("metadata", {}).get("source_version"),
+                    "methodology_version": payload.get("metadata", {}).get("methodology_version"),
+                },
+            },
+        )
+
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/prices",
+        http_method="GET",
+        request_units=max(1, limit // 50 or 1),
+        handler=handler,
+    )
+
+
+@app.get("/api/v1/events", responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_events(
+    year: int = Query(...),
+    region: str = Query(...),
+    market: Optional[str] = Query(None),
+    month: Optional[str] = Query(None),
+    quarter: Optional[str] = Query(None),
+    day_type: Optional[str] = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    trace_id = _build_request_trace_id("/api/v1/events")
+    def handler(client):
+        inferred_market = market or ("WEM" if region == "WEM" else "NEM")
+        _assert_workspace_scope(client, region=region, market=inferred_market)
+        payload = get_event_overlays(year=year, region=region, market=market, month=month, quarter=quarter, day_type=day_type)
+        paged = paginate_items(payload.get("events", []), offset=offset, limit=limit)
+        return wrap_external_response(
+            endpoint="events",
+            data={
+                "items": paged["items"],
+                "states": payload.get("states", []),
+                "metadata": payload.get("metadata", {}),
+            },
+            api_version="v1",
+            pagination=paged["pagination"],
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+                "lineage": {
+                    "source_version": payload.get("metadata", {}).get("source_version"),
+                    "methodology_version": payload.get("metadata", {}).get("methodology_version"),
+                },
+            },
+        )
+
+    return _metered_v1_call(x_api_key=x_api_key, endpoint="/api/v1/events", http_method="GET", request_units=max(1, limit // 50 or 1), handler=handler)
+
+
+@app.get("/api/v1/fcas", responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_fcas(
+    year: int = Query(...),
+    region: str = Query(...),
+    aggregation: str = Query("daily"),
+    capacity_mw: float = Query(100),
+    month: Optional[str] = Query(None),
+    quarter: Optional[str] = Query(None),
+    day_type: Optional[str] = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    trace_id = _build_request_trace_id("/api/v1/fcas")
+    def handler(client):
+        _assert_workspace_scope(client, region=region, market="NEM" if region != "WEM" else "WEM")
+        payload = get_fcas_analysis(year=year, region=region, aggregation=aggregation, capacity_mw=capacity_mw, month=month, quarter=quarter, day_type=day_type)
+        paged = paginate_items(payload.get("data", []), offset=offset, limit=limit)
+        return wrap_external_response(
+            endpoint="fcas",
+            data={
+                "summary": {k: v for k, v in payload.items() if k != "data"},
+                "items": paged["items"],
+            },
+            api_version="v1",
+            pagination=paged["pagination"],
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+                "lineage": {
+                    "source_version": payload.get("metadata", {}).get("source_version"),
+                    "methodology_version": payload.get("metadata", {}).get("methodology_version"),
+                },
+            },
+        )
+
+    return _metered_v1_call(x_api_key=x_api_key, endpoint="/api/v1/fcas", http_method="GET", request_units=max(1, limit // 50 or 1), handler=handler)
+
+
+@app.post("/api/v1/bess/backtests", responses=EXTERNAL_API_ERROR_RESPONSES)
+def run_v1_bess_backtest(params: BessBacktestParams, x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    trace_id = _build_request_trace_id("/api/v1/bess/backtests")
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/bess/backtests",
+        http_method="POST",
+        request_units=5,
+        handler=lambda client: wrap_external_response(
+            endpoint="bess/backtests",
+            data=run_bess_backtest(params),
+            api_version="v1",
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        ),
+    )
+
+
+@app.post("/api/v1/investment/scenarios", responses=EXTERNAL_API_ERROR_RESPONSES)
+def run_v1_investment_scenarios(params: InvestmentParams, x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    trace_id = _build_request_trace_id("/api/v1/investment/scenarios")
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/investment/scenarios",
+        http_method="POST",
+        request_units=8,
+        handler=lambda client: wrap_external_response(
+            endpoint="investment/scenarios",
+            data=investment_analysis(params),
+            api_version="v1",
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        ),
+    )
+
+
+@app.get("/api/v1/developer/portal", response_model=LooseObjectPayload, responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_developer_portal(
+    ledger_limit: int = Query(20, ge=1, le=200),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    trace_id = _build_request_trace_id("/api/v1/developer/portal")
+    ledger_limit = _cacheable_param(ledger_limit) or 20
+
+    def handler(client):
+        quota = summarize_external_api_quota(db, client=client)
+        billing = build_external_api_billing_summary(
+            db,
+            client_id=client["client_id"],
+            limit=max(10, ledger_limit),
+        )
+        ledger = build_external_api_billing_ledger(
+            db,
+            client_id=client["client_id"],
+            limit=ledger_limit,
+        )
+        return wrap_external_response(
+            endpoint="developer/portal",
+            data={
+                "client": {
+                    "client_id": client["client_id"],
+                    "client_name": client.get("client_name"),
+                    "plan": client.get("plan"),
+                    "organization_id": client.get("organization_id"),
+                    "workspace_id": client.get("workspace_id"),
+                    "enabled": client.get("enabled"),
+                    "created_at": client.get("created_at"),
+                    "updated_at": client.get("updated_at"),
+                },
+                "quota": quota,
+                "billing": billing,
+                "ledger": ledger,
+            },
+            api_version="v1",
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        )
+
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/developer/portal",
+        http_method="GET",
+        request_units=1,
+        handler=handler,
+    )
+
+
+@app.get("/api/v1/data-quality", responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_data_quality(
+    market: Optional[str] = Query(None),
+    issue_offset: int = Query(0, ge=0),
+    issue_limit: int = Query(100, ge=1, le=500),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    trace_id = _build_request_trace_id("/api/v1/data-quality")
+    def handler(client):
+        _assert_workspace_scope(client, market=market)
+        summary = get_data_quality_summary()
+        markets = get_data_quality_markets()
+        issues = get_data_quality_issues(market=market)
+        paged = paginate_items(issues.get("items", []), offset=issue_offset, limit=issue_limit)
+        return wrap_external_response(
+            endpoint="data-quality",
+            data={
+                "summary": summary,
+                "markets": markets.get("items", []),
+                "issues": paged["items"],
+            },
+            api_version="v1",
+            pagination=paged["pagination"],
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        )
+
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/data-quality",
+        http_method="GET",
+        request_units=max(1, issue_limit // 50 or 1),
+        handler=handler,
+    )
+
+
+@app.get("/api/v1/jobs/{job_id}", responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_job(job_id: str, x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    trace_id = _build_request_trace_id("/api/v1/jobs")
+
+    def handler(client):
+        job = db.fetch_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        client_workspace_id = client.get("workspace_id")
+        job_workspace_id = job.get("workspace_id")
+        if client_workspace_id and job_workspace_id and client_workspace_id != job_workspace_id:
+            raise HTTPException(status_code=403, detail="Workspace access denied")
+        return wrap_external_response(
+            endpoint="jobs",
+            data={"job": job},
+            api_version="v1",
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        )
+
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/jobs",
+        http_method="GET",
+        request_units=1,
+        handler=handler,
+    )
+
+
+@app.get("/api/v1/jobs", responses=EXTERNAL_API_ERROR_RESPONSES)
+def list_v1_jobs(
+    status: Optional[str] = Query(None),
+    queue_name: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    trace_id = _build_request_trace_id("/api/v1/jobs.list")
+    status = _cacheable_param(status)
+    queue_name = _cacheable_param(queue_name)
+    limit = _cacheable_param(limit) or 100
+
+    def handler(client):
+        items = db.list_jobs(status=status, queue_name=queue_name, limit=limit)
+        client_workspace_id = client.get("workspace_id")
+        if client_workspace_id:
+            items = [item for item in items if item.get("workspace_id") in {None, client_workspace_id}]
+        return wrap_external_response(
+            endpoint="jobs",
+            data={"items": items},
+            api_version="v1",
+            pagination={"limit": limit, "returned": len(items)},
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        )
+
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/jobs",
+        http_method="GET",
+        request_units=1,
+        handler=handler,
+    )
+
+
+@app.get("/api/v1/jobs/{job_id}/lineage", responses=EXTERNAL_API_ERROR_RESPONSES)
+def get_v1_job_lineage(job_id: str, x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    trace_id = _build_request_trace_id("/api/v1/jobs.lineage")
+
+    def handler(client):
+        lineage = build_job_lineage_payload(db, job_id)
+        client_workspace_id = client.get("workspace_id")
+        job_workspace_id = lineage["job"].get("workspace_id")
+        if client_workspace_id and job_workspace_id and client_workspace_id != job_workspace_id:
+            raise HTTPException(status_code=403, detail="Workspace access denied")
+        return wrap_external_response(
+            endpoint="jobs/lineage",
+            data=lineage,
+            api_version="v1",
+            meta={
+                "client_id": client["client_id"],
+                "plan": client["plan"],
+                "organization_id": client.get("organization_id"),
+                "workspace_id": client.get("workspace_id"),
+                "trace_id": trace_id,
+            },
+        )
+
+    return _metered_v1_call(
+        x_api_key=x_api_key,
+        endpoint="/api/v1/jobs/lineage",
+        http_method="GET",
+        request_units=1,
+        handler=handler,
+    )
+
+
+@app.get(
+    "/api/event-overlays",
+    summary="Get event overlay explanations",
+    description="Returns normalized event/state overlays for the requested market window. Response metadata includes the standard contract fields plus overlay-specific fields such as coverage_quality and time_granularity.",
+    responses=OPENAPI_ERROR_RESPONSES,
+)
 def get_event_overlays(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID (e.g., NSW1, WEM)"),
@@ -280,8 +2814,15 @@ def get_event_overlays(
     month: Optional[str] = Query(None, description="Month (01-12) to filter by"),
     quarter: Optional[str] = Query(None, description="Quarter to filter by (Q1, Q2, Q3, Q4)"),
     day_type: Optional[str] = Query(None, description="Day type to filter by (WEEKDAY, WEEKEND)"),
+    access_scope: Optional[dict] = None,
 ):
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(
+                access_scope,
+                region=region,
+                market=grid_events.infer_market(region, market),
+            )
         market = _cacheable_param(market)
         month = _cacheable_param(month)
         quarter = _cacheable_param(quarter)
@@ -297,7 +2838,7 @@ def get_event_overlays(
         }
         cached = _fetch_response_cache(EVENT_OVERLAY_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return cached
+            return _attach_event_overlay_metadata(cached, region=region, data_version=cache_payload["data_version"])
 
         response = grid_events.get_event_overlay_response(
             db,
@@ -308,25 +2849,36 @@ def get_event_overlays(
             quarter=quarter,
             day_type=day_type,
         )
+        response = _attach_event_overlay_metadata(response, region=region, data_version=cache_payload["data_version"])
         return _store_response_cache(
             EVENT_OVERLAY_RESPONSE_CACHE_SCOPE,
             cache_payload,
             response,
             EVENT_OVERLAY_CACHE_TTL_SECONDS,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Event overlay error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/grid-forecast")
+@app.get(
+    "/api/grid-forecast",
+    summary="Get grid forecast view",
+    description="Returns grid forecast windows, drivers, coverage context, and unified metadata. The metadata contract is standardised while preserving forecast-specific fields such as forecast_mode and coverage_quality.",
+    responses=OPENAPI_ERROR_RESPONSES,
+)
 def get_grid_forecast(
     market: str = Query(..., description="Market code: NEM or WEM"),
     region: str = Query(..., description="Region code such as NSW1 or WEM"),
     horizon: str = Query(..., pattern="^(24h|7d|30d)$", description="Forecast horizon"),
     as_of: Optional[str] = Query(None, description="Optional forecast issue timestamp"),
+    access_scope: Optional[dict] = None,
 ):
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, region=region, market=market)
         market = _cacheable_param(market)
         region = _cacheable_param(region)
         horizon = _cacheable_param(horizon)
@@ -340,7 +2892,7 @@ def get_grid_forecast(
         }
         cached = _fetch_response_cache(GRID_FORECAST_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return cached
+            return _attach_grid_forecast_metadata(cached, region=region, data_version=cache_payload["data_version"])
 
         response = grid_forecast.get_grid_forecast_response(
             db,
@@ -349,25 +2901,31 @@ def get_grid_forecast(
             horizon=horizon,
             as_of=as_of,
         )
+        response = _attach_grid_forecast_metadata(response, region=region, data_version=cache_payload["data_version"])
         return _store_response_cache(
             GRID_FORECAST_RESPONSE_CACHE_SCOPE,
             cache_payload,
             response,
             GRID_FORECAST_CACHE_TTL_SECONDS.get(horizon, DEFAULT_RESPONSE_CACHE_TTL_SECONDS),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Grid forecast error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/grid-forecast/coverage")
+@app.get("/api/grid-forecast/coverage", response_model=LooseObjectPayload)
 def get_grid_forecast_coverage(
     market: str = Query(..., description="Market code: NEM or WEM"),
     region: str = Query(..., description="Region code such as NSW1 or WEM"),
     horizon: str = Query(..., pattern="^(24h|7d|30d)$", description="Forecast horizon"),
     as_of: Optional[str] = Query(None, description="Optional forecast issue timestamp"),
+    access_scope: Optional[dict] = None,
 ):
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, region=region, market=market)
         return grid_forecast.get_grid_forecast_coverage(
             db,
             market=market,
@@ -375,6 +2933,8 @@ def get_grid_forecast_coverage(
             horizon=horizon,
             as_of=as_of,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Grid forecast coverage error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -499,26 +3059,51 @@ def run_fingrid_hourly_sync(lock_pre_acquired: bool = False):
         if lock_acquired:
             _release_job_lock(FINGRID_SYNC_LOCK_NAME)
 
-@app.post("/api/sync_data")
-def sync_data(background_tasks: BackgroundTasks):
-    """Trigger data scrape manually via background task."""
-    if not _try_acquire_job_lock(MARKET_SYNC_LOCK_NAME, MARKET_SYNC_LOCK_TTL_SECONDS):
-        raise HTTPException(status_code=409, detail="Market sync already running")
+@app.post("/api/sync_data", response_model=AcceptedJobActionPayload)
+def sync_data(background_tasks: BackgroundTasks = None):
+    """Trigger data scrape via the managed job queue."""
+    if background_tasks is not None:
+        lock_acquired = _try_acquire_job_lock(MARKET_SYNC_LOCK_NAME, MARKET_SYNC_LOCK_TTL_SECONDS)
+        if not lock_acquired:
+            raise HTTPException(status_code=409, detail="A market sync is already in progress")
+        background_tasks.add_task(run_sync_scrapers, True)
+        return {"status": "accepted", "detail": "Update started in background"}
+    job = enqueue_market_sync_job(manual=True)
+    return {"status": "accepted", "detail": "Update queued", "job_id": job["job_id"]}
 
-    background_tasks.add_task(run_sync_scrapers, True)
-    return {"status": "accepted", "detail": "Update started in background"}
 
-
-@app.get("/api/fingrid/datasets")
+@app.get("/api/fingrid/datasets", response_model=FingridDatasetCatalogPayload)
 def get_fingrid_datasets():
     fingrid_service.seed_dataset_catalog(db)
     return {"datasets": fingrid_catalog.list_dataset_configs()}
 
 
-@app.get("/api/fingrid/datasets/{dataset_id}/status")
-def get_fingrid_dataset_status(dataset_id: str):
+@app.get(
+    "/api/finland/market-model",
+    summary="Get Finland market model context",
+    description="Returns the current Finland market model source composition. The payload makes Finland explicit as a multi-source market model rather than a single Fingrid dataset view.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=LooseObjectPayload,
+)
+def get_finland_market_model():
+    fingrid_service.seed_dataset_catalog(db)
+    return build_finland_market_model_payload(db)
+
+
+@app.get(
+    "/api/fingrid/datasets/{dataset_id}/status",
+    summary="Get Fingrid dataset status",
+    description="Returns the current Fingrid dataset status snapshot with unified metadata fields, including methodology_version and source_version.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+)
+def get_fingrid_dataset_status(dataset_id: str, access_scope: Optional[dict] = None):
     try:
-        return fingrid_service.get_dataset_status_payload(db, dataset_id=dataset_id)
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, market="FINGRID")
+        payload = fingrid_service.get_dataset_status_payload(db, dataset_id=dataset_id)
+        return _attach_fingrid_metadata(payload, dataset_id)
+    except HTTPException:
+        raise
     except KeyError:
         raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
 
@@ -526,7 +3111,7 @@ def get_fingrid_dataset_status(dataset_id: str):
 @app.post("/api/fingrid/datasets/{dataset_id}/sync")
 def sync_fingrid_dataset(
     dataset_id: str,
-    background_tasks: BackgroundTasks,
+    background_tasks: BackgroundTasks = None,
     mode: str = Query("incremental"),
 ):
     try:
@@ -537,11 +3122,15 @@ def sync_fingrid_dataset(
     if not _fingrid_sync_enabled():
         raise HTTPException(status_code=503, detail="FINGRID_API_KEY is not configured")
 
-    if not _try_acquire_job_lock(FINGRID_SYNC_LOCK_NAME, FINGRID_SYNC_LOCK_TTL_SECONDS):
-        raise HTTPException(status_code=409, detail="Fingrid sync already running")
+    if background_tasks is not None:
+        lock_acquired = _try_acquire_job_lock(FINGRID_SYNC_LOCK_NAME, FINGRID_SYNC_LOCK_TTL_SECONDS)
+        if not lock_acquired:
+            raise HTTPException(status_code=409, detail="A Fingrid sync is already in progress")
+        background_tasks.add_task(run_fingrid_dataset_sync, dataset_id, mode, True)
+        return {"status": "accepted", "dataset_id": dataset_id, "mode": mode}
 
-    background_tasks.add_task(run_fingrid_dataset_sync, dataset_id, mode, True)
-    return {"status": "accepted", "dataset_id": dataset_id, "mode": mode}
+    job = enqueue_fingrid_dataset_sync_job(dataset_id=dataset_id, mode=mode)
+    return {"status": "accepted", "dataset_id": dataset_id, "mode": mode, "job_id": job["job_id"]}
 
 
 @app.get("/api/fingrid/datasets/{dataset_id}/series")
@@ -552,8 +3141,11 @@ def get_fingrid_dataset_series(
     tz: str = Query("Europe/Helsinki"),
     aggregation: str = Query("raw", pattern="^(raw|hour|1h|2h|4h|day|week|month)$"),
     limit: Optional[int] = Query(None),
+    access_scope: Optional[dict] = None,
 ):
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, market="FINGRID")
         return fingrid_service.get_dataset_series_payload(
             db,
             dataset_id=dataset_id,
@@ -563,6 +3155,8 @@ def get_fingrid_dataset_series(
             tz=tz,
             limit=limit,
         )
+    except HTTPException:
+        raise
     except KeyError:
         raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
 
@@ -572,9 +3166,14 @@ def get_fingrid_dataset_summary(
     dataset_id: str,
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
+    access_scope: Optional[dict] = None,
 ):
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, market="FINGRID")
         return fingrid_service.get_dataset_summary_payload(db, dataset_id=dataset_id, start=start, end=end)
+    except HTTPException:
+        raise
     except KeyError:
         raise HTTPException(status_code=404, detail="Unsupported Fingrid dataset")
 
@@ -587,7 +3186,10 @@ def export_fingrid_dataset_csv(
     tz: str = Query("Europe/Helsinki"),
     aggregation: str = Query("raw", pattern="^(raw|hour|1h|2h|4h|day|week|month)$"),
     limit: Optional[int] = Query(None),
+    access_scope: Optional[dict] = None,
 ):
+    if access_scope:
+        _assert_scope_allows_internal_query(access_scope, market="FINGRID")
     payload = fingrid_service.get_dataset_series_payload(
         db,
         dataset_id=dataset_id,
@@ -661,7 +3263,7 @@ def _build_temporal_filters(
     return " AND ".join(clauses) if clauses else "1=1", params
 
 
-@app.get("/api/years")
+@app.get("/api/years", response_model=AvailableYearsPayload)
 def get_available_years():
     """Returns a list of years for which data tables exist"""
     try:
@@ -676,18 +3278,30 @@ def get_available_years():
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/price-trend")
+@app.get(
+    "/api/price-trend",
+    summary="Get price trend analysis",
+    description="Returns historical price series, aggregate statistics, and unified metadata. The metadata object is the response contract anchor for market, timezone, unit, freshness, source_version, and methodology_version.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+)
 def get_price_trend(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID (e.g., NSW1, QLD1)"),
     month: Optional[str] = Query(None, description="Month (01-12) to filter by"),
     quarter: Optional[str] = Query(None, description="Quarter to filter by (Q1, Q2, Q3, Q4)"),
     day_type: Optional[str] = Query(None, description="Day type to filter by (WEEKDAY, WEEKEND)"),
-    limit: Optional[int] = Query(1500, description="Max points to return to avoid overwhelming frontend.")
+    limit: Optional[int] = Query(1500, description="Max points to return to avoid overwhelming frontend."),
+    access_scope: Optional[dict] = None,
 ):
     """
     Returns time series data with dynamic sampling to handle large arrays.
     """
+    if access_scope:
+        _assert_scope_allows_internal_query(
+            access_scope,
+            region=region,
+            market="WEM" if region == "WEM" else "NEM",
+        )
     month = _cacheable_param(month)
     quarter = _cacheable_param(quarter)
     day_type = _cacheable_param(day_type)
@@ -705,7 +3319,7 @@ def get_price_trend(
         }
         cached = _fetch_response_cache(PRICE_TREND_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return cached
+            return _attach_price_trend_metadata(cached, region=region)
 
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -735,6 +3349,7 @@ def get_price_trend(
                     "advanced_stats": {"neg_ratio": 0, "neg_avg": 0, "neg_min": 0, "pos_avg": 0, "pos_max": 0, "days_below_100": 0, "days_above_300": 0},
                     "hourly_distribution": [], "data": []
                 }
+                response = _attach_price_trend_metadata(response, region=region)
                 return _store_response_cache(
                     PRICE_TREND_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -832,6 +3447,7 @@ def get_price_trend(
                 "hourly_distribution": hourly_distribution,
                 "data": data
             }
+            response = _attach_price_trend_metadata(response, region=region)
             return _store_response_cache(
                 PRICE_TREND_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -848,13 +3464,18 @@ def get_price_trend(
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/api/network-fees")
+@app.get("/api/network-fees", response_model=NetworkFeesPayload)
 def get_network_fees():
     """Returns default network fees (TUOS+DUOS) for all regions."""
     return {"fees": get_all_fees()}
 
 
-@app.get("/api/peak-analysis")
+@app.get(
+    "/api/peak-analysis",
+    summary="Get peak and trough spread analysis",
+    description="Returns sliding-window peak/trough spread analysis with unified metadata. Consumers should read metadata for timezone, interval_minutes, currency, source_version, and methodology_version.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+)
 def get_peak_analysis(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID"),
@@ -863,6 +3484,7 @@ def get_peak_analysis(
     month: Optional[str] = Query(None, description="Month (01-12) to filter by"),
     quarter: Optional[str] = Query(None, description="Quarter to filter by (Q1, Q2, Q3, Q4)"),
     day_type: Optional[str] = Query(None, description="Day type to filter by (WEEKDAY, WEEKEND)"),
+    access_scope: Optional[dict] = None,
 ):
     """
     Sliding-window peak/trough analysis with network fee integration.
@@ -878,6 +3500,12 @@ def get_peak_analysis(
     windows = get_window_sizes(region)
 
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(
+                access_scope,
+                region=region,
+                market="WEM" if region == "WEM" else "NEM",
+            )
         cache_payload = {
             "year": year,
             "region": region,
@@ -891,7 +3519,7 @@ def get_peak_analysis(
         }
         cached = _fetch_response_cache(PEAK_ANALYSIS_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return cached
+            return _attach_peak_analysis_metadata(cached, region=region)
 
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -923,6 +3551,7 @@ def get_peak_analysis(
                     "region": region, "year": year, "aggregation": aggregation,
                     "network_fee": fee, "data": [], "summary": {}
                 }
+                response = _attach_peak_analysis_metadata(response, region=region)
                 return _store_response_cache(
                     PEAK_ANALYSIS_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -1000,6 +3629,7 @@ def get_peak_analysis(
                 "data": aggregated,
                 "summary": summary
             }
+            response = _attach_peak_analysis_metadata(response, region=region)
             return _store_response_cache(
                 PEAK_ANALYSIS_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -1069,11 +3699,17 @@ def _compute_summary(daily_results: list) -> dict:
 # Hourly Price Profile (for Clock Heatmap / Charging Window)
 # ============================================================
 
-@app.get("/api/hourly-price-profile")
+@app.get(
+    "/api/hourly-price-profile",
+    summary="Get hourly price profile",
+    description="Returns hourly average/min/max price profile data for heatmap-style views, together with unified metadata describing market, unit, freshness, and contract version fields.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+)
 def get_hourly_price_profile(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID"),
     month: Optional[str] = Query(None, description="Optional month filter (01-12)"),
+    access_scope: Optional[dict] = None,
 ):
     """
     Returns average, min, max prices for each hour of the day.
@@ -1082,6 +3718,12 @@ def get_hourly_price_profile(
     month = _cacheable_param(month)
     table_name = f"trading_price_{year}"
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(
+                access_scope,
+                region=region,
+                market="WEM" if region == "WEM" else "NEM",
+            )
         cache_payload = {
             "year": year,
             "region": region,
@@ -1090,7 +3732,7 @@ def get_hourly_price_profile(
         }
         cached = _fetch_response_cache(HOURLY_PROFILE_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return cached
+            return _attach_hourly_price_profile_metadata(cached, region=region)
 
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -1148,6 +3790,7 @@ def get_hourly_price_profile(
                     })
 
             response = {"region": region, "year": year, "month": month, "hourly": result}
+            response = _attach_hourly_price_profile_metadata(response, region=region)
             return _store_response_cache(
                 HOURLY_PROFILE_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -1274,6 +3917,45 @@ def _estimate_wem_capture(row: dict, service_meta: dict, capacity_mw: float) -> 
     if requirement > 0:
         tightness = max(0.0, 1 - min(available / requirement, 1.0))
     return enabled_mw, capture_rate, tightness
+
+
+def _build_wem_preview_scores(service_breakdown: list[dict], *, coverage_days: int, preview_mode: str) -> dict:
+    if not service_breakdown:
+        return {
+            "scarcity_score": 0,
+            "opportunity_score": 0,
+            "quality_score": 0,
+            "preview_caveat": "No WEM preview data available.",
+        }
+
+    scarcity_components = []
+    opportunity_components = []
+    for service in service_breakdown:
+        shortfall_signal = min(service.get("shortfall_intervals", 0) * 25.0, 100.0)
+        capped_signal = min(service.get("capped_intervals", 0) * 15.0, 100.0)
+        tightness_signal = min((service.get("avg_tightness", 0.0) or 0.0) * 100.0, 100.0)
+        scarcity_components.append((tightness_signal * 0.5) + (shortfall_signal * 0.35) + (capped_signal * 0.15))
+
+        price_signal = min((service.get("avg_price", 0.0) or 0.0) * 2.0, 100.0)
+        capture_signal = min((service.get("avg_capture_rate", 0.0) or 0.0) * 100.0, 100.0)
+        opportunity_components.append((price_signal * 0.55) + (capture_signal * 0.25) + (tightness_signal * 0.20))
+
+    scarcity_score = round(sum(scarcity_components) / len(scarcity_components), 1)
+    opportunity_score = round(sum(opportunity_components) / len(opportunity_components), 1)
+
+    coverage_score = min((coverage_days / 7.0) * 100.0, 100.0)
+    preview_penalty = 30.0 if preview_mode == "single_day_preview" else 10.0
+    quality_score = round(max(0.0, (coverage_score * 0.6) + 25.0 - preview_penalty), 1)
+
+    return {
+        "scarcity_score": scarcity_score,
+        "opportunity_score": opportunity_score,
+        "quality_score": quality_score,
+        "preview_caveat": (
+            "WEM preview scoring is derived from slim ESS tables and should be treated as preview-grade, "
+            "not investment-grade."
+        ),
+    }
 
 
 def _get_wem_ess_analysis(
@@ -1435,6 +4117,11 @@ def _get_wem_ess_analysis(
     )
     coverage_days = len({record["dispatch_interval"][:10] for record in records})
     preview_mode = "single_day_preview" if coverage_days == 1 else "multi_day_preview"
+    wem_scores = _build_wem_preview_scores(
+        service_breakdown,
+        coverage_days=coverage_days,
+        preview_mode=preview_mode,
+    )
 
     return {
         "region": "WEM",
@@ -1459,6 +4146,7 @@ def _get_wem_ess_analysis(
                 "WEM ESS revenue uses a slim-table preview estimate based on dispatchTotal and "
                 "inService quantities. Current output is not investment-grade project finance data."
             ),
+            **wem_scores,
         },
         "service_breakdown": service_breakdown,
         "hourly": hourly,
@@ -1466,7 +4154,12 @@ def _get_wem_ess_analysis(
     }
 
 
-@app.get("/api/fcas-analysis")
+@app.get(
+    "/api/fcas-analysis",
+    summary="Get FCAS and ESS revenue analysis",
+    description="Returns FCAS analysis results with unified metadata. WEM responses may remain preview-grade and expose that state through metadata.data_grade and metadata.warnings.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+)
 def get_fcas_analysis(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID (e.g., NSW1)"),
@@ -1475,12 +4168,19 @@ def get_fcas_analysis(
     month: Optional[str] = Query(None, description="Month (01-12) to filter by"),
     quarter: Optional[str] = Query(None, description="Quarter to filter by (Q1, Q2, Q3, Q4)"),
     day_type: Optional[str] = Query(None, description="Day type to filter by (WEEKDAY, WEEKEND)"),
+    access_scope: Optional[dict] = None,
 ):
     """
     FCAS revenue analysis endpoint.
     Returns per-service average prices, revenue estimates, hourly distribution,
     and time series data for charting.
     """
+    if access_scope:
+        _assert_scope_allows_internal_query(
+            access_scope,
+            region=region,
+            market="WEM" if region == "WEM" else "NEM",
+        )
     aggregation = _cacheable_param(aggregation)
     capacity_mw = _cacheable_param(capacity_mw)
     month = _cacheable_param(month)
@@ -1498,11 +4198,12 @@ def get_fcas_analysis(
     }
     cached = _fetch_response_cache(FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE, cache_payload)
     if cached is not None:
-        return cached
+        return _attach_fcas_analysis_metadata(cached, region=region)
 
     if region == "WEM":
         try:
             response = _get_wem_ess_analysis(year, aggregation, capacity_mw, month, quarter, day_type)
+            response = _attach_fcas_analysis_metadata(response, region=region)
             return _store_response_cache(
                 FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -1534,6 +4235,7 @@ def get_fcas_analysis(
                     "message": "No FCAS data available. Run scraper with --fcas flag.",
                     "data": [], "summary": {}, "hourly": [], "service_breakdown": []
                 }
+                response = _attach_fcas_analysis_metadata(response, region=region)
                 return _store_response_cache(
                     FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -1563,6 +4265,7 @@ def get_fcas_analysis(
                     "message": "FCAS columns exist but no data yet. Re-sync with --fcas flag.",
                     "data": [], "summary": {}, "hourly": [], "service_breakdown": []
                 }
+                response = _attach_fcas_analysis_metadata(response, region=region)
                 return _store_response_cache(
                     FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -1651,9 +4354,43 @@ def get_fcas_analysis(
                     entry[col_name] = row[j]
                 ts_data.append(entry)
 
+            cursor.execute(
+                f"""
+                SELECT settlement_date, rrp_aud_mwh, {", ".join(available_fcas)}
+                FROM {table_name}
+                WHERE {where_clause} AND ({nonnull_expr})
+                ORDER BY settlement_date ASC
+                """,
+                tuple(params),
+            )
+            opportunity_columns = [desc[0] for desc in cursor.description]
+            opportunity_rows = [dict(zip(opportunity_columns, row)) for row in cursor.fetchall()]
+            opportunity = summarize_nem_fcas_opportunity(
+                opportunity_rows,
+                capacity_mw=capacity_mw,
+                duration_hours=DEFAULT_FCAS_OPPORTUNITY_DURATION_HOURS,
+            )
+            opportunity_by_key = {
+                item["key"]: item for item in opportunity["service_breakdown"]
+            }
+            enriched_breakdown = []
+            for service in service_breakdown:
+                opportunity_item = opportunity_by_key.get(service["key"], {})
+                enriched_breakdown.append(
+                    {
+                        **service,
+                        "avg_reserved_capacity_mw": opportunity_item.get("avg_reserved_capacity_mw", 0.0),
+                        "opportunity_cost_k": opportunity_item.get("opportunity_cost_k", 0.0),
+                        "net_incremental_revenue_k": opportunity_item.get("net_incremental_revenue_k", 0.0),
+                        "soc_binding_interval_ratio": opportunity_item.get("soc_binding_interval_ratio", 0.0),
+                        "power_binding_interval_ratio": opportunity_item.get("power_binding_interval_ratio", 0.0),
+                        "incremental_revenue_positive": opportunity_item.get("incremental_revenue_positive", False),
+                    }
+                )
+
             # 4. Overall summary
-            total_avg_fcas = sum(s["avg_price"] for s in service_breakdown)
-            total_est_revenue_k = sum(s["est_revenue_k"] for s in service_breakdown)
+            total_avg_fcas = sum(s["avg_price"] for s in enriched_breakdown)
+            total_est_revenue_k = sum(s["est_revenue_k"] for s in enriched_breakdown)
 
             summary = {
                 "total_avg_fcas_price": round(total_avg_fcas, 2),
@@ -1661,6 +4398,10 @@ def get_fcas_analysis(
                 "total_intervals": total_intervals,
                 "capacity_mw": capacity_mw,
                 "data_points_with_fcas": fcas_count,
+                "total_opportunity_cost_k": opportunity["summary"]["total_opportunity_cost_k"],
+                "total_net_incremental_revenue_k": opportunity["summary"]["total_net_incremental_revenue_k"],
+                "viable_service_count": opportunity["summary"]["viable_service_count"],
+                "assumed_duration_hours": opportunity["summary"]["assumed_duration_hours"],
             }
 
             response = {
@@ -1674,10 +4415,11 @@ def get_fcas_analysis(
                     "day_type": day_type,
                 },
                 "summary": summary,
-                "service_breakdown": service_breakdown,
+                "service_breakdown": enriched_breakdown,
                 "hourly": hourly,
                 "data": ts_data,
             }
+            response = _attach_fcas_analysis_metadata(response, region=region)
             return _store_response_cache(
                 FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -1717,13 +4459,17 @@ def _analysis_cache_lookup(
     allow_response_cache: bool = False,
 ):
     cache_key = _stable_cache_key(payload)
+    organization_id = payload.get("organization_id")
+    workspace_id = payload.get("workspace_id")
     cached = db.fetch_analysis_cache(
         scope=scope,
         cache_key=cache_key,
         data_version=data_version,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
     )
     if cached is not None:
-        return cached
+        return cached["response_payload"]
 
     if allow_response_cache:
         return response_cache.get_json(INVESTMENT_RESPONSE_REDIS_SCOPE, cache_key)
@@ -1740,11 +4486,15 @@ def _analysis_cache_store(
     store_response_cache: bool = False,
 ):
     cache_key = _stable_cache_key(payload)
+    organization_id = payload.get("organization_id")
+    workspace_id = payload.get("workspace_id")
     db.upsert_analysis_cache(
         scope=scope,
         cache_key=cache_key,
         data_version=data_version,
         response_payload=response_payload,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
     )
     if store_response_cache:
         response_cache.set_json(
@@ -1765,12 +4515,9 @@ def _effective_degradation_rate(params: InvestmentParams) -> float:
 
 
 def _build_backtest_summary(params: InvestmentParams, data_version: str) -> dict:
+    standardized_params = [params.to_bess_backtest_params(year=year) for year in params.backtest_years]
     payload = {
-        "region": params.region,
-        "backtest_years": list(params.backtest_years),
-        "power_mw": params.battery.power_mw,
-        "duration_hours": params.battery.duration_hours,
-        "capacity_mwh": params.battery.capacity_mwh,
+        "inputs": [item.model_dump(mode="json") for item in standardized_params],
     }
     cached = _analysis_cache_lookup(
         scope=INVESTMENT_BACKTEST_CACHE_SCOPE,
@@ -1780,41 +4527,55 @@ def _build_backtest_summary(params: InvestmentParams, data_version: str) -> dict
     if cached is not None:
         return cached
 
-    storage_config = {
-        "duration_hours": params.battery.duration_hours,
-        "power_mw": params.battery.power_mw,
-        "capacity_mwh": params.battery.capacity_mwh,
-    }
-
     total_arb_revenue = 0.0
+    total_arb_net_revenue = 0.0
     total_cycles = 0.0
     valid_years = 0
     backtest_modes = []
     revenue_scopes = []
+    backtest_drivers = []
 
-    with db.get_connection() as conn:
-        for year in params.backtest_years:
-            result = bess_backtest.backtest_arbitrage(conn, params.region, year, storage_config)
-            if result and result.get("total_revenue_aud", 0) > 0:
-                total_arb_revenue += result["total_revenue_aud"]
-                cycles = (
-                    result["annual_discharge_mwh"] / params.battery.capacity_mwh
-                    if params.battery.capacity_mwh
-                    else 365.0
-                )
-                total_cycles += cycles
-                valid_years += 1
-                if result.get("backtest_mode"):
-                    backtest_modes.append(result["backtest_mode"])
-                if result.get("revenue_scope"):
-                    revenue_scopes.append(result["revenue_scope"])
+    for backtest_params in standardized_params:
+        standardized_result = _run_standardized_bess_backtest(backtest_params)
+        if standardized_result is None:
+            continue
+
+        total_arb_revenue += standardized_result["annual_revenue"]
+        total_arb_net_revenue += standardized_result["annual_net_revenue"]
+        total_cycles += standardized_result["annual_cycles"]
+        valid_years += 1
+        backtest_modes.append(standardized_result["backtest_mode"])
+        revenue_scopes.append(standardized_result["revenue_scope"])
+        backtest_drivers.append(
+            {
+                "year": backtest_params.year,
+                "methodology_version": standardized_result["methodology_version"],
+                "backtest_mode": standardized_result["backtest_mode"],
+                "revenue_scope": standardized_result["revenue_scope"],
+                "timeline_points": standardized_result["timeline_points"],
+                "input": standardized_result["input"],
+                "summary": standardized_result["summary"],
+            }
+        )
 
     summary = {
         "avg_annual_arbitrage_raw": total_arb_revenue / valid_years if valid_years > 0 else 0.0,
+        "avg_annual_arbitrage_net": total_arb_net_revenue / valid_years if valid_years > 0 else 0.0,
         "avg_annual_cycles": total_cycles / valid_years if valid_years > 0 else 365.0,
         "valid_years": valid_years,
         "backtest_mode": " / ".join(dict.fromkeys(backtest_modes)) if backtest_modes else "unavailable",
         "revenue_scope": " / ".join(dict.fromkeys(revenue_scopes)) if revenue_scopes else "unavailable",
+        "fallback_used": False,
+        "backtest_reference": {
+            "methodology_version": (
+                " / ".join(dict.fromkeys(item["methodology_version"] for item in backtest_drivers))
+                if backtest_drivers
+                else "unavailable"
+            ),
+            "inputs": [item.model_dump(mode="json") for item in standardized_params],
+            "drivers": backtest_drivers,
+        },
+        "warnings": [] if backtest_drivers else ["no_standardized_backtest_data"],
     }
     return _analysis_cache_store(
         scope=INVESTMENT_BACKTEST_CACHE_SCOPE,
@@ -1825,27 +4586,37 @@ def _build_backtest_summary(params: InvestmentParams, data_version: str) -> dict
 
 
 def _estimate_nem_fcas_baseline(params: InvestmentParams) -> tuple[float, str]:
-    total_fcas_avg = 0.0
+    annualized_net_incremental_total = 0.0
     valid_years = 0
-    fcas_expr = " + ".join(f"COALESCE({col}, 0)" for col in FCAS_COLUMNS)
 
     with db.get_connection() as conn:
         for year in params.backtest_years:
             table_name = f"trading_price_{year}"
             try:
-                res = conn.execute(
-                    f"SELECT AVG({fcas_expr}) FROM {table_name} WHERE region_id = ?",
+                cursor = conn.execute(
+                    f"""
+                    SELECT settlement_date, rrp_aud_mwh, {", ".join(FCAS_COLUMNS)}
+                    FROM {table_name}
+                    WHERE region_id = ?
+                    ORDER BY settlement_date ASC
+                    """,
                     (params.region,),
-                ).fetchone()
+                )
             except Exception:
                 continue
 
-            if res and res[0] is not None:
-                total_fcas_avg += float(res[0])
+            columns = [desc[0] for desc in cursor.description]
+            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            if rows:
+                summary = summarize_nem_fcas_opportunity(
+                    rows,
+                    capacity_mw=params.battery.power_mw,
+                    duration_hours=params.battery.duration_hours,
+                )["summary"]
+                annualized_net_incremental_total += max(summary["total_net_incremental_revenue_k"], 0.0) * 1000.0
                 valid_years += 1
 
-    avg_fcas_price_per_mwh = total_fcas_avg / valid_years if valid_years > 0 else 0.0
-    baseline = avg_fcas_price_per_mwh * params.battery.power_mw * 8760 * params.revenue_capture_rate
+    baseline = (annualized_net_incremental_total / valid_years) * params.revenue_capture_rate if valid_years > 0 else 0.0
     return baseline, "historical_auto"
 
 
@@ -1890,6 +4661,18 @@ def _get_fcas_baseline(params: InvestmentParams, data_version: str) -> tuple[flo
     return cached_result["baseline_fcas"], cached_result["source"]
 
 
+def _derive_arbitrage_baseline(params: InvestmentParams, backtest_summary: dict) -> tuple[float, str]:
+    efficiency_factor = max(0.0, 1.0 - params.forecast_inefficiency)
+    methodology_version = backtest_summary.get("backtest_reference", {}).get("methodology_version", "")
+
+    if "bess_backtest_v1" in methodology_version:
+        observed_net = backtest_summary.get("avg_annual_arbitrage_net", 0.0)
+        baseline = observed_net * efficiency_factor * params.revenue_capture_rate
+        return baseline, "observed_net_revenue"
+
+    return 0.0, "no_standardized_backtest_data"
+
+
 def _build_investment_response(
     *,
     params: InvestmentParams,
@@ -1897,6 +4680,7 @@ def _build_investment_response(
     scenarios: list,
     mc_result,
     baseline_arbitrage: float,
+    arbitrage_baseline_source: str,
     baseline_fcas: float,
     fcas_baseline_source: str,
     backtest_summary: dict,
@@ -1922,11 +4706,18 @@ def _build_investment_response(
         "Using Dual-factor degradation model.",
         "Monte Carlo simulations: " + ("Enabled" if params.monte_carlo.enabled else "Disabled"),
         f"Backtest revenue scope: {backtest_summary.get('revenue_scope', 'unavailable')}.",
+        f"Arbitrage baseline source: {arbitrage_baseline_source}.",
     ]
     if params.region == "WEM":
         assumptions.append("WEM auto FCAS falls back to manual input because only slim preview data is available.")
+    if backtest_summary.get("valid_years", 0) == 0:
+        assumptions.append("No standardized BESS backtest coverage was available for the requested years.")
 
-    return {
+    observed_net_arbitrage = backtest_summary.get("avg_annual_arbitrage_net", baseline_arbitrage)
+    backtest_drivers = backtest_summary.get("backtest_reference", {}).get("drivers", [])
+    primary_driver = backtest_drivers[0] if backtest_drivers else {}
+
+    response = {
         "region": params.region,
         "params_summary": {
             "power_mw": params.battery.power_mw,
@@ -1942,14 +4733,27 @@ def _build_investment_response(
         "cash_flows": base_cash_flows,
         "baseline_revenue": {
             "arbitrage": baseline_arbitrage,
+            "arbitrage_net_observed": observed_net_arbitrage,
             "fcas": baseline_fcas,
             "capacity": params.financial.capacity_payment_per_mw_year * params.battery.power_mw,
         },
+        "backtest_observed": {
+            "gross_energy_revenue": backtest_summary.get("avg_annual_arbitrage_raw", baseline_arbitrage),
+            "net_energy_revenue": observed_net_arbitrage,
+            "equivalent_cycles": backtest_summary.get("avg_annual_cycles"),
+            "methodology_version": primary_driver.get("methodology_version", "unavailable"),
+            "revenue_scope": backtest_summary.get("revenue_scope", "unavailable"),
+            "baseline_source": arbitrage_baseline_source,
+        },
         "backtest_mode": backtest_summary.get("backtest_mode", "unavailable"),
         "revenue_scope": backtest_summary.get("revenue_scope", "unavailable"),
+        "backtest_reference": backtest_summary.get("backtest_reference", {}),
+        "backtest_fallback_used": bool(backtest_summary.get("fallback_used")),
+        "arbitrage_baseline_source": arbitrage_baseline_source,
         "effective_degradation_rate": _effective_degradation_rate(params),
         "fcas_baseline_source": fcas_baseline_source,
     }
+    return _attach_investment_metadata(response, region=params.region)
 
 
 def _acquire_inflight_entry(cache_key: str) -> tuple[dict, bool]:
@@ -1962,8 +4766,114 @@ def _acquire_inflight_entry(cache_key: str) -> tuple[dict, bool]:
         _ANALYSIS_INFLIGHT[cache_key] = entry
         return entry, True
 
-@app.post("/api/investment-analysis")
-def investment_analysis(params: InvestmentParams):
+
+@app.post(
+    "/api/bess/backtests",
+    summary="Run standardized BESS backtest",
+    description="Runs the standardized BESS backtest engine and returns summary metrics, timeline output, and unified metadata for source/version traceability.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+)
+def run_bess_backtest(params: BessBacktestParams, access_scope=None):
+    try:
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, region=params.region, market=params.market)
+        intervals = _fetch_bess_backtest_intervals(params)
+        if not intervals:
+            raise HTTPException(status_code=404, detail="No backtest source data found")
+
+        result = run_bess_backtest_v1(params, intervals)
+        summary = result["summary"]
+        response = {
+            "market": params.market,
+            "region": params.region,
+            "year": params.year,
+            "params_summary": {
+                "power_mw": params.power_mw,
+                "energy_mwh": params.energy_mwh,
+                "duration_hours": params.duration_hours,
+                "round_trip_efficiency": params.round_trip_efficiency,
+                "max_cycles_per_day": params.max_cycles_per_day,
+            },
+            "revenue_breakdown": {
+                "gross_energy_revenue": summary["gross_revenue"],
+                "net_revenue": summary["net_revenue"],
+            },
+            "cost_breakdown": summary["costs"],
+            "soc_summary": {
+                "soc_start_mwh": summary["soc_start_mwh"],
+                "soc_end_mwh": summary["soc_end_mwh"],
+                "soc_min_mwh": summary["soc_min_mwh"],
+                "soc_max_mwh": summary["soc_max_mwh"],
+            },
+            "cycle_summary": {
+                "charge_throughput_mwh": summary["charge_throughput_mwh"],
+                "discharge_throughput_mwh": summary["discharge_throughput_mwh"],
+                "equivalent_cycles": summary["equivalent_cycles"],
+            },
+            "warnings": summary["warnings"],
+            "timeline_points": len(result["timeline"]),
+            "timeline": result["timeline"],
+        }
+        return _attach_bess_backtest_metadata(response, params)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("BESS backtest API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/api/bess/backtests/coverage",
+    summary="Get standardized BESS backtest coverage",
+    description="Returns source-data coverage for the standardized BESS backtest path, including interval count, coverage start/end, inferred interval minutes, and unified metadata.",
+    responses=OPENAPI_ERROR_RESPONSES,
+)
+def get_bess_backtest_coverage(
+    market: str = Query(..., description="Market code: NEM or WEM"),
+    region: str = Query(..., description="Region code such as NSW1 or WEM"),
+    year: int = Query(..., description="Source year to inspect"),
+    access_scope: Optional[dict] = None,
+):
+    try:
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, region=region, market=market)
+        params = BessBacktestParams(
+            market=market,
+            region=region,
+            year=year,
+            power_mw=1.0,
+            energy_mwh=1.0,
+            duration_hours=1.0,
+        )
+        intervals = _fetch_bess_backtest_intervals(params)
+        payload = {
+            "market": params.market,
+            "region": params.region,
+            "year": params.year,
+            "has_source_data": bool(intervals),
+            "interval_count": len(intervals),
+            "coverage_start": intervals[0]["timestamp"] if intervals else None,
+            "coverage_end": intervals[-1]["timestamp"] if intervals else None,
+            "interval_minutes": (
+                round(intervals[0]["interval_hours"] * 60)
+                if intervals
+                else (5 if params.market == "WEM" else get_settlement_interval(params.region))
+            ),
+        }
+        return _attach_bess_backtest_coverage_metadata(payload, params)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("BESS backtest coverage API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post(
+    "/api/investment-analysis",
+    summary="Run investment analysis",
+    description="Runs investment analysis using standardized backtest-driven baselines when available. Response includes unified metadata plus traceability fields such as backtest_reference, backtest_observed, and backtest_fallback_used.",
+    responses=OPENAPI_ERROR_RESPONSES,
+)
+def investment_analysis(params: InvestmentParams, access_scope=None):
     """
     Compute BESS investment cash flow analysis using the new Engine Layer:
     1. Base Case Evaluation
@@ -1971,8 +4881,20 @@ def investment_analysis(params: InvestmentParams):
     3. Monte Carlo Simulation
     """
     try:
+        if access_scope:
+            _assert_scope_allows_internal_query(
+                access_scope,
+                region=params.region,
+                market="WEM" if params.region == "WEM" else "NEM",
+            )
         data_version = _analysis_data_version()
         request_payload = params.model_dump(mode="json", exclude_none=True)
+        if access_scope:
+            request_payload = _scope_analysis_payload(
+                request_payload,
+                organization_id=access_scope.get("organization_id"),
+                workspace_id=access_scope.get("workspace_id"),
+            )
 
         cached_response = _analysis_cache_lookup(
             scope=INVESTMENT_RESPONSE_CACHE_SCOPE,
@@ -1998,9 +4920,7 @@ def investment_analysis(params: InvestmentParams):
         try:
             backtest_summary = _build_backtest_summary(params, data_version)
 
-            efficiency_factor = max(0.0, 1.0 - params.forecast_inefficiency)
-            avg_annual_arb = backtest_summary["avg_annual_arbitrage_raw"] * efficiency_factor
-            baseline_arbitrage = avg_annual_arb * params.revenue_capture_rate
+            baseline_arbitrage, arbitrage_baseline_source = _derive_arbitrage_baseline(params, backtest_summary)
             avg_annual_cycles = backtest_summary["avg_annual_cycles"]
 
             baseline_fcas, fcas_baseline_source = _get_fcas_baseline(params, data_version)
@@ -2068,6 +4988,7 @@ def investment_analysis(params: InvestmentParams):
                 scenarios=scenarios,
                 mc_result=mc_result,
                 baseline_arbitrage=baseline_arbitrage,
+                arbitrage_baseline_source=arbitrage_baseline_source,
                 baseline_fcas=baseline_fcas,
                 fcas_baseline_source=fcas_baseline_source,
                 backtest_summary=backtest_summary,
@@ -2089,6 +5010,8 @@ def investment_analysis(params: InvestmentParams):
             with _ANALYSIS_INFLIGHT_LOCK:
                 _ANALYSIS_INFLIGHT.pop(inflight_key, None)
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Investment analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

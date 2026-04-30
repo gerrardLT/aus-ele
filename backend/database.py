@@ -21,6 +21,29 @@ class DatabaseManager:
     FINGRID_DATASET_TABLE = "fingrid_dataset_catalog"
     FINGRID_TIMESERIES_TABLE = "fingrid_timeseries"
     FINGRID_SYNC_STATE_TABLE = "fingrid_sync_state"
+    DATA_QUALITY_SNAPSHOT_TABLE = "data_quality_snapshot"
+    DATA_QUALITY_ISSUE_TABLE = "data_quality_issue"
+    ALERT_RULE_TABLE = "alert_rule"
+    ALERT_STATE_TABLE = "alert_state"
+    ALERT_DELIVERY_LOG_TABLE = "alert_delivery_log"
+    JOB_TABLE = "job_run"
+    JOB_EVENT_TABLE = "job_event_log"
+    API_CLIENT_TABLE = "external_api_client"
+    API_USAGE_TABLE = "external_api_usage"
+    ORGANIZATION_TABLE = "organization"
+    WORKSPACE_TABLE = "workspace"
+    PRINCIPAL_TABLE = "principal_identity"
+    AUTH_IDENTITY_TABLE = "auth_identity"
+    ORGANIZATION_MEMBERSHIP_TABLE = "organization_membership"
+    WORKSPACE_MEMBERSHIP_TABLE = "workspace_membership"
+    ACCESS_TOKEN_TABLE = "access_token"
+    AUTH_SESSION_TABLE = "auth_session"
+    AUDIT_LOG_TABLE = "audit_log"
+    WORKSPACE_POLICY_TABLE = "workspace_policy"
+    WORKSPACE_INVITE_TABLE = "workspace_invite"
+    MEMBERSHIP_INVITE_TABLE = "membership_invite"
+    OIDC_PROVIDER_TABLE = "oidc_provider"
+    ORGANIZATION_DOMAIN_TABLE = "organization_domain"
 
     WEM_ESS_MARKET_COLUMNS = [
         "dispatch_interval",
@@ -302,14 +325,21 @@ class DatabaseManager:
                 scope TEXT NOT NULL,
                 cache_key TEXT NOT NULL,
                 data_version TEXT NOT NULL,
+                organization_id TEXT,
+                workspace_id TEXT,
                 response_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (scope, cache_key, data_version)
+                PRIMARY KEY (scope, cache_key, data_version, organization_id, workspace_id)
             )
         """)
+        columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ANALYSIS_CACHE_TABLE})").fetchall()}
+        if "organization_id" not in columns:
+            cursor.execute(f"ALTER TABLE {self.ANALYSIS_CACHE_TABLE} ADD COLUMN organization_id TEXT")
+        if "workspace_id" not in columns:
+            cursor.execute(f"ALTER TABLE {self.ANALYSIS_CACHE_TABLE} ADD COLUMN workspace_id TEXT")
         cursor.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_{self.ANALYSIS_CACHE_TABLE}_lookup
-            ON {self.ANALYSIS_CACHE_TABLE} (scope, cache_key, data_version)
+            ON {self.ANALYSIS_CACHE_TABLE} (scope, cache_key, data_version, organization_id, workspace_id)
         """)
         conn.commit()
 
@@ -367,6 +397,453 @@ class DatabaseManager:
         cursor.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_{self.FINGRID_TIMESERIES_TABLE}_dataset_series_time
             ON {self.FINGRID_TIMESERIES_TABLE} (dataset_id, series_key, timestamp_utc)
+        """)
+        conn.commit()
+
+    def ensure_data_quality_tables(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.DATA_QUALITY_SNAPSHOT_TABLE} (
+                scope TEXT NOT NULL,
+                market TEXT NOT NULL,
+                dataset_key TEXT NOT NULL,
+                data_grade TEXT NOT NULL,
+                quality_score REAL,
+                coverage_ratio REAL,
+                freshness_minutes REAL,
+                issues_json TEXT NOT NULL DEFAULT '[]',
+                metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                computed_at TEXT NOT NULL,
+                PRIMARY KEY (scope, market, dataset_key)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.DATA_QUALITY_ISSUE_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL,
+                market TEXT NOT NULL,
+                dataset_key TEXT NOT NULL,
+                issue_code TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                detail_json TEXT NOT NULL DEFAULT '{{}}',
+                detected_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.DATA_QUALITY_ISSUE_TABLE}_market_lookup
+            ON {self.DATA_QUALITY_ISSUE_TABLE} (scope, market, dataset_key, issue_code)
+        """)
+        conn.commit()
+
+    def ensure_alert_tables(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ALERT_RULE_TABLE} (
+                rule_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                rule_type TEXT NOT NULL,
+                market TEXT NOT NULL,
+                region_or_zone TEXT,
+                config_json TEXT NOT NULL DEFAULT '{{}}',
+                channel_type TEXT NOT NULL,
+                channel_target TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                organization_id TEXT,
+                workspace_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ALERT_STATE_TABLE} (
+                rule_id TEXT PRIMARY KEY,
+                current_status TEXT NOT NULL,
+                last_evaluated_at TEXT,
+                last_triggered_at TEXT,
+                last_delivery_at TEXT,
+                organization_id TEXT,
+                workspace_id TEXT,
+                last_value_json TEXT NOT NULL DEFAULT '{{}}',
+                FOREIGN KEY(rule_id) REFERENCES {self.ALERT_RULE_TABLE}(rule_id),
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ALERT_DELIVERY_LOG_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id TEXT NOT NULL,
+                delivery_status TEXT NOT NULL,
+                target TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{{}}',
+                response_code INTEGER,
+                response_text TEXT,
+                organization_id TEXT,
+                workspace_id TEXT,
+                delivered_at TEXT NOT NULL,
+                FOREIGN KEY(rule_id) REFERENCES {self.ALERT_RULE_TABLE}(rule_id),
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
+            )
+        """)
+        rule_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ALERT_RULE_TABLE})").fetchall()}
+        if "organization_id" not in rule_columns:
+            cursor.execute(f"ALTER TABLE {self.ALERT_RULE_TABLE} ADD COLUMN organization_id TEXT")
+        if "workspace_id" not in rule_columns:
+            cursor.execute(f"ALTER TABLE {self.ALERT_RULE_TABLE} ADD COLUMN workspace_id TEXT")
+        state_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ALERT_STATE_TABLE})").fetchall()}
+        if "organization_id" not in state_columns:
+            cursor.execute(f"ALTER TABLE {self.ALERT_STATE_TABLE} ADD COLUMN organization_id TEXT")
+        if "workspace_id" not in state_columns:
+            cursor.execute(f"ALTER TABLE {self.ALERT_STATE_TABLE} ADD COLUMN workspace_id TEXT")
+        log_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ALERT_DELIVERY_LOG_TABLE})").fetchall()}
+        if "organization_id" not in log_columns:
+            cursor.execute(f"ALTER TABLE {self.ALERT_DELIVERY_LOG_TABLE} ADD COLUMN organization_id TEXT")
+        if "workspace_id" not in log_columns:
+            cursor.execute(f"ALTER TABLE {self.ALERT_DELIVERY_LOG_TABLE} ADD COLUMN workspace_id TEXT")
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.ALERT_RULE_TABLE}_market_type
+            ON {self.ALERT_RULE_TABLE} (market, rule_type, enabled)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.ALERT_RULE_TABLE}_workspace_scope
+            ON {self.ALERT_RULE_TABLE} (workspace_id, enabled, created_at)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.ALERT_DELIVERY_LOG_TABLE}_rule_time
+            ON {self.ALERT_DELIVERY_LOG_TABLE} (rule_id, delivered_at DESC)
+        """)
+        conn.commit()
+
+    def ensure_job_tables(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.JOB_TABLE} (
+                job_id TEXT PRIMARY KEY,
+                job_type TEXT NOT NULL,
+                queue_name TEXT NOT NULL,
+                source_key TEXT NOT NULL,
+                organization_id TEXT,
+                workspace_id TEXT,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{{}}',
+                result_json TEXT NOT NULL DEFAULT '{{}}',
+                error_text TEXT,
+                priority INTEGER NOT NULL DEFAULT 100,
+                progress_pct INTEGER NOT NULL DEFAULT 0,
+                progress_message TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                next_run_after TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                locked_by TEXT,
+                locked_at TEXT,
+                artifact_path TEXT
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.JOB_EVENT_TABLE} (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                detail_json TEXT NOT NULL DEFAULT '{{}}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(job_id) REFERENCES {self.JOB_TABLE}(job_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.JOB_TABLE}_queue_status
+            ON {self.JOB_TABLE} (status, next_run_after, priority, created_at)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.JOB_TABLE}_source_status
+            ON {self.JOB_TABLE} (source_key, status, created_at)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.JOB_EVENT_TABLE}_job_time
+            ON {self.JOB_EVENT_TABLE} (job_id, created_at)
+        """)
+        conn.commit()
+
+    def ensure_external_api_tables(self, conn: sqlite3.Connection):
+        self.ensure_access_control_tables(conn)
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.API_CLIENT_TABLE} (
+                client_id TEXT PRIMARY KEY,
+                api_key TEXT NOT NULL UNIQUE,
+                client_name TEXT NOT NULL,
+                plan TEXT NOT NULL,
+                organization_id TEXT,
+                workspace_id TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.API_USAGE_TABLE} (
+                usage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                http_method TEXT NOT NULL,
+                status_code INTEGER NOT NULL,
+                request_units INTEGER NOT NULL DEFAULT 1,
+                latency_ms INTEGER,
+                api_version TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(client_id) REFERENCES {self.API_CLIENT_TABLE}(client_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.API_USAGE_TABLE}_client_time
+            ON {self.API_USAGE_TABLE} (client_id, created_at DESC)
+        """)
+        conn.commit()
+
+    def ensure_access_control_tables(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ORGANIZATION_TABLE} (
+                organization_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.WORKSPACE_TABLE} (
+                workspace_id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.PRINCIPAL_TABLE} (
+                principal_id TEXT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                password_hash TEXT,
+                password_salt TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        principal_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.PRINCIPAL_TABLE})").fetchall()}
+        if "password_hash" not in principal_columns:
+            cursor.execute(f"ALTER TABLE {self.PRINCIPAL_TABLE} ADD COLUMN password_hash TEXT")
+        if "password_salt" not in principal_columns:
+            cursor.execute(f"ALTER TABLE {self.PRINCIPAL_TABLE} ADD COLUMN password_salt TEXT")
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.AUTH_IDENTITY_TABLE} (
+                auth_identity_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                provider_key TEXT NOT NULL,
+                subject TEXT,
+                email TEXT,
+                email_verified INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(provider_type, provider_key, subject),
+                FOREIGN KEY(principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ORGANIZATION_MEMBERSHIP_TABLE} (
+                organization_membership_id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(organization_id, principal_id),
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id),
+                FOREIGN KEY(principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.WORKSPACE_MEMBERSHIP_TABLE} (
+                membership_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(workspace_id, principal_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id),
+                FOREIGN KEY(principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ACCESS_TOKEN_TABLE} (
+                token_id TEXT PRIMARY KEY,
+                token TEXT NOT NULL UNIQUE,
+                principal_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.AUTH_SESSION_TABLE} (
+                session_id TEXT PRIMARY KEY,
+                session_token TEXT NOT NULL UNIQUE,
+                principal_id TEXT NOT NULL,
+                organization_id TEXT,
+                workspace_id TEXT NOT NULL,
+                auth_identity_id TEXT,
+                auth_method TEXT,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT,
+                expires_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
+            )
+        """)
+        session_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.AUTH_SESSION_TABLE})").fetchall()}
+        if "organization_id" not in session_columns:
+            cursor.execute(f"ALTER TABLE {self.AUTH_SESSION_TABLE} ADD COLUMN organization_id TEXT")
+        if "auth_identity_id" not in session_columns:
+            cursor.execute(f"ALTER TABLE {self.AUTH_SESSION_TABLE} ADD COLUMN auth_identity_id TEXT")
+        if "auth_method" not in session_columns:
+            cursor.execute(f"ALTER TABLE {self.AUTH_SESSION_TABLE} ADD COLUMN auth_method TEXT")
+        if "last_seen_at" not in session_columns:
+            cursor.execute(f"ALTER TABLE {self.AUTH_SESSION_TABLE} ADD COLUMN last_seen_at TEXT")
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.AUDIT_LOG_TABLE} (
+                audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor_principal_id TEXT,
+                workspace_id TEXT,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                detail_json TEXT NOT NULL DEFAULT '{{}}',
+                created_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.WORKSPACE_POLICY_TABLE} (
+                workspace_id TEXT PRIMARY KEY,
+                allowed_regions_json TEXT NOT NULL DEFAULT '[]',
+                allowed_markets_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.OIDC_PROVIDER_TABLE} (
+                provider_id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                provider_key TEXT NOT NULL,
+                issuer TEXT NOT NULL,
+                discovery_url TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                client_secret_encrypted TEXT NOT NULL,
+                scopes_json TEXT NOT NULL DEFAULT '[]',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(organization_id, provider_key),
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ORGANIZATION_DOMAIN_TABLE} (
+                domain_id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                domain TEXT NOT NULL UNIQUE,
+                verified_at TEXT,
+                join_mode TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.MEMBERSHIP_INVITE_TABLE} (
+                invite_id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                workspace_id TEXT,
+                target_scope_type TEXT NOT NULL,
+                email TEXT NOT NULL,
+                target_role TEXT NOT NULL,
+                invite_token TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                invited_by_principal_id TEXT NOT NULL,
+                accepted_by_principal_id TEXT,
+                revoked_by_principal_id TEXT,
+                expires_at TEXT,
+                accepted_at TEXT,
+                revoked_at TEXT,
+                revoke_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id),
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id),
+                FOREIGN KEY(invited_by_principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id),
+                FOREIGN KEY(accepted_by_principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id),
+                FOREIGN KEY(revoked_by_principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.WORKSPACE_INVITE_TABLE} (
+                invite_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                role TEXT NOT NULL,
+                invite_token TEXT NOT NULL UNIQUE,
+                invited_by_principal_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                accepted_at TEXT,
+                FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id),
+                FOREIGN KEY(invited_by_principal_id) REFERENCES {self.PRINCIPAL_TABLE}(principal_id)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.AUDIT_LOG_TABLE}_workspace_time
+            ON {self.AUDIT_LOG_TABLE} (workspace_id, created_at DESC)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.AUTH_SESSION_TABLE}_principal_workspace
+            ON {self.AUTH_SESSION_TABLE} (principal_id, workspace_id, created_at DESC)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.AUTH_IDENTITY_TABLE}_principal
+            ON {self.AUTH_IDENTITY_TABLE} (principal_id, provider_type, provider_key)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.ORGANIZATION_MEMBERSHIP_TABLE}_org_status
+            ON {self.ORGANIZATION_MEMBERSHIP_TABLE} (organization_id, status, created_at)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.OIDC_PROVIDER_TABLE}_organization
+            ON {self.OIDC_PROVIDER_TABLE} (organization_id, provider_key)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.MEMBERSHIP_INVITE_TABLE}_org_email
+            ON {self.MEMBERSHIP_INVITE_TABLE} (organization_id, email, status, created_at DESC)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.WORKSPACE_INVITE_TABLE}_workspace_email
+            ON {self.WORKSPACE_INVITE_TABLE} (workspace_id, email, created_at DESC)
         """)
         conn.commit()
 
@@ -670,6 +1147,8 @@ class DatabaseManager:
         cache_key: str,
         data_version: str,
         response_payload: dict,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
     ):
         with self.get_connection() as conn:
             self.ensure_analysis_cache_table(conn)
@@ -679,10 +1158,12 @@ class DatabaseManager:
                     scope,
                     cache_key,
                     data_version,
+                    organization_id,
+                    workspace_id,
                     response_json,
                     updated_at
-                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(scope, cache_key, data_version) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(scope, cache_key, data_version, organization_id, workspace_id) DO UPDATE SET
                     response_json=excluded.response_json,
                     updated_at=CURRENT_TIMESTAMP
                 """,
@@ -690,6 +1171,8 @@ class DatabaseManager:
                     scope,
                     cache_key,
                     data_version,
+                    organization_id,
+                    workspace_id,
                     json.dumps(response_payload or {}),
                 ),
             )
@@ -701,23 +1184,31 @@ class DatabaseManager:
         scope: str,
         cache_key: str,
         data_version: str,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> dict | None:
         with self.get_connection() as conn:
             self.ensure_analysis_cache_table(conn)
             cursor = conn.cursor()
             cursor.execute(
                 f"""
-                SELECT response_json
+                SELECT organization_id, workspace_id, response_json
                 FROM {self.ANALYSIS_CACHE_TABLE}
                 WHERE scope = ? AND cache_key = ? AND data_version = ?
+                  AND ((organization_id IS NULL AND ? IS NULL) OR organization_id = ?)
+                  AND ((workspace_id IS NULL AND ? IS NULL) OR workspace_id = ?)
                 """,
-                (scope, cache_key, data_version),
+                (scope, cache_key, data_version, organization_id, organization_id, workspace_id, workspace_id),
             )
             row = cursor.fetchone()
 
         if not row:
             return None
-        return json.loads(row[0])
+        return {
+            "organization_id": row[0],
+            "workspace_id": row[1],
+            "response_payload": json.loads(row[2]),
+        }
 
     def upsert_fingrid_dataset_catalog(self, records: list[dict]):
         if not records:
@@ -1009,6 +1500,387 @@ class DatabaseManager:
             "record_count": row[2] or 0,
         }
 
+    def _normalize_data_quality_issue_rows(
+        self,
+        scope: str,
+        market: str,
+        dataset_key: str,
+        issues: list,
+        computed_at: str,
+    ) -> list[tuple]:
+        normalized_issue_rows = []
+        for issue in issues:
+            if isinstance(issue, str):
+                issue_code = issue
+                severity = "info"
+                detail_json = {}
+                detected_at = computed_at
+            else:
+                issue_code = issue.get("issue_code") or "unknown"
+                severity = issue.get("severity") or "info"
+                detail_json = issue.get("detail_json") or {}
+                detected_at = issue.get("detected_at") or computed_at
+
+            normalized_issue_rows.append(
+                (
+                    scope,
+                    market,
+                    dataset_key,
+                    issue_code,
+                    severity,
+                    json.dumps(detail_json, ensure_ascii=False),
+                    detected_at,
+                )
+            )
+        return normalized_issue_rows
+
+    def _upsert_data_quality_snapshot(self, conn: sqlite3.Connection, record: dict):
+        scope = record["scope"]
+        market = record["market"]
+        dataset_key = record["dataset_key"]
+        computed_at = record["computed_at"]
+        issues = record.get("issues_json") or []
+
+        conn.execute(
+            f"""
+            INSERT INTO {self.DATA_QUALITY_SNAPSHOT_TABLE} (
+                scope,
+                market,
+                dataset_key,
+                data_grade,
+                quality_score,
+                coverage_ratio,
+                freshness_minutes,
+                issues_json,
+                metadata_json,
+                computed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scope, market, dataset_key) DO UPDATE SET
+                data_grade=excluded.data_grade,
+                quality_score=excluded.quality_score,
+                coverage_ratio=excluded.coverage_ratio,
+                freshness_minutes=excluded.freshness_minutes,
+                issues_json=excluded.issues_json,
+                metadata_json=excluded.metadata_json,
+                computed_at=excluded.computed_at
+            """,
+            (
+                scope,
+                market,
+                dataset_key,
+                record["data_grade"],
+                record.get("quality_score"),
+                record.get("coverage_ratio"),
+                record.get("freshness_minutes"),
+                json.dumps(issues, ensure_ascii=False),
+                json.dumps(record.get("metadata_json") or {}, ensure_ascii=False),
+                computed_at,
+            ),
+        )
+        conn.execute(
+            f"""
+            DELETE FROM {self.DATA_QUALITY_ISSUE_TABLE}
+            WHERE scope = ? AND market = ? AND dataset_key = ?
+            """,
+            (scope, market, dataset_key),
+        )
+        normalized_issue_rows = self._normalize_data_quality_issue_rows(
+            scope=scope,
+            market=market,
+            dataset_key=dataset_key,
+            issues=issues,
+            computed_at=computed_at,
+        )
+        if normalized_issue_rows:
+            conn.executemany(
+                f"""
+                INSERT INTO {self.DATA_QUALITY_ISSUE_TABLE} (
+                    scope,
+                    market,
+                    dataset_key,
+                    issue_code,
+                    severity,
+                    detail_json,
+                    detected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                normalized_issue_rows,
+            )
+
+    def upsert_data_quality_snapshot(self, record: dict):
+        with self.get_connection() as conn:
+            self.ensure_data_quality_tables(conn)
+            self._upsert_data_quality_snapshot(conn, record)
+            conn.commit()
+
+    def replace_data_quality_snapshots(self, records: list[dict]) -> int:
+        with self.get_connection() as conn:
+            try:
+                self.ensure_data_quality_tables(conn)
+                conn.execute("BEGIN")
+                conn.execute(f"DELETE FROM {self.DATA_QUALITY_ISSUE_TABLE}")
+                conn.execute(f"DELETE FROM {self.DATA_QUALITY_SNAPSHOT_TABLE}")
+                for record in records:
+                    self._upsert_data_quality_snapshot(conn, record)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return len(records)
+
+    def fetch_data_quality_snapshots(
+        self,
+        scope: str | None = None,
+        market: str | None = None,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_data_quality_tables(conn)
+            conn.row_factory = sqlite3.Row
+            query = f"SELECT * FROM {self.DATA_QUALITY_SNAPSHOT_TABLE} WHERE 1=1"
+            params = []
+            if scope:
+                query += " AND scope = ?"
+                params.append(scope)
+            if market:
+                query += " AND market = ?"
+                params.append(market)
+            query += " ORDER BY market ASC, dataset_key ASC"
+            rows = conn.execute(query, params).fetchall()
+
+        return [
+            {
+                **dict(row),
+                "issues_json": json.loads(row["issues_json"]),
+                "metadata_json": json.loads(row["metadata_json"]),
+            }
+            for row in rows
+        ]
+
+    def fetch_data_quality_issues(
+        self,
+        scope: str | None = None,
+        market: str | None = None,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_data_quality_tables(conn)
+            conn.row_factory = sqlite3.Row
+            query = f"SELECT * FROM {self.DATA_QUALITY_ISSUE_TABLE} WHERE 1=1"
+            params = []
+            if scope:
+                query += " AND scope = ?"
+                params.append(scope)
+            if market:
+                query += " AND market = ?"
+                params.append(market)
+            query += " ORDER BY market ASC, dataset_key ASC, issue_code ASC"
+            rows = conn.execute(query, params).fetchall()
+
+        return [
+            {
+                **dict(row),
+                "detail_json": json.loads(row["detail_json"]),
+            }
+            for row in rows
+        ]
+
+    def upsert_alert_rule(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.ALERT_RULE_TABLE} (
+                    rule_id, name, rule_type, market, region_or_zone, config_json,
+                    channel_type, channel_target, enabled, organization_id, workspace_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(rule_id) DO UPDATE SET
+                    name=excluded.name,
+                    rule_type=excluded.rule_type,
+                    market=excluded.market,
+                    region_or_zone=excluded.region_or_zone,
+                    config_json=excluded.config_json,
+                    channel_type=excluded.channel_type,
+                    channel_target=excluded.channel_target,
+                    enabled=excluded.enabled,
+                    organization_id=excluded.organization_id,
+                    workspace_id=excluded.workspace_id,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["rule_id"],
+                    record["name"],
+                    record["rule_type"],
+                    record["market"],
+                    record.get("region_or_zone"),
+                    json.dumps(record.get("config") or {}, ensure_ascii=False),
+                    record["channel_type"],
+                    record["channel_target"],
+                    int(record.get("enabled", True)),
+                    record.get("organization_id"),
+                    record.get("workspace_id"),
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_alert_rule(record["rule_id"])
+
+    def fetch_alert_rule(self, rule_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                f"SELECT * FROM {self.ALERT_RULE_TABLE} WHERE rule_id = ?",
+                (rule_id,),
+            ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["config"] = json.loads(data.pop("config_json"))
+        data["enabled"] = bool(data["enabled"])
+        return data
+
+    def fetch_alert_rules(self, enabled_only: bool = False, workspace_id: str | None = None) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.row_factory = sqlite3.Row
+            query = f"SELECT * FROM {self.ALERT_RULE_TABLE}"
+            params = []
+            clauses = []
+            if enabled_only:
+                clauses.append("enabled = 1")
+            if workspace_id is not None:
+                clauses.append("workspace_id = ?")
+                params.append(workspace_id)
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY created_at ASC, rule_id ASC"
+            rows = conn.execute(query, params).fetchall()
+        items = []
+        for row in rows:
+            data = dict(row)
+            data["config"] = json.loads(data.pop("config_json"))
+            data["enabled"] = bool(data["enabled"])
+            items.append(data)
+        return items
+
+    def upsert_alert_state(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.ALERT_STATE_TABLE} (
+                    rule_id, current_status, last_evaluated_at, last_triggered_at,
+                    last_delivery_at, organization_id, workspace_id, last_value_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(rule_id) DO UPDATE SET
+                    current_status=excluded.current_status,
+                    last_evaluated_at=excluded.last_evaluated_at,
+                    last_triggered_at=excluded.last_triggered_at,
+                    last_delivery_at=excluded.last_delivery_at,
+                    organization_id=excluded.organization_id,
+                    workspace_id=excluded.workspace_id,
+                    last_value_json=excluded.last_value_json
+                """,
+                (
+                    record["rule_id"],
+                    record["current_status"],
+                    record.get("last_evaluated_at"),
+                    record.get("last_triggered_at"),
+                    record.get("last_delivery_at"),
+                    record.get("organization_id"),
+                    record.get("workspace_id"),
+                    json.dumps(record.get("last_value") or {}, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+        return self.fetch_alert_state(record["rule_id"])
+
+    def fetch_alert_state(self, rule_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                f"SELECT * FROM {self.ALERT_STATE_TABLE} WHERE rule_id = ?",
+                (rule_id,),
+            ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["last_value"] = json.loads(data.pop("last_value_json"))
+        return data
+
+    def fetch_alert_states(self, workspace_id: str | None = None) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.row_factory = sqlite3.Row
+            query = f"SELECT * FROM {self.ALERT_STATE_TABLE}"
+            params = []
+            if workspace_id is not None:
+                query += " WHERE workspace_id = ?"
+                params.append(workspace_id)
+            query += " ORDER BY last_evaluated_at DESC, rule_id ASC"
+            rows = conn.execute(query, params).fetchall()
+        items = []
+        for row in rows:
+            data = dict(row)
+            data["last_value"] = json.loads(data.pop("last_value_json"))
+            items.append(data)
+        return items
+
+    def insert_alert_delivery_log(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {self.ALERT_DELIVERY_LOG_TABLE} (
+                    rule_id, delivery_status, target, payload_json, response_code,
+                    response_text, organization_id, workspace_id, delivered_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["rule_id"],
+                    record["delivery_status"],
+                    record["target"],
+                    json.dumps(record.get("payload") or {}, ensure_ascii=False),
+                    record.get("response_code"),
+                    record.get("response_text"),
+                    record.get("organization_id"),
+                    record.get("workspace_id"),
+                    record["delivered_at"],
+                ),
+            )
+            row_id = cursor.lastrowid
+            conn.commit()
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                f"SELECT * FROM {self.ALERT_DELIVERY_LOG_TABLE} WHERE id = ?",
+                (row_id,),
+            ).fetchone()
+        data = dict(row)
+        data["payload"] = json.loads(data.pop("payload_json"))
+        return data
+
+    def fetch_alert_delivery_logs(self, limit: int = 100, workspace_id: str | None = None) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_alert_tables(conn)
+            conn.row_factory = sqlite3.Row
+            query = f"SELECT * FROM {self.ALERT_DELIVERY_LOG_TABLE}"
+            params = []
+            if workspace_id is not None:
+                query += " WHERE workspace_id = ?"
+                params.append(workspace_id)
+            query += " ORDER BY delivered_at DESC, id DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
+        items = []
+        for row in rows:
+            data = dict(row)
+            data["payload"] = json.loads(data.pop("payload_json"))
+            items.append(data)
+        return items
+
     def batch_upsert_wem_ess_market(self, records: list[dict]):
         if not records:
             return 0
@@ -1289,6 +2161,1774 @@ class DatabaseManager:
             cursor.execute("SELECT value FROM system_status WHERE key='last_update'")
             row = cursor.fetchone()
             return row[0] if row else None
+
+    def set_system_status(self, key: str, value):
+        payload = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO system_status (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (key, payload),
+            )
+            conn.commit()
+
+    def get_system_status(self, key: str, default=None, *, parse_json: bool = False):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM system_status WHERE key = ?", (key,))
+            row = cursor.fetchone()
+        if not row:
+            return default
+        if not parse_json:
+            return row[0]
+        try:
+            return json.loads(row[0])
+        except json.JSONDecodeError:
+            return default
+
+    def create_job(
+        self,
+        *,
+        job_id: str,
+        job_type: str,
+        queue_name: str,
+        source_key: str,
+        payload: dict,
+        priority: int,
+        max_attempts: int,
+        next_run_after: str | None,
+        created_at: str,
+    ) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.JOB_TABLE} (
+                    job_id, job_type, queue_name, source_key, organization_id, workspace_id, status, payload_json, result_json,
+                    priority, progress_pct, progress_message, attempt_count, max_attempts,
+                    created_at, next_run_after, cancel_requested, locked_by, locked_at, artifact_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL)
+                """,
+                (
+                    job_id,
+                    job_type,
+                    queue_name,
+                    source_key,
+                    payload.get("organization_id"),
+                    payload.get("workspace_id"),
+                    "queued",
+                    json.dumps(payload or {}),
+                    json.dumps({}),
+                    priority,
+                    0,
+                    None,
+                    0,
+                    max_attempts,
+                    created_at,
+                    next_run_after,
+                ),
+            )
+            conn.commit()
+        return self.fetch_job(job_id)
+
+    def append_job_event(self, job_id: str, event_type: str, detail: dict | None, created_at: str):
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.JOB_EVENT_TABLE} (job_id, event_type, detail_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (job_id, event_type, json.dumps(detail or {}), created_at),
+            )
+            conn.commit()
+
+    def list_jobs(self, *, status: str | None = None, queue_name: str | None = None, limit: int = 100) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            cursor = conn.cursor()
+            clauses = []
+            params = []
+            if status:
+                clauses.append("status = ?")
+                params.append(status)
+            if queue_name:
+                clauses.append("queue_name = ?")
+                params.append(queue_name)
+            query = f"SELECT * FROM {self.JOB_TABLE}"
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+        return [self._decode_job_row(dict(zip(columns, row))) for row in rows]
+
+    def fetch_job(self, job_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM {self.JOB_TABLE} WHERE job_id = ?", (job_id,))
+            row = cursor.fetchone()
+            columns = [desc[0] for desc in cursor.description] if row else []
+        if not row:
+            return None
+        return self._decode_job_row(dict(zip(columns, row)))
+
+    def _decode_job_row(self, row: dict) -> dict:
+        row["payload_json"] = json.loads(row["payload_json"] or "{}")
+        row["result_json"] = json.loads(row["result_json"] or "{}")
+        row["cancel_requested"] = bool(row.get("cancel_requested"))
+        return row
+
+    def claim_next_job(self, *, worker_id: str, now_iso: str, runnable_job_ids: list[str] | None = None) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            clauses = [
+                "status = 'queued'",
+                "(next_run_after IS NULL OR next_run_after <= ?)",
+                "cancel_requested = 0",
+            ]
+            params = [now_iso]
+            if runnable_job_ids is not None:
+                if not runnable_job_ids:
+                    conn.rollback()
+                    return None
+                placeholders = ",".join("?" for _ in runnable_job_ids)
+                clauses.append(f"job_id IN ({placeholders})")
+                params.extend(runnable_job_ids)
+
+            cursor.execute(
+                f"""
+                SELECT job_id
+                FROM {self.JOB_TABLE}
+                WHERE {' AND '.join(clauses)}
+                ORDER BY priority ASC, created_at ASC
+                LIMIT 1
+                """,
+                params,
+            )
+            row = cursor.fetchone()
+            if not row:
+                conn.rollback()
+                return None
+
+            job_id = row[0]
+            cursor.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET status = 'running',
+                    attempt_count = attempt_count + 1,
+                    started_at = COALESCE(started_at, ?),
+                    locked_by = ?,
+                    locked_at = ?,
+                    progress_pct = CASE WHEN progress_pct > 0 THEN progress_pct ELSE 1 END,
+                    progress_message = COALESCE(progress_message, 'started')
+                WHERE job_id = ?
+                """,
+                (now_iso, worker_id, now_iso, job_id),
+            )
+            conn.commit()
+        return self.fetch_job(job_id)
+
+    def update_job_progress(self, job_id: str, *, progress_pct: int, progress_message: str | None):
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            conn.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET progress_pct = ?, progress_message = ?
+                WHERE job_id = ?
+                """,
+                (progress_pct, progress_message, job_id),
+            )
+            conn.commit()
+
+    def complete_job(self, job_id: str, *, finished_at: str, result: dict, artifact_path: str | None):
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            conn.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET status = 'succeeded',
+                    finished_at = ?,
+                    result_json = ?,
+                    error_text = NULL,
+                    progress_pct = 100,
+                    progress_message = 'completed',
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    artifact_path = ?
+                WHERE job_id = ?
+                """,
+                (finished_at, json.dumps(result or {}), artifact_path, job_id),
+            )
+            conn.commit()
+
+    def reschedule_job_retry(self, job_id: str, *, next_run_after: str, error_text: str):
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            conn.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET status = 'queued',
+                    next_run_after = ?,
+                    error_text = ?,
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    progress_message = 'retry_waiting'
+                WHERE job_id = ?
+                """,
+                (next_run_after, error_text, job_id),
+            )
+            conn.commit()
+
+    def fail_job(self, job_id: str, *, finished_at: str, error_text: str):
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            conn.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET status = 'failed',
+                    finished_at = ?,
+                    error_text = ?,
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    progress_message = 'failed'
+                WHERE job_id = ?
+                """,
+                (finished_at, error_text, job_id),
+            )
+            conn.commit()
+
+    def cancel_job(self, job_id: str) -> bool:
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT status FROM {self.JOB_TABLE} WHERE job_id = ?", (job_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            status = row[0]
+            if status == "queued":
+                cursor.execute(
+                    f"""
+                    UPDATE {self.JOB_TABLE}
+                    SET status = 'cancelled',
+                        cancel_requested = 1,
+                        finished_at = CURRENT_TIMESTAMP,
+                        progress_message = 'cancelled'
+                    WHERE job_id = ?
+                    """,
+                    (job_id,),
+                )
+                cursor.execute(
+                    f"""
+                    INSERT INTO {self.JOB_EVENT_TABLE} (job_id, event_type, detail_json, created_at)
+                    VALUES (?, 'cancelled', '{{}}', CURRENT_TIMESTAMP)
+                    """,
+                    (job_id,),
+                )
+            elif status == "running":
+                cursor.execute(
+                    f"""
+                    UPDATE {self.JOB_TABLE}
+                    SET cancel_requested = 1,
+                        progress_message = 'cancel_requested'
+                    WHERE job_id = ?
+                    """,
+                    (job_id,),
+                )
+                cursor.execute(
+                    f"""
+                    INSERT INTO {self.JOB_EVENT_TABLE} (job_id, event_type, detail_json, created_at)
+                    VALUES (?, 'cancel_requested', '{{}}', CURRENT_TIMESTAMP)
+                    """,
+                    (job_id,),
+                )
+            else:
+                return False
+            conn.commit()
+        return True
+
+    def retry_job(self, job_id: str, *, next_run_after: str) -> bool:
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT status, attempt_count, max_attempts FROM {self.JOB_TABLE} WHERE job_id = ?", (job_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            status, attempt_count, max_attempts = row
+            if status not in {"failed", "cancelled"}:
+                return False
+            cursor.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET status = 'queued',
+                    error_text = NULL,
+                    result_json = ?,
+                    next_run_after = ?,
+                    cancel_requested = 0,
+                    finished_at = NULL,
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    progress_pct = 0,
+                    progress_message = 'retry_queued',
+                    attempt_count = CASE WHEN ? >= ? THEN 0 ELSE attempt_count END
+                WHERE job_id = ?
+                """,
+                (json.dumps({}), next_run_after, attempt_count, max_attempts, job_id),
+            )
+            conn.commit()
+        return True
+
+    def list_job_events(self, job_id: str) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT event_id, job_id, event_type, detail_json, created_at
+                FROM {self.JOB_EVENT_TABLE}
+                WHERE job_id = ?
+                ORDER BY event_id ASC
+                """,
+                (job_id,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "event_id": row[0],
+                "job_id": row[1],
+                "event_type": row[2],
+                "detail_json": json.loads(row[3] or "{}"),
+                "created_at": row[4],
+            }
+            for row in rows
+        ]
+
+    def upsert_external_api_client(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.API_CLIENT_TABLE} (
+                    client_id, api_key, client_name, plan, organization_id, workspace_id, enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(client_id) DO UPDATE SET
+                    api_key=excluded.api_key,
+                    client_name=excluded.client_name,
+                    plan=excluded.plan,
+                    organization_id=excluded.organization_id,
+                    workspace_id=excluded.workspace_id,
+                    enabled=excluded.enabled,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["client_id"],
+                    record["api_key"],
+                    record["client_name"],
+                    record["plan"],
+                    record.get("organization_id"),
+                    record.get("workspace_id"),
+                    int(record.get("enabled", 1)),
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_external_api_client(record["client_id"])
+
+    def fetch_external_api_client(self, client_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT client_id, api_key, client_name, plan, organization_id, workspace_id, enabled, created_at, updated_at
+                FROM {self.API_CLIENT_TABLE}
+                WHERE client_id = ?
+                """,
+                (client_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "client_id": row[0],
+            "api_key": row[1],
+            "client_name": row[2],
+            "plan": row[3],
+            "organization_id": row[4],
+            "workspace_id": row[5],
+            "enabled": bool(row[6]),
+            "created_at": row[7],
+            "updated_at": row[8],
+        }
+
+    def fetch_external_api_client_by_key(self, api_key: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT client_id, api_key, client_name, plan, organization_id, workspace_id, enabled, created_at, updated_at
+                FROM {self.API_CLIENT_TABLE}
+                WHERE api_key = ?
+                """,
+                (api_key,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "client_id": row[0],
+            "api_key": row[1],
+            "client_name": row[2],
+            "plan": row[3],
+            "organization_id": row[4],
+            "workspace_id": row[5],
+            "enabled": bool(row[6]),
+            "created_at": row[7],
+            "updated_at": row[8],
+        }
+
+    def insert_external_api_usage(
+        self,
+        *,
+        client_id: str,
+        endpoint: str,
+        http_method: str,
+        status_code: int,
+        request_units: int,
+        latency_ms: int | None,
+        api_version: str,
+        created_at: str,
+    ):
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.API_USAGE_TABLE} (
+                    client_id, endpoint, http_method, status_code, request_units, latency_ms, api_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (client_id, endpoint, http_method, status_code, request_units, latency_ms, api_version, created_at),
+            )
+            conn.commit()
+
+    def fetch_external_api_usage(self, *, client_id: str | None = None, limit: int = 100) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            cursor = conn.cursor()
+            params = []
+            query = f"""
+                SELECT usage_id, client_id, endpoint, http_method, status_code, request_units, latency_ms, api_version, created_at
+                FROM {self.API_USAGE_TABLE}
+            """
+            if client_id:
+                query += " WHERE client_id = ?"
+                params.append(client_id)
+            query += " ORDER BY usage_id DESC LIMIT ?"
+            params.append(limit)
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        return [
+            {
+                "usage_id": row[0],
+                "client_id": row[1],
+                "endpoint": row[2],
+                "http_method": row[3],
+                "status_code": row[4],
+                "request_units": row[5],
+                "latency_ms": row[6],
+                "api_version": row[7],
+                "created_at": row[8],
+            }
+            for row in rows
+        ]
+
+    def sum_external_api_usage_units(self, *, client_id: str, created_at_from: str) -> int:
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT COALESCE(SUM(request_units), 0)
+                FROM {self.API_USAGE_TABLE}
+                WHERE client_id = ? AND created_at >= ?
+                """,
+                (client_id, created_at_from),
+            )
+            row = cursor.fetchone()
+        return int((row or [0])[0] or 0)
+
+    def summarize_external_api_usage(
+        self,
+        *,
+        created_at_from: str,
+        client_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            cursor = conn.cursor()
+            clauses = ["u.created_at >= ?"]
+            params: list[object] = [created_at_from]
+            if client_id:
+                clauses.append("u.client_id = ?")
+                params.append(client_id)
+            params.append(limit)
+            cursor.execute(
+                f"""
+                SELECT
+                    c.client_id,
+                    c.client_name,
+                    c.plan,
+                    c.organization_id,
+                    c.workspace_id,
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(u.request_units), 0) AS request_units,
+                    COALESCE(AVG(u.latency_ms), 0) AS avg_latency_ms,
+                    SUM(CASE WHEN u.status_code >= 200 AND u.status_code < 300 THEN 1 ELSE 0 END) AS success_count,
+                    SUM(CASE WHEN u.status_code < 200 OR u.status_code >= 300 THEN 1 ELSE 0 END) AS non_success_count
+                FROM {self.API_USAGE_TABLE} u
+                JOIN {self.API_CLIENT_TABLE} c
+                  ON c.client_id = u.client_id
+                WHERE {" AND ".join(clauses)}
+                GROUP BY c.client_id, c.client_name, c.plan, c.organization_id, c.workspace_id
+                ORDER BY request_units DESC, request_count DESC
+                LIMIT ?
+                """,
+                params,
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "client_id": row[0],
+                "client_name": row[1],
+                "plan": row[2],
+                "organization_id": row[3],
+                "workspace_id": row[4],
+                "request_count": int(row[5] or 0),
+                "request_units": int(row[6] or 0),
+                "avg_latency_ms": round(float(row[7] or 0), 2),
+                "success_count": int(row[8] or 0),
+                "non_success_count": int(row[9] or 0),
+            }
+            for row in rows
+        ]
+
+    def upsert_organization(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.ORGANIZATION_TABLE} (organization_id, name, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(organization_id) DO UPDATE SET
+                    name=excluded.name,
+                    updated_at=excluded.updated_at
+                """,
+                (record["organization_id"], record["name"], record["created_at"], record["updated_at"]),
+            )
+            conn.commit()
+        return self.fetch_organization(record["organization_id"])
+
+    def fetch_organization(self, organization_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT organization_id, name, created_at, updated_at FROM {self.ORGANIZATION_TABLE} WHERE organization_id = ?",
+                (organization_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {"organization_id": row[0], "name": row[1], "created_at": row[2], "updated_at": row[3]}
+
+    def list_organizations(self) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            rows = conn.execute(
+                f"SELECT organization_id, name, created_at, updated_at FROM {self.ORGANIZATION_TABLE} ORDER BY created_at ASC"
+            ).fetchall()
+        return [{"organization_id": row[0], "name": row[1], "created_at": row[2], "updated_at": row[3]} for row in rows]
+
+    def upsert_workspace(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.WORKSPACE_TABLE} (workspace_id, organization_id, name, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(workspace_id) DO UPDATE SET
+                    organization_id=excluded.organization_id,
+                    name=excluded.name,
+                    updated_at=excluded.updated_at
+                """,
+                (record["workspace_id"], record["organization_id"], record["name"], record["created_at"], record["updated_at"]),
+            )
+            conn.commit()
+        return self.fetch_workspace(record["workspace_id"])
+
+    def fetch_workspace(self, workspace_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT workspace_id, organization_id, name, created_at, updated_at FROM {self.WORKSPACE_TABLE} WHERE workspace_id = ?",
+                (workspace_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "workspace_id": row[0],
+            "organization_id": row[1],
+            "name": row[2],
+            "created_at": row[3],
+            "updated_at": row[4],
+        }
+
+    def list_workspaces(self, *, organization_id: str | None = None) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            params = []
+            query = f"SELECT workspace_id, organization_id, name, created_at, updated_at FROM {self.WORKSPACE_TABLE}"
+            if organization_id:
+                query += " WHERE organization_id = ?"
+                params.append(organization_id)
+            query += " ORDER BY created_at ASC"
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "workspace_id": row[0],
+                "organization_id": row[1],
+                "name": row[2],
+                "created_at": row[3],
+                "updated_at": row[4],
+            }
+            for row in rows
+        ]
+
+    def upsert_principal(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.PRINCIPAL_TABLE} (
+                    principal_id, email, display_name, password_hash, password_salt, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(principal_id) DO UPDATE SET
+                    email=excluded.email,
+                    display_name=excluded.display_name,
+                    password_hash=excluded.password_hash,
+                    password_salt=excluded.password_salt,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["principal_id"],
+                    record["email"],
+                    record["display_name"],
+                    record.get("password_hash"),
+                    record.get("password_salt"),
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_principal(record["principal_id"])
+
+    def fetch_principal(self, principal_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT principal_id, email, display_name, password_hash, password_salt, created_at, updated_at
+                FROM {self.PRINCIPAL_TABLE}
+                WHERE principal_id = ?
+                """,
+                (principal_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "principal_id": row[0],
+            "email": row[1],
+            "display_name": row[2],
+            "password_hash": row[3],
+            "password_salt": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+
+    def fetch_principal_by_email(self, email: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT principal_id, email, display_name, password_hash, password_salt, created_at, updated_at
+                FROM {self.PRINCIPAL_TABLE}
+                WHERE email = ?
+                """,
+                (email,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "principal_id": row[0],
+            "email": row[1],
+            "display_name": row[2],
+            "password_hash": row[3],
+            "password_salt": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+
+    def upsert_auth_identity(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.AUTH_IDENTITY_TABLE} (
+                    auth_identity_id, principal_id, provider_type, provider_key,
+                    subject, email, email_verified, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(auth_identity_id) DO UPDATE SET
+                    principal_id=excluded.principal_id,
+                    provider_type=excluded.provider_type,
+                    provider_key=excluded.provider_key,
+                    subject=excluded.subject,
+                    email=excluded.email,
+                    email_verified=excluded.email_verified,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["auth_identity_id"],
+                    record["principal_id"],
+                    record["provider_type"],
+                    record["provider_key"],
+                    record.get("subject"),
+                    record.get("email"),
+                    int(record.get("email_verified", 0)),
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_auth_identity(record["auth_identity_id"])
+
+    def fetch_auth_identity(self, auth_identity_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT auth_identity_id, principal_id, provider_type, provider_key,
+                       subject, email, email_verified, created_at, updated_at
+                FROM {self.AUTH_IDENTITY_TABLE}
+                WHERE auth_identity_id = ?
+                """,
+                (auth_identity_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "auth_identity_id": row[0],
+            "principal_id": row[1],
+            "provider_type": row[2],
+            "provider_key": row[3],
+            "subject": row[4],
+            "email": row[5],
+            "email_verified": bool(row[6]),
+            "created_at": row[7],
+            "updated_at": row[8],
+        }
+
+    def fetch_auth_identity_by_subject(self, provider_type: str, provider_key: str, subject: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT auth_identity_id, principal_id, provider_type, provider_key,
+                       subject, email, email_verified, created_at, updated_at
+                FROM {self.AUTH_IDENTITY_TABLE}
+                WHERE provider_type = ? AND provider_key = ? AND subject = ?
+                """,
+                (provider_type, provider_key, subject),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "auth_identity_id": row[0],
+            "principal_id": row[1],
+            "provider_type": row[2],
+            "provider_key": row[3],
+            "subject": row[4],
+            "email": row[5],
+            "email_verified": bool(row[6]),
+            "created_at": row[7],
+            "updated_at": row[8],
+        }
+
+    def upsert_workspace_membership(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.WORKSPACE_MEMBERSHIP_TABLE} (membership_id, workspace_id, principal_id, role, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(workspace_id, principal_id) DO UPDATE SET
+                    role=excluded.role,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["membership_id"],
+                    record["workspace_id"],
+                    record["principal_id"],
+                    record["role"],
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_workspace_membership(record["workspace_id"], record["principal_id"])
+
+    def fetch_workspace_membership(self, workspace_id: str, principal_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT membership_id, workspace_id, principal_id, role, created_at, updated_at
+                FROM {self.WORKSPACE_MEMBERSHIP_TABLE}
+                WHERE workspace_id = ? AND principal_id = ?
+                """,
+                (workspace_id, principal_id),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "membership_id": row[0],
+            "workspace_id": row[1],
+            "principal_id": row[2],
+            "role": row[3],
+            "created_at": row[4],
+            "updated_at": row[5],
+        }
+
+    def list_workspace_memberships(self, workspace_id: str) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT membership_id, workspace_id, principal_id, role, created_at, updated_at
+                FROM {self.WORKSPACE_MEMBERSHIP_TABLE}
+                WHERE workspace_id = ?
+                ORDER BY created_at ASC
+                """,
+                (workspace_id,),
+            ).fetchall()
+        return [
+            {
+                "membership_id": row[0],
+                "workspace_id": row[1],
+                "principal_id": row[2],
+                "role": row[3],
+                "created_at": row[4],
+                "updated_at": row[5],
+            }
+            for row in rows
+        ]
+
+    def upsert_organization_membership(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.ORGANIZATION_MEMBERSHIP_TABLE} (
+                    organization_membership_id, organization_id, principal_id, role, status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(organization_id, principal_id) DO UPDATE SET
+                    role=excluded.role,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["organization_membership_id"],
+                    record["organization_id"],
+                    record["principal_id"],
+                    record["role"],
+                    record["status"],
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_organization_membership(record["organization_id"], record["principal_id"])
+
+    def fetch_organization_membership(self, organization_id: str, principal_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT organization_membership_id, organization_id, principal_id, role, status, created_at, updated_at
+                FROM {self.ORGANIZATION_MEMBERSHIP_TABLE}
+                WHERE organization_id = ? AND principal_id = ?
+                """,
+                (organization_id, principal_id),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "organization_membership_id": row[0],
+            "organization_id": row[1],
+            "principal_id": row[2],
+            "role": row[3],
+            "status": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+
+    def list_organization_memberships(
+        self,
+        organization_id: str,
+        *,
+        status: str | None = None,
+        role: str | None = None,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            query = f"""
+                SELECT organization_membership_id, organization_id, principal_id, role, status, created_at, updated_at
+                FROM {self.ORGANIZATION_MEMBERSHIP_TABLE}
+                WHERE organization_id = ?
+            """
+            params: list[object] = [organization_id]
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            if role:
+                query += " AND role = ?"
+                params.append(role)
+            query += " ORDER BY created_at ASC"
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [
+            {
+                "organization_membership_id": row[0],
+                "organization_id": row[1],
+                "principal_id": row[2],
+                "role": row[3],
+                "status": row[4],
+                "created_at": row[5],
+                "updated_at": row[6],
+            }
+            for row in rows
+        ]
+
+    def upsert_access_token(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.ACCESS_TOKEN_TABLE} (token_id, token, principal_id, workspace_id, created_at, expires_at, revoked)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(token_id) DO UPDATE SET
+                    token=excluded.token,
+                    principal_id=excluded.principal_id,
+                    workspace_id=excluded.workspace_id,
+                    expires_at=excluded.expires_at,
+                    revoked=excluded.revoked
+                """,
+                (
+                    record["token_id"],
+                    record["token"],
+                    record["principal_id"],
+                    record["workspace_id"],
+                    record["created_at"],
+                    record.get("expires_at"),
+                    int(record.get("revoked", 0)),
+                ),
+            )
+            conn.commit()
+        return self.fetch_access_token_by_value(record["token"])
+
+    def fetch_access_token_by_value(self, token: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT token_id, token, principal_id, workspace_id, created_at, expires_at, revoked
+                FROM {self.ACCESS_TOKEN_TABLE}
+                WHERE token = ?
+                """,
+                (token,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "token_id": row[0],
+            "token": row[1],
+            "principal_id": row[2],
+            "workspace_id": row[3],
+            "created_at": row[4],
+            "expires_at": row[5],
+            "revoked": bool(row[6]),
+        }
+
+    def list_access_tokens_for_principal(self, principal_id: str, *, workspace_ids: list[str] | None = None) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            query = f"""
+                SELECT token_id, token, principal_id, workspace_id, created_at, expires_at, revoked
+                FROM {self.ACCESS_TOKEN_TABLE}
+                WHERE principal_id = ?
+            """
+            params: list[object] = [principal_id]
+            if workspace_ids:
+                placeholders = ",".join("?" for _ in workspace_ids)
+                query += f" AND workspace_id IN ({placeholders})"
+                params.extend(workspace_ids)
+            query += " ORDER BY created_at DESC"
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [
+            {
+                "token_id": row[0],
+                "token": row[1],
+                "principal_id": row[2],
+                "workspace_id": row[3],
+                "created_at": row[4],
+                "expires_at": row[5],
+                "revoked": bool(row[6]),
+            }
+            for row in rows
+        ]
+
+    def upsert_auth_session(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.AUTH_SESSION_TABLE} (
+                    session_id, session_token, principal_id, organization_id, workspace_id,
+                    auth_identity_id, auth_method, created_at, last_seen_at, expires_at, revoked
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    session_token=excluded.session_token,
+                    principal_id=excluded.principal_id,
+                    organization_id=excluded.organization_id,
+                    workspace_id=excluded.workspace_id,
+                    auth_identity_id=excluded.auth_identity_id,
+                    auth_method=excluded.auth_method,
+                    last_seen_at=excluded.last_seen_at,
+                    expires_at=excluded.expires_at,
+                    revoked=excluded.revoked
+                """,
+                (
+                    record["session_id"],
+                    record["session_token"],
+                    record["principal_id"],
+                    record.get("organization_id"),
+                    record["workspace_id"],
+                    record.get("auth_identity_id"),
+                    record.get("auth_method"),
+                    record["created_at"],
+                    record.get("last_seen_at"),
+                    record.get("expires_at"),
+                    int(record.get("revoked", 0)),
+                ),
+            )
+            conn.commit()
+        return self.fetch_auth_session_by_token(record["session_token"])
+
+    def fetch_auth_session_by_token(self, session_token: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT session_id, session_token, principal_id, organization_id, workspace_id,
+                       auth_identity_id, auth_method, created_at, last_seen_at, expires_at, revoked
+                FROM {self.AUTH_SESSION_TABLE}
+                WHERE session_token = ?
+                """,
+                (session_token,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row[0],
+            "session_token": row[1],
+            "principal_id": row[2],
+            "organization_id": row[3],
+            "workspace_id": row[4],
+            "auth_identity_id": row[5],
+            "auth_method": row[6],
+            "created_at": row[7],
+            "last_seen_at": row[8],
+            "expires_at": row[9],
+            "revoked": bool(row[10]),
+        }
+
+    def fetch_auth_session_by_id(self, session_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT session_id, session_token, principal_id, organization_id, workspace_id,
+                       auth_identity_id, auth_method, created_at, last_seen_at, expires_at, revoked
+                FROM {self.AUTH_SESSION_TABLE}
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row[0],
+            "session_token": row[1],
+            "principal_id": row[2],
+            "organization_id": row[3],
+            "workspace_id": row[4],
+            "auth_identity_id": row[5],
+            "auth_method": row[6],
+            "created_at": row[7],
+            "last_seen_at": row[8],
+            "expires_at": row[9],
+            "revoked": bool(row[10]),
+        }
+
+    def list_auth_sessions_for_principal(
+        self,
+        principal_id: str,
+        *,
+        organization_id: str | None = None,
+        workspace_ids: list[str] | None = None,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            query = f"""
+                SELECT session_id, session_token, principal_id, organization_id, workspace_id,
+                       auth_identity_id, auth_method, created_at, last_seen_at, expires_at, revoked
+                FROM {self.AUTH_SESSION_TABLE}
+                WHERE principal_id = ?
+            """
+            params: list[object] = [principal_id]
+            if organization_id:
+                query += " AND organization_id = ?"
+                params.append(organization_id)
+            if workspace_ids:
+                placeholders = ",".join("?" for _ in workspace_ids)
+                query += f" AND workspace_id IN ({placeholders})"
+                params.extend(workspace_ids)
+            query += " ORDER BY created_at DESC"
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [
+            {
+                "session_id": row[0],
+                "session_token": row[1],
+                "principal_id": row[2],
+                "organization_id": row[3],
+                "workspace_id": row[4],
+                "auth_identity_id": row[5],
+                "auth_method": row[6],
+                "created_at": row[7],
+                "last_seen_at": row[8],
+                "expires_at": row[9],
+                "revoked": bool(row[10]),
+            }
+            for row in rows
+        ]
+
+    def upsert_membership_invite(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.MEMBERSHIP_INVITE_TABLE} (
+                    invite_id, organization_id, workspace_id, target_scope_type, email, target_role,
+                    invite_token, status, invited_by_principal_id, accepted_by_principal_id,
+                    revoked_by_principal_id, expires_at, accepted_at, revoked_at, revoke_reason,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(invite_id) DO UPDATE SET
+                    organization_id=excluded.organization_id,
+                    workspace_id=excluded.workspace_id,
+                    target_scope_type=excluded.target_scope_type,
+                    email=excluded.email,
+                    target_role=excluded.target_role,
+                    invite_token=excluded.invite_token,
+                    status=excluded.status,
+                    invited_by_principal_id=excluded.invited_by_principal_id,
+                    accepted_by_principal_id=excluded.accepted_by_principal_id,
+                    revoked_by_principal_id=excluded.revoked_by_principal_id,
+                    expires_at=excluded.expires_at,
+                    accepted_at=excluded.accepted_at,
+                    revoked_at=excluded.revoked_at,
+                    revoke_reason=excluded.revoke_reason,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["invite_id"],
+                    record["organization_id"],
+                    record.get("workspace_id"),
+                    record["target_scope_type"],
+                    record["email"],
+                    record["target_role"],
+                    record["invite_token"],
+                    record["status"],
+                    record["invited_by_principal_id"],
+                    record.get("accepted_by_principal_id"),
+                    record.get("revoked_by_principal_id"),
+                    record.get("expires_at"),
+                    record.get("accepted_at"),
+                    record.get("revoked_at"),
+                    record.get("revoke_reason"),
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_membership_invite(record["invite_id"])
+
+    def fetch_membership_invite(self, invite_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT invite_id, organization_id, workspace_id, target_scope_type, email, target_role,
+                       invite_token, status, invited_by_principal_id, accepted_by_principal_id,
+                       revoked_by_principal_id, expires_at, accepted_at, revoked_at, revoke_reason,
+                       created_at, updated_at
+                FROM {self.MEMBERSHIP_INVITE_TABLE}
+                WHERE invite_id = ?
+                """,
+                (invite_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "invite_id": row[0],
+            "organization_id": row[1],
+            "workspace_id": row[2],
+            "target_scope_type": row[3],
+            "email": row[4],
+            "target_role": row[5],
+            "invite_token": row[6],
+            "status": row[7],
+            "invited_by_principal_id": row[8],
+            "accepted_by_principal_id": row[9],
+            "revoked_by_principal_id": row[10],
+            "expires_at": row[11],
+            "accepted_at": row[12],
+            "revoked_at": row[13],
+            "revoke_reason": row[14],
+            "created_at": row[15],
+            "updated_at": row[16],
+        }
+
+    def fetch_membership_invite_by_token(self, invite_token: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT invite_id, organization_id, workspace_id, target_scope_type, email, target_role,
+                       invite_token, status, invited_by_principal_id, accepted_by_principal_id,
+                       revoked_by_principal_id, expires_at, accepted_at, revoked_at, revoke_reason,
+                       created_at, updated_at
+                FROM {self.MEMBERSHIP_INVITE_TABLE}
+                WHERE invite_token = ?
+                """,
+                (invite_token,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "invite_id": row[0],
+            "organization_id": row[1],
+            "workspace_id": row[2],
+            "target_scope_type": row[3],
+            "email": row[4],
+            "target_role": row[5],
+            "invite_token": row[6],
+            "status": row[7],
+            "invited_by_principal_id": row[8],
+            "accepted_by_principal_id": row[9],
+            "revoked_by_principal_id": row[10],
+            "expires_at": row[11],
+            "accepted_at": row[12],
+            "revoked_at": row[13],
+            "revoke_reason": row[14],
+            "created_at": row[15],
+            "updated_at": row[16],
+        }
+
+    def list_membership_invites(
+        self,
+        organization_id: str,
+        *,
+        workspace_id: str | None = None,
+        status: str | None = None,
+        email: str | None = None,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            query = f"""
+                SELECT invite_id, organization_id, workspace_id, target_scope_type, email, target_role,
+                       invite_token, status, invited_by_principal_id, accepted_by_principal_id,
+                       revoked_by_principal_id, expires_at, accepted_at, revoked_at, revoke_reason,
+                       created_at, updated_at
+                FROM {self.MEMBERSHIP_INVITE_TABLE}
+                WHERE organization_id = ?
+            """
+            params: list[str | None] = [organization_id]
+            if workspace_id is None:
+                query += " AND workspace_id IS NULL"
+            else:
+                query += " AND workspace_id = ?"
+                params.append(workspace_id)
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            if email:
+                query += " AND email = ?"
+                params.append(email.strip().lower())
+            query += " ORDER BY created_at DESC"
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [
+            {
+                "invite_id": row[0],
+                "organization_id": row[1],
+                "workspace_id": row[2],
+                "target_scope_type": row[3],
+                "email": row[4],
+                "target_role": row[5],
+                "invite_token": row[6],
+                "status": row[7],
+                "invited_by_principal_id": row[8],
+                "accepted_by_principal_id": row[9],
+                "revoked_by_principal_id": row[10],
+                "expires_at": row[11],
+                "accepted_at": row[12],
+                "revoked_at": row[13],
+                "revoke_reason": row[14],
+                "created_at": row[15],
+                "updated_at": row[16],
+            }
+            for row in rows
+        ]
+
+    def upsert_workspace_invite(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.WORKSPACE_INVITE_TABLE} (
+                    invite_id, workspace_id, email, role, invite_token, invited_by_principal_id,
+                    created_at, updated_at, revoked, accepted_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(invite_id) DO UPDATE SET
+                    workspace_id=excluded.workspace_id,
+                    email=excluded.email,
+                    role=excluded.role,
+                    invite_token=excluded.invite_token,
+                    invited_by_principal_id=excluded.invited_by_principal_id,
+                    updated_at=excluded.updated_at,
+                    revoked=excluded.revoked,
+                    accepted_at=excluded.accepted_at
+                """,
+                (
+                    record["invite_id"],
+                    record["workspace_id"],
+                    record["email"],
+                    record["role"],
+                    record["invite_token"],
+                    record["invited_by_principal_id"],
+                    record["created_at"],
+                    record["updated_at"],
+                    int(record.get("revoked", 0)),
+                    record.get("accepted_at"),
+                ),
+            )
+            conn.commit()
+        return self.fetch_workspace_invite(record["invite_id"])
+
+    def fetch_workspace_invite(self, invite_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT invite_id, workspace_id, email, role, invite_token, invited_by_principal_id,
+                       created_at, updated_at, revoked, accepted_at
+                FROM {self.WORKSPACE_INVITE_TABLE}
+                WHERE invite_id = ?
+                """,
+                (invite_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "invite_id": row[0],
+            "workspace_id": row[1],
+            "email": row[2],
+            "role": row[3],
+            "invite_token": row[4],
+            "invited_by_principal_id": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+            "revoked": bool(row[8]),
+            "accepted_at": row[9],
+        }
+
+    def fetch_workspace_invite_by_token(self, invite_token: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT invite_id, workspace_id, email, role, invite_token, invited_by_principal_id,
+                       created_at, updated_at, revoked, accepted_at
+                FROM {self.WORKSPACE_INVITE_TABLE}
+                WHERE invite_token = ?
+                """,
+                (invite_token,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "invite_id": row[0],
+            "workspace_id": row[1],
+            "email": row[2],
+            "role": row[3],
+            "invite_token": row[4],
+            "invited_by_principal_id": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+            "revoked": bool(row[8]),
+            "accepted_at": row[9],
+        }
+
+    def upsert_oidc_provider(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.OIDC_PROVIDER_TABLE} (
+                    provider_id, organization_id, provider_key, issuer, discovery_url,
+                    client_id, client_secret_encrypted, scopes_json, enabled, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider_id) DO UPDATE SET
+                    organization_id=excluded.organization_id,
+                    provider_key=excluded.provider_key,
+                    issuer=excluded.issuer,
+                    discovery_url=excluded.discovery_url,
+                    client_id=excluded.client_id,
+                    client_secret_encrypted=excluded.client_secret_encrypted,
+                    scopes_json=excluded.scopes_json,
+                    enabled=excluded.enabled,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["provider_id"],
+                    record["organization_id"],
+                    record["provider_key"],
+                    record["issuer"],
+                    record["discovery_url"],
+                    record["client_id"],
+                    record["client_secret_encrypted"],
+                    json.dumps(record.get("scopes_json") or []),
+                    int(record.get("enabled", 1)),
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_oidc_provider(record["provider_id"])
+
+    def fetch_oidc_provider(self, provider_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT provider_id, organization_id, provider_key, issuer, discovery_url,
+                       client_id, client_secret_encrypted, scopes_json, enabled, created_at, updated_at
+                FROM {self.OIDC_PROVIDER_TABLE}
+                WHERE provider_id = ?
+                """,
+                (provider_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "provider_id": row[0],
+            "organization_id": row[1],
+            "provider_key": row[2],
+            "issuer": row[3],
+            "discovery_url": row[4],
+            "client_id": row[5],
+            "client_secret_encrypted": row[6],
+            "scopes_json": json.loads(row[7] or "[]"),
+            "enabled": bool(row[8]),
+            "created_at": row[9],
+            "updated_at": row[10],
+        }
+
+    def fetch_oidc_provider_by_key(self, organization_id: str, provider_key: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT provider_id, organization_id, provider_key, issuer, discovery_url,
+                       client_id, client_secret_encrypted, scopes_json, enabled, created_at, updated_at
+                FROM {self.OIDC_PROVIDER_TABLE}
+                WHERE organization_id = ? AND provider_key = ?
+                """,
+                (organization_id, provider_key),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "provider_id": row[0],
+            "organization_id": row[1],
+            "provider_key": row[2],
+            "issuer": row[3],
+            "discovery_url": row[4],
+            "client_id": row[5],
+            "client_secret_encrypted": row[6],
+            "scopes_json": json.loads(row[7] or "[]"),
+            "enabled": bool(row[8]),
+            "created_at": row[9],
+            "updated_at": row[10],
+        }
+
+    def upsert_organization_domain(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.ORGANIZATION_DOMAIN_TABLE} (
+                    domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(domain_id) DO UPDATE SET
+                    organization_id=excluded.organization_id,
+                    domain=excluded.domain,
+                    verified_at=excluded.verified_at,
+                    join_mode=excluded.join_mode,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["domain_id"],
+                    record["organization_id"],
+                    record["domain"],
+                    record.get("verified_at"),
+                    record["join_mode"],
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_organization_domain(record["domain_id"])
+
+    def fetch_organization_domain(self, domain_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at
+                FROM {self.ORGANIZATION_DOMAIN_TABLE}
+                WHERE domain_id = ?
+                """,
+                (domain_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "domain_id": row[0],
+            "organization_id": row[1],
+            "domain": row[2],
+            "verified_at": row[3],
+            "join_mode": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+
+    def fetch_organization_domain_by_name(self, domain: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at
+                FROM {self.ORGANIZATION_DOMAIN_TABLE}
+                WHERE domain = ?
+                """,
+                (domain,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "domain_id": row[0],
+            "organization_id": row[1],
+            "domain": row[2],
+            "verified_at": row[3],
+            "join_mode": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+
+    def insert_audit_log(self, record: dict):
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.AUDIT_LOG_TABLE} (
+                    actor_principal_id, workspace_id, action, target_type, target_id, detail_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.get("actor_principal_id"),
+                    record.get("workspace_id"),
+                    record["action"],
+                    record["target_type"],
+                    record["target_id"],
+                    json.dumps(record.get("detail_json") or {}),
+                    record["created_at"],
+                ),
+            )
+            conn.commit()
+
+    def fetch_audit_logs(
+        self,
+        *,
+        workspace_id: str | None = None,
+        action: str | None = None,
+        target_type: str | None = None,
+        actor_principal_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            params: list[object] = []
+            query = f"""
+                SELECT audit_id, actor_principal_id, workspace_id, action, target_type, target_id, detail_json, created_at
+                FROM {self.AUDIT_LOG_TABLE}
+            """
+            clauses = []
+            if workspace_id:
+                clauses.append("workspace_id = ?")
+                params.append(workspace_id)
+            if action:
+                clauses.append("action = ?")
+                params.append(action)
+            if target_type:
+                clauses.append("target_type = ?")
+                params.append(target_type)
+            if actor_principal_id:
+                clauses.append("actor_principal_id = ?")
+                params.append(actor_principal_id)
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY audit_id DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "audit_id": row[0],
+                "actor_principal_id": row[1],
+                "workspace_id": row[2],
+                "action": row[3],
+                "target_type": row[4],
+                "target_id": row[5],
+                "detail_json": json.loads(row[6] or "{}"),
+                "created_at": row[7],
+            }
+            for row in rows
+        ]
+
+    def upsert_workspace_policy(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.WORKSPACE_POLICY_TABLE} (workspace_id, allowed_regions_json, allowed_markets_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(workspace_id) DO UPDATE SET
+                    allowed_regions_json=excluded.allowed_regions_json,
+                    allowed_markets_json=excluded.allowed_markets_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    record["workspace_id"],
+                    json.dumps(record.get("allowed_regions_json") or []),
+                    json.dumps(record.get("allowed_markets_json") or []),
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_workspace_policy(record["workspace_id"])
+
+    def fetch_workspace_policy(self, workspace_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT workspace_id, allowed_regions_json, allowed_markets_json, updated_at
+                FROM {self.WORKSPACE_POLICY_TABLE}
+                WHERE workspace_id = ?
+                """,
+                (workspace_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "workspace_id": row[0],
+            "allowed_regions_json": json.loads(row[1] or "[]"),
+            "allowed_markets_json": json.loads(row[2] or "[]"),
+            "updated_at": row[3],
+        }
 
     def acquire_system_lock(
         self,

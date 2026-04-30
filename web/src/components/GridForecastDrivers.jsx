@@ -18,14 +18,14 @@ export default function GridForecastDrivers({ drivers, metadata, t, locale = 'en
   const copy = getForecastText(locale);
   const warningKeys = metadata?.warnings || [];
   const localizedDrivers = (drivers || []).map((driver) => localizeForecastDriver(driver, locale));
-  const sourceLinkText = locale === 'zh' ? '来源链接' : 'Source link';
+  const sourceLinkText = copy.generic.sourceLink;
 
   return (
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-muted)]">
-            {t?.keyDrivers || 'Key Drivers'}
+            {t?.keyDrivers || copy.generic.keyDrivers}
           </div>
           <div className="mt-1 text-sm leading-6 text-[var(--color-muted)]">
             {t?.disclaimer || copy.generic.noDrivers}
@@ -70,12 +70,12 @@ export default function GridForecastDrivers({ drivers, metadata, t, locale = 'en
                 <div
                   className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest ${severityTone(driver.severity)}`}
                 >
-                  {driver.severityLabel || driver.severity || 'signal'}
+                  {driver.severityLabel || driver.severity || copy.generic.signal}
                 </div>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px] leading-5 text-[var(--color-muted)]">
-                <span>{driver.sourceLabel || driver.source || 'source'}</span>
+                <span>{driver.sourceLabel || driver.source || copy.generic.source}</span>
                 {driver.effective_start && <span>{driver.effective_start}</span>}
                 {driver.effective_end && driver.effective_end !== driver.effective_start && <span>{driver.effective_end}</span>}
                 {driver.source_url ? (

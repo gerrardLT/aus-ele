@@ -14,26 +14,28 @@ import {
 } from 'recharts';
 import { fetchJson } from '../lib/apiClient';
 import { buildPeriodOverlayMap, getEventText, metaForState } from '../lib/eventOverlays';
+import DataQualityBadge from './DataQualityBadge';
+import { getDataGradeCaveat, getPreviewModeLabel } from '../lib/resultMetadata';
 
 const FCAS_KEYS = [
-  { key: 'raise1sec_rrp', label: 'Raise 1s', color: '#1d4ed8' },
-  { key: 'raise6sec_rrp', label: 'Raise 6s', color: '#2563eb' },
-  { key: 'raise60sec_rrp', label: 'Raise 60s', color: '#3b82f6' },
-  { key: 'raise5min_rrp', label: 'Raise 5m', color: '#60a5fa' },
-  { key: 'raisereg_rrp', label: 'Raise Reg', color: '#93c5fd' },
-  { key: 'lower1sec_rrp', label: 'Lower 1s', color: '#b91c1c' },
-  { key: 'lower6sec_rrp', label: 'Lower 6s', color: '#dc2626' },
-  { key: 'lower60sec_rrp', label: 'Lower 60s', color: '#ef4444' },
-  { key: 'lower5min_rrp', label: 'Lower 5m', color: '#f87171' },
-  { key: 'lowerreg_rrp', label: 'Lower Reg', color: '#fca5a5' },
+  { key: 'raise1sec_rrp', copyKey: 'raise1sec', color: '#1d4ed8' },
+  { key: 'raise6sec_rrp', copyKey: 'raise6sec', color: '#2563eb' },
+  { key: 'raise60sec_rrp', copyKey: 'raise60sec', color: '#3b82f6' },
+  { key: 'raise5min_rrp', copyKey: 'raise5min', color: '#60a5fa' },
+  { key: 'raisereg_rrp', copyKey: 'raiseReg', color: '#93c5fd' },
+  { key: 'lower1sec_rrp', copyKey: 'lower1sec', color: '#b91c1c' },
+  { key: 'lower6sec_rrp', copyKey: 'lower6sec', color: '#dc2626' },
+  { key: 'lower60sec_rrp', copyKey: 'lower60sec', color: '#ef4444' },
+  { key: 'lower5min_rrp', copyKey: 'lower5min', color: '#f87171' },
+  { key: 'lowerreg_rrp', copyKey: 'lowerReg', color: '#fca5a5' },
 ];
 
 const WEM_KEYS = [
-  { key: 'regulation_raise', label: 'Reg Raise', color: '#2563eb' },
-  { key: 'contingency_raise', label: 'Cont Raise', color: '#60a5fa' },
-  { key: 'rocof', label: 'RoCoF', color: '#7c3aed' },
-  { key: 'regulation_lower', label: 'Reg Lower', color: '#dc2626' },
-  { key: 'contingency_lower', label: 'Cont Lower', color: '#f87171' },
+  { key: 'regulation_raise', copyKey: 'regulationRaise', color: '#2563eb' },
+  { key: 'contingency_raise', copyKey: 'contingencyRaise', color: '#60a5fa' },
+  { key: 'rocof', copyKey: 'rocof', color: '#7c3aed' },
+  { key: 'regulation_lower', copyKey: 'regulationLower', color: '#dc2626' },
+  { key: 'contingency_lower', copyKey: 'contingencyLower', color: '#f87171' },
 ];
 
 function buildParams(year, region, aggregation, month, quarter, dayType) {
@@ -104,7 +106,14 @@ export default function RevenueStacking({
   }, [year, region, month, quarter, dayType, apiBase, currentAggregation]);
 
   const isWem = region === 'WEM';
-  const serviceKeys = isWem ? WEM_KEYS : FCAS_KEYS;
+  const serviceKeys = useMemo(() => {
+    const labelMap = t.serviceLabels || {};
+    const base = isWem ? WEM_KEYS : FCAS_KEYS;
+    return base.map((service) => ({
+      ...service,
+      label: labelMap[service.copyKey] || service.key,
+    }));
+  }, [isWem, t.serviceLabels]);
 
   const mergeResult = useMemo(() => {
     if (!arbitrageData?.data?.length) {
@@ -172,6 +181,19 @@ export default function RevenueStacking({
   const hasFcas = fcasData?.has_fcas_data === true;
   const isSingleDayPreview = isWem && overlapDays === 1;
   const isMultiDayPreview = isWem && overlapDays > 1;
+  const previewLabel = getPreviewModeLabel(previewMode, lang);
+  const previewCaveat = getDataGradeCaveat('preview', lang);
+  const previewNotInvestmentGrade = t.stackPreviewNotInvestmentGrade;
+  const sectionMetadata = isWem
+    ? {
+        data_grade: 'preview',
+        unit: 'AUD/MWh',
+        warnings: ['preview_only'],
+      }
+    : {
+        data_grade: 'analytical',
+        unit: 'AUD/MWh',
+      };
 
   const totalSummary = useMemo(() => {
     if (!chartData.length) return null;
@@ -189,7 +211,7 @@ export default function RevenueStacking({
     <div className="flex flex-wrap gap-4 mb-6 text-xs font-mono">
       <span className="flex items-center gap-1.5">
         <span className="w-3 h-3 rounded-sm bg-[#6366f1]" />
-        {t.stackArbitrage || 'Arbitrage (Net Spread 4h)'}
+        {t.stackArbitrage}
       </span>
       {serviceKeys.map((service) => (
         <span key={service.key} className="flex items-center gap-1.5">
@@ -209,32 +231,31 @@ export default function RevenueStacking({
     >
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
         <div>
-          <h2 className="text-3xl font-serif font-bold mb-1">{t.stackTitle || 'Revenue Stacking'}</h2>
+          <h2 className="text-3xl font-serif font-bold mb-1">{t.stackTitle}</h2>
           <p className="text-sm text-[var(--color-muted)] font-sans">
-            {t.stackSubtitle || 'Energy Arbitrage + FCAS Revenue Composition Over Time'}
+            {t.stackSubtitle}
           </p>
         </div>
         <div className="text-xs text-[var(--color-muted)] tracking-widest uppercase font-bold">
-          REVENUE STACKING
+          {t.stackEyebrow}
         </div>
       </div>
 
       {legacySpreadFallback && (
         <div className="mb-6 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
-          {lang === 'zh'
-            ? '兼容模式：由于缺少 net_spread_4h，当前套利基线暂时使用 spread_4h。'
-            : 'Legacy mode: arbitrage base is using spread_4h because net_spread_4h is missing.'}
+          {t.stackLegacyFallback}
         </div>
       )}
 
       {isWem && (
         <div className="mb-6 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="font-semibold uppercase tracking-wide">
-            {(lang === 'zh'
-              ? (previewMode === 'multi_day_preview' ? '多日预览' : '单日预览')
-              : (previewMode || 'single_day_preview'))} | {lang === 'zh' ? '非投资级' : 'not investment-grade'}
+          <div className="flex flex-wrap items-center gap-3">
+            <DataQualityBadge metadata={sectionMetadata} lang={lang} />
+            <div className="font-semibold tracking-wide">
+              {previewLabel} | {previewNotInvestmentGrade}
+            </div>
           </div>
-          <div className="mt-1">{lang === 'zh' ? '仅供预览，请勿用于项目融资。' : 'Preview only. Do not use for project finance.'}</div>
+          <div className="mt-2">{previewCaveat}</div>
           {fcasData?.summary?.coverage_days !== undefined && (
             <div className="mt-1">coverage_days={fcasData.summary.coverage_days}</div>
           )}
@@ -243,26 +264,24 @@ export default function RevenueStacking({
 
       {loading ? (
         <div className="h-64 flex items-center justify-center text-[var(--color-muted)] font-serif text-lg">
-          {t.loadingMsg || 'Loading...'}
+          {t.loadingMsg}
         </div>
       ) : isWem && !hasFcas ? (
         <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-sm text-[var(--color-muted)] font-sans">
-          {fcasData?.message || (lang === 'zh' ? '当前还没有可用的 WEM FCAS 预览数据。' : 'No WEM FCAS preview data available yet.')}
+          {fcasData?.message || t.stackNoPreviewData}
         </div>
       ) : isWem && overlapDays === 0 ? (
         <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-sm text-[var(--color-muted)] font-sans">
-          {t.stackNoOverlap || (lang === 'zh'
-            ? 'WEM 的 peak-analysis 与 FCAS 预览日期当前没有重叠。'
-            : 'No overlapping peak-analysis and FCAS preview dates were found for WEM.')}
+          {t.stackNoOverlap}
         </div>
       ) : chartData.length > 0 ? (
         <>
           {totalSummary && (
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-              <SummaryCard label={lang === 'zh' ? '周期数' : 'Periods'} value={totalSummary.periods} />
-              <SummaryCard label={lang === 'zh' ? '套利基线' : 'Arbitrage Base'} value={`$${totalSummary.totalArbitrage.toFixed(1)}`} />
-              <SummaryCard label={lang === 'zh' ? 'FCAS 层' : 'FCAS Layers'} value={`$${totalSummary.totalFcas.toFixed(1)}`} />
-              <SummaryCard label={lang === 'zh' ? '合计' : 'Combined'} value={`$${totalSummary.total.toFixed(1)}`} accent />
+              <SummaryCard label={t.stackSummaryPeriods} value={totalSummary.periods} />
+              <SummaryCard label={t.stackSummaryArbitrageBase} value={`$${totalSummary.totalArbitrage.toFixed(1)}`} />
+              <SummaryCard label={t.stackSummaryFcasLayers} value={`$${totalSummary.totalFcas.toFixed(1)}`} />
+              <SummaryCard label={t.stackSummaryCombined} value={`$${totalSummary.total.toFixed(1)}`} accent />
               <SummaryCard label={eventText.eventDaysLabel} value={eventOverlay?.daily_rollup?.length || 0} />
             </div>
           )}
@@ -285,7 +304,7 @@ export default function RevenueStacking({
                       }}
                       formatter={(value, name) => {
                         const label = name === 'arbitrage'
-                          ? 'Arbitrage'
+                          ? t.stackTooltipArbitrage
                           : serviceKeys.find((service) => service.key === name)?.label || name;
                         return [`$${Number(value).toFixed(1)}/MWh`, label];
                       }}
@@ -305,15 +324,15 @@ export default function RevenueStacking({
 
               <div className="border border-[var(--color-border)] rounded p-4 space-y-3">
                 <div>
-                  <div className="text-xs uppercase tracking-widest text-[var(--color-muted)]">{lang === 'zh' ? '预览模式' : 'Preview Mode'}</div>
-                  <div className="text-lg font-mono font-bold">{lang === 'zh' ? (previewMode === 'multi_day_preview' ? '多日预览' : '单日预览') : (previewMode || 'single_day_preview')}</div>
+                  <div className="text-xs uppercase tracking-widest text-[var(--color-muted)]">{t.stackPreviewMode}</div>
+                  <div className="text-lg font-mono font-bold">{previewLabel}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-widest text-[var(--color-muted)]">{lang === 'zh' ? '日期' : 'Date'}</div>
+                  <div className="text-xs uppercase tracking-widest text-[var(--color-muted)]">{t.stackPreviewDate}</div>
                   <div className="text-lg font-mono font-bold">{chartData[0]?.period}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-widest text-[var(--color-muted)]">{lang === 'zh' ? '叠加合计' : 'Combined Stack'}</div>
+                  <div className="text-xs uppercase tracking-widest text-[var(--color-muted)]">{t.stackPreviewCombined}</div>
                   <div className="text-lg font-mono font-bold">${chartData[0]?.total?.toFixed(1)}</div>
                 </div>
               </div>
@@ -331,16 +350,16 @@ export default function RevenueStacking({
                       border: '1px solid var(--color-border)',
                       fontSize: 11,
                     }}
-                      formatter={(value, name) => {
-                        const label = name === 'arbitrage'
-                          ? 'Arbitrage'
-                          : serviceKeys.find((service) => service.key === name)?.label || name;
-                        return [`$${Number(value).toFixed(1)}/MWh`, label];
-                      }}
-                      labelFormatter={(label, payload) => {
-                        const eventLabels = payload?.[0]?.payload?.event_labels;
-                        return eventLabels ? `${label} | ${eventLabels}` : label;
-                      }}
+                    formatter={(value, name) => {
+                      const label = name === 'arbitrage'
+                        ? t.stackTooltipArbitrage
+                        : serviceKeys.find((service) => service.key === name)?.label || name;
+                      return [`$${Number(value).toFixed(1)}/MWh`, label];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      const eventLabels = payload?.[0]?.payload?.event_labels;
+                      return eventLabels ? `${label} | ${eventLabels}` : label;
+                    }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar dataKey="arbitrage" stackId="stack" fill="#6366f1" name="arbitrage" />
@@ -365,16 +384,16 @@ export default function RevenueStacking({
                       maxHeight: 300,
                       overflowY: 'auto',
                     }}
-                      formatter={(value, name) => {
-                        const label = name === 'arbitrage'
-                          ? 'Arbitrage'
-                          : serviceKeys.find((service) => service.key === name)?.label || name;
-                        return [`$${Number(value).toFixed(1)}/MWh`, label];
-                      }}
-                      labelFormatter={(label, payload) => {
-                        const eventLabels = payload?.[0]?.payload?.event_labels;
-                        return eventLabels ? `${label} | ${eventLabels}` : label;
-                      }}
+                    formatter={(value, name) => {
+                      const label = name === 'arbitrage'
+                        ? t.stackTooltipArbitrage
+                        : serviceKeys.find((service) => service.key === name)?.label || name;
+                      return [`$${Number(value).toFixed(1)}/MWh`, label];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      const eventLabels = payload?.[0]?.payload?.event_labels;
+                      return eventLabels ? `${label} | ${eventLabels}` : label;
+                    }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Area type="monotone" dataKey="arbitrage" stackId="stack" stroke="#6366f1" fill="#6366f1" fillOpacity={0.4} strokeWidth={2} name="arbitrage" />
@@ -398,13 +417,13 @@ export default function RevenueStacking({
 
           {!hasFcas && !isWem && (
             <div className="mt-4 text-center text-sm text-[var(--color-muted)] font-sans">
-              {t.stackNoFcas || 'FCAS data not yet available - showing arbitrage only.'}
+              {t.stackNoFcas}
             </div>
           )}
         </>
       ) : (
         <div className="h-32 flex items-center justify-center text-[var(--color-muted)] font-serif">
-          {t.noData || (lang === 'zh' ? '暂无数据' : 'No Data')}
+          {t.noData}
         </div>
       )}
     </motion.div>

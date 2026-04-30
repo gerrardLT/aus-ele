@@ -13,12 +13,12 @@ const SummaryStats = ({ stats, advancedStats, t }) => {
     { label: t.negFreq, val: `${advancedStats.neg_ratio}%`, emphasis: true, color: advancedStats.neg_avg < -100 ? 'var(--color-error)' : 'var(--color-primary)' },
     { label: t.negMean, val: advancedStats.neg_avg !== null ? `$${advancedStats.neg_avg}` : '--' },
     { label: t.posMean, val: advancedStats.pos_avg !== null ? `$${advancedStats.pos_avg}` : '--' },
-    { label: t.posDays, val: advancedStats.days_above_300, unit: ' Days' },
-    { label: t.floorDays, val: advancedStats.days_below_100, emphasis: true, unit: ` ${t.uniqueDays || 'Days'}` }
+    { label: t.posDays, val: advancedStats.days_above_300, unit: ` ${t.daysUnit}` },
+    { label: t.floorDays, val: advancedStats.days_below_100, emphasis: true, unit: ` ${t.daysUnit}` }
   ];
 
   return (
-    <div className="flex flex-col gap-10 font-sans pt-4 h-full">
+    <div className="flex h-full flex-col gap-10 font-sans">
       {/* Primary Settlement Stats */}
       <div className="flex flex-col gap-8">
         {primaryMetrics.map((m, idx) => (
@@ -38,8 +38,8 @@ const SummaryStats = ({ stats, advancedStats, t }) => {
       {/* Advanced Quantitative Stats */}
       <div className="mt-2 border-t border-[var(--color-border)] pt-8">
         <h3 className="text-[10px] tracking-[0.2em] text-[var(--color-muted)] uppercase font-semibold mb-6 flex items-center justify-between">
-          <span>{t.deepDive || 'DEEP DIVE'}</span>
-          <span className="bg-[var(--color-inverted)] text-[var(--color-inverted-text)] px-2 py-0.5 rounded text-[8px]">PRO</span>
+          <span>{t.deepDive}</span>
+          <span className="bg-[var(--color-inverted)] text-[var(--color-inverted-text)] px-2 py-0.5 rounded text-[8px]">{t.proTag}</span>
         </h3>
         <div className="grid grid-cols-2 gap-x-4 gap-y-6">
           {secondaryMetrics.map((m, idx) => (

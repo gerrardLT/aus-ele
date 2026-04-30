@@ -43,6 +43,43 @@ def make_nem_record(timestamp: str, region: str, price: float, **overrides):
     return record
 
 
+def make_standardized_backtest_result(
+    *,
+    annual_revenue: float = 1_000_000.0,
+    annual_net_revenue: float | None = None,
+    annual_cycles: float = 30.0,
+    timeline_points: int = 288,
+):
+    net_revenue = annual_revenue if annual_net_revenue is None else annual_net_revenue
+    return {
+        "annual_revenue": annual_revenue,
+        "annual_net_revenue": net_revenue,
+        "annual_cycles": annual_cycles,
+        "backtest_mode": "optimized_hindsight",
+        "revenue_scope": "trajectory_gross_energy",
+        "methodology_version": "bess_backtest_v1",
+        "timeline_points": timeline_points,
+        "input": {"market": "NEM", "region": "NSW1", "year": 2025},
+        "summary": {
+            "gross_revenue": annual_revenue,
+            "net_revenue": net_revenue,
+            "equivalent_cycles": annual_cycles,
+            "charge_throughput_mwh": annual_cycles * 100,
+            "discharge_throughput_mwh": annual_cycles * 100,
+            "soc_start_mwh": 200.0,
+            "soc_end_mwh": 200.0,
+            "soc_min_mwh": 40.0,
+            "soc_max_mwh": 360.0,
+            "costs": {
+                "network_fees": 0.0,
+                "degradation": 0.0,
+                "variable_om": 0.0,
+            },
+            "warnings": [],
+        },
+    }
+
+
 @contextlib.contextmanager
 def patched_server_db(db_manager: DatabaseManager):
     original_db = server.db
@@ -183,16 +220,9 @@ class ApiLogicFixTests(unittest.TestCase):
             make_nem_record("2025-01-05 00:05:00", "NSW1", 105.0, raise1sec_rrp=22.0, lower1sec_rrp=13.0),
         ])
 
-        fake_backtest = {
-            "total_revenue_aud": 1_000_000,
-            "trading_days": 120,
-            "revenue_per_mw_year": 10_000,
-            "annual_discharge_mwh": 12_000,
-            "backtest_mode": "optimized_hindsight",
-            "revenue_scope": "physical_upper_bound",
-        }
+        fake_backtest = make_standardized_backtest_result(annual_revenue=1_000_000, annual_cycles=30)
 
-        with patched_server_db(self.db), mock.patch("bess_backtest.backtest_arbitrage", return_value=fake_backtest):
+        with patched_server_db(self.db), mock.patch("server._run_standardized_bess_backtest", return_value=fake_backtest):
             low_deg = server.investment_analysis(server.InvestmentParams(
                 region="NSW1",
                 power_mw=100,
@@ -220,16 +250,9 @@ class ApiLogicFixTests(unittest.TestCase):
         self.assertLess(high_deg["metrics"]["npv"], low_deg["metrics"]["npv"])
 
     def test_investment_analysis_falls_back_to_manual_fcas_for_wem(self):
-        fake_backtest = {
-            "total_revenue_aud": 900_000,
-            "trading_days": 90,
-            "revenue_per_mw_year": 9_000,
-            "annual_discharge_mwh": 10_000,
-            "backtest_mode": "optimized_hindsight",
-            "revenue_scope": "physical_upper_bound",
-        }
+        fake_backtest = make_standardized_backtest_result(annual_revenue=900_000, annual_cycles=25)
 
-        with patched_server_db(self.db), mock.patch("bess_backtest.backtest_arbitrage", return_value=fake_backtest):
+        with patched_server_db(self.db), mock.patch("server._run_standardized_bess_backtest", return_value=fake_backtest):
             result = server.investment_analysis(server.InvestmentParams(
                 region="WEM",
                 power_mw=50,
@@ -245,14 +268,7 @@ class ApiLogicFixTests(unittest.TestCase):
         self.assertTrue(any("WEM" in item for item in result["assumptions"]))
 
     def test_investment_analysis_caches_identical_request_response(self):
-        fake_backtest = {
-            "total_revenue_aud": 950_000,
-            "trading_days": 90,
-            "revenue_per_mw_year": 9_500,
-            "annual_discharge_mwh": 10_500,
-            "backtest_mode": "optimized_hindsight",
-            "revenue_scope": "physical_upper_bound",
-        }
+        fake_backtest = make_standardized_backtest_result(annual_revenue=950_000, annual_cycles=26.25)
         self.db.set_last_update_time("2026-04-16 09:00:00")
         params = server.InvestmentParams(
             region="NSW1",
@@ -265,7 +281,7 @@ class ApiLogicFixTests(unittest.TestCase):
             fcas_revenue_per_mw_year=20000,
         )
 
-        with patched_server_db(self.db), mock.patch("bess_backtest.backtest_arbitrage", return_value=fake_backtest) as mock_backtest:
+        with patched_server_db(self.db), mock.patch("server._run_standardized_bess_backtest", return_value=fake_backtest) as mock_backtest:
             first = server.investment_analysis(params)
             second = server.investment_analysis(params)
 
@@ -273,18 +289,11 @@ class ApiLogicFixTests(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_investment_analysis_reuses_backtest_and_fcas_cache_when_only_finance_changes(self):
-        fake_backtest = {
-            "total_revenue_aud": 1_100_000,
-            "trading_days": 120,
-            "revenue_per_mw_year": 11_000,
-            "annual_discharge_mwh": 12_500,
-            "backtest_mode": "optimized_hindsight",
-            "revenue_scope": "physical_upper_bound",
-        }
+        fake_backtest = make_standardized_backtest_result(annual_revenue=1_100_000, annual_cycles=31.25)
         self.db.set_last_update_time("2026-04-16 09:05:00")
 
         with patched_server_db(self.db), \
-            mock.patch("bess_backtest.backtest_arbitrage", return_value=fake_backtest) as mock_backtest, \
+            mock.patch("server._run_standardized_bess_backtest", return_value=fake_backtest) as mock_backtest, \
             mock.patch("server._estimate_nem_fcas_baseline", return_value=(250_000.0, "historical_auto")) as mock_fcas:
             low_discount = server.investment_analysis(server.InvestmentParams(
                 region="NSW1",
@@ -312,14 +321,7 @@ class ApiLogicFixTests(unittest.TestCase):
         self.assertNotEqual(low_discount["metrics"]["npv"], high_discount["metrics"]["npv"])
 
     def test_investment_analysis_deduplicates_identical_inflight_requests(self):
-        fake_backtest = {
-            "total_revenue_aud": 1_000_000,
-            "trading_days": 100,
-            "revenue_per_mw_year": 10_000,
-            "annual_discharge_mwh": 11_000,
-            "backtest_mode": "optimized_hindsight",
-            "revenue_scope": "physical_upper_bound",
-        }
+        fake_backtest = make_standardized_backtest_result(annual_revenue=1_000_000, annual_cycles=27.5)
         self.db.set_last_update_time("2026-04-16 09:10:00")
         params = server.InvestmentParams(
             region="QLD1",
@@ -359,7 +361,7 @@ class ApiLogicFixTests(unittest.TestCase):
             except Exception as exc:  # pragma: no cover - diagnostic safety
                 errors.append(exc)
 
-        with patched_server_db(self.db), mock.patch("bess_backtest.backtest_arbitrage", side_effect=slow_backtest):
+        with patched_server_db(self.db), mock.patch("server._run_standardized_bess_backtest", side_effect=slow_backtest):
             thread1 = threading.Thread(target=invoke)
             thread1.start()
             self.assertTrue(first_started.wait(timeout=1.0))
@@ -380,14 +382,7 @@ class ApiLogicFixTests(unittest.TestCase):
         self.assertEqual(results[0], results[1])
 
     def test_investment_analysis_uses_redis_response_cache_when_local_cache_misses(self):
-        fake_backtest = {
-            "total_revenue_aud": 880_000,
-            "trading_days": 95,
-            "revenue_per_mw_year": 8_800,
-            "annual_discharge_mwh": 9_900,
-            "backtest_mode": "optimized_hindsight",
-            "revenue_scope": "physical_upper_bound",
-        }
+        fake_backtest = make_standardized_backtest_result(annual_revenue=880_000, annual_cycles=24.75)
         fake_cache = FakeResponseCache()
         self.db.set_last_update_time("2026-04-16 10:30:00")
         params = server.InvestmentParams(
@@ -405,7 +400,7 @@ class ApiLogicFixTests(unittest.TestCase):
             patched_server_response_cache(fake_cache), \
             mock.patch.object(self.db, "fetch_analysis_cache", return_value=None), \
             mock.patch.object(self.db, "upsert_analysis_cache"), \
-            mock.patch("bess_backtest.backtest_arbitrage", return_value=fake_backtest) as mock_backtest:
+            mock.patch("server._run_standardized_bess_backtest", return_value=fake_backtest) as mock_backtest:
             first = server.investment_analysis(params)
             second = server.investment_analysis(params)
 
@@ -427,6 +422,30 @@ class ApiLogicFixTests(unittest.TestCase):
                 second = server.get_price_trend(year=2025, region="NSW1", month=None, quarter=None, day_type=None, limit=1500)
 
         self.assertEqual(first, second)
+
+    def test_peak_analysis_includes_standard_metadata(self):
+        self.db.batch_insert([
+            make_nem_record("2025-01-06 00:00:00", "NSW1", 90.0),
+            make_nem_record("2025-01-06 00:05:00", "NSW1", 110.0),
+            make_nem_record("2025-01-06 00:10:00", "NSW1", 80.0),
+            make_nem_record("2025-01-06 00:15:00", "NSW1", 120.0),
+        ])
+
+        with patched_server_db(self.db):
+            result = server.get_peak_analysis(
+                year=2025,
+                region="NSW1",
+                aggregation="daily",
+                network_fee=12.0,
+            )
+
+        self.assertIn("metadata", result)
+        self.assertEqual(result["metadata"]["market"], "NEM")
+        self.assertEqual(result["metadata"]["region_or_zone"], "NSW1")
+        self.assertEqual(result["metadata"]["currency"], "AUD")
+        self.assertEqual(result["metadata"]["unit"], "AUD/MWh")
+        self.assertEqual(result["metadata"]["timezone"], "Australia/Sydney")
+        self.assertEqual(result["metadata"]["interval_minutes"], 5)
 
     def test_price_trend_falls_back_when_lttb_downsample_fails(self):
         rows = []
@@ -501,6 +520,28 @@ class ApiLogicFixTests(unittest.TestCase):
                 second = server.get_fcas_analysis(year=2025, region="NSW1", aggregation="daily", capacity_mw=50, month=None, quarter=None, day_type=None)
 
         self.assertEqual(first, second)
+
+    def test_nem_fcas_analysis_includes_standard_metadata(self):
+        self.db.batch_insert([
+            make_nem_record("2025-01-06 00:00:00", "NSW1", 90.0, raise1sec_rrp=12.0, lower1sec_rrp=8.0),
+            make_nem_record("2025-01-06 00:05:00", "NSW1", 110.0, raise1sec_rrp=18.0, lower1sec_rrp=6.0),
+        ])
+
+        with patched_server_db(self.db):
+            result = server.get_fcas_analysis(
+                year=2025,
+                region="NSW1",
+                aggregation="daily",
+                capacity_mw=50,
+            )
+
+        self.assertIn("metadata", result)
+        self.assertEqual(result["metadata"]["market"], "NEM")
+        self.assertEqual(result["metadata"]["region_or_zone"], "NSW1")
+        self.assertEqual(result["metadata"]["currency"], "AUD")
+        self.assertEqual(result["metadata"]["unit"], "AUD/MW/year")
+        self.assertEqual(result["metadata"]["timezone"], "Australia/Sydney")
+        self.assertEqual(result["metadata"]["interval_minutes"], 5)
 
     def test_wem_fcas_analysis_marks_single_day_preview_metadata(self):
         with self.db.get_connection() as conn:
@@ -618,6 +659,10 @@ class ApiLogicFixTests(unittest.TestCase):
         self.assertEqual(result["summary"]["preview_mode"], "single_day_preview")
         self.assertEqual(result["summary"]["coverage_days"], 1)
         self.assertFalse(result["summary"]["investment_grade"])
+        self.assertIn("metadata", result)
+        self.assertEqual(result["metadata"]["market"], "WEM")
+        self.assertEqual(result["metadata"]["unit"], "AUD/MW/year")
+        self.assertEqual(result["metadata"]["interval_minutes"], 5)
 
 
 class BacktestConstraintTests(unittest.TestCase):

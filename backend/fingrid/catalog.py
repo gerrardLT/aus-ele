@@ -18,7 +18,27 @@ FINGRID_DATASETS = {
             "market": "Fingrid",
             "product": "FCR-N",
         },
-    }
+    },
+    "319": {
+        "dataset_id": "319",
+        "dataset_code": "imbalance_price",
+        "name": "Imbalance price",
+        "description": "Imbalance price in Finland.",
+        "unit": "EUR/MWh",
+        "frequency": "1h+",
+        "timezone": "Europe/Helsinki",
+        "value_kind": "imbalance_price",
+        "source_url": "https://data.fingrid.fi/en/datasets/319",
+        "api_path": "/datasets/319/data",
+        "series_key": "imbalance_price",
+        "default_backfill_start": "2025-01-01T00:00:00Z",
+        "default_incremental_lookback_days": 30,
+        "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
+        "metadata_json": {
+            "market": "Fingrid",
+            "product": "Imbalance",
+        },
+    },
 }
 
 

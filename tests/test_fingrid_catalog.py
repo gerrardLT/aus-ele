@@ -23,6 +23,17 @@ class FingridCatalogTests(unittest.TestCase):
         self.assertIn("month", dataset["supported_aggregations"])
         self.assertEqual(list_dataset_configs()[0]["dataset_id"], "317")
 
+    def test_dataset_319_metadata_is_available_for_finland_imbalance_context(self):
+        dataset = get_dataset_config("319")
+
+        self.assertEqual(dataset["dataset_id"], "319")
+        self.assertEqual(dataset["unit"], "EUR/MWh")
+        self.assertEqual(dataset["timezone"], "Europe/Helsinki")
+        self.assertEqual(dataset["value_kind"], "imbalance_price")
+        self.assertIn("imbalance", dataset["dataset_code"])
+        self.assertIn("Finland", dataset["description"])
+        self.assertEqual([item["dataset_id"] for item in list_dataset_configs()], ["317", "319"])
+
     def test_normalize_fingrid_row_accepts_start_time_shape(self):
         dataset = get_dataset_config("317")
         row = normalize_fingrid_row(

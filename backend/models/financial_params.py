@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Union
 from enum import Enum
 
+from models.bess_backtest_params import BessBacktestParams
+
 class DispatchMode(str, Enum):
     HINDSIGHT_OPTIMIZED = "hindsight_optimized"
     ROLLING_FORECAST = "rolling_forecast"
@@ -87,6 +89,9 @@ class InvestmentParams(BaseModel):
         if self.discount_rate is not None:
             self.financial.discount_rate = self.discount_rate
         return self
+
+    def to_bess_backtest_params(self, year: Optional[int] = None) -> BessBacktestParams:
+        return BessBacktestParams.from_investment_params(self, year=year)
 
 class CashFlowYear(BaseModel):
     year: int

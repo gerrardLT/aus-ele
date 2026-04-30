@@ -104,17 +104,72 @@ test('forecast copy exposes localized horizon and mode labels', () => {
 test('GridForecast component avoids hardcoded desk labels and mojibake copy', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/GridForecast.jsx'), 'utf8');
 
-  for (const phrase of ['Signal Desk', 'Market Context', '娣?', '鐢?']) {
-    assert.equal(source.includes(phrase), false, `component should not contain "${phrase}"`);
-  }
+  assert.equal(source.includes('Signal Desk'), false);
+  assert.equal(source.includes('Market Context'), false);
+  assert.equal(source.includes('Grid Forecast'), false);
+  assert.equal(source.includes("|| 'NEM'"), false);
+  assert.equal(source.includes("|| '24h'"), false);
+  assert.match(source, /sectionCopy\.horizon24h/);
+  assert.match(source, /sectionCopy\.horizon7d/);
+  assert.match(source, /sectionCopy\.horizon30d/);
 });
 
 test('app shell and translations avoid known mojibake fragments', () => {
   const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
   const translationsSource = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
 
-  for (const phrase of ['甯', '鍚', '璇', '鈻?', '鉁?', '鉂?']) {
+  for (const phrase of ['鐢电', '鍛ㄦ湡', '閲嶇疆', '姝ｅ湪', '鍌ㄨ兘', '鍏呯數']) {
     assert.equal(appSource.includes(phrase), false, `App should not contain "${phrase}"`);
     assert.equal(translationsSource.includes(phrase), false, `translations should not contain "${phrase}"`);
   }
+});
+
+test('translations source keeps high-visibility Chinese literals readable', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
+
+  assert.equal(source.includes("quarterSelect: '瀛"), false);
+  assert.equal(source.includes("resetFilters: '閲"), false);
+  assert.equal(source.includes("loading: '姝"), false);
+  assert.equal(source.includes("peak: '宄"), false);
+  assert.equal(source.includes("title: '鐗"), false);
+  assert.equal(source.includes("stackTitle: '鏀"), false);
+  assert.equal(source.includes("cwTitle: '鍏"), false);
+  assert.equal(source.includes("ccTitle: '寰"), false);
+});
+
+test('translations include readable Chinese labels for core dashboard and developer portal copy', async () => {
+  const { translations } = await import('../translations.js');
+
+  assert.equal(translations.zh.nav.brand, 'AEMO 澳洲电网智能观测站');
+  assert.equal(translations.zh.filters.yearSelect, '年份选择 (YEAR)');
+  assert.equal(translations.zh.status.retry, '重新尝试');
+  assert.equal(translations.zh.forecast.title, '澳洲电网预测');
+  assert.equal(translations.zh.developerPortal.title, '开发者门户');
+  assert.equal(translations.en.developerPortal.title, 'Developer Portal');
+});
+
+test('translations expose readable Chinese labels for high-visibility dashboard copy', async () => {
+  const { translations } = await import('../translations.js');
+
+  assert.equal(translations.zh.filters.quarterSelect, '季度周期 (QUARTER)');
+  assert.equal(translations.zh.filters.resetFilters, '重置筛选');
+  assert.equal(translations.zh.status.loading, '正在扫描数据归档...');
+  assert.equal(translations.zh.summary_stats.peak, '峰值价格');
+  assert.equal(translations.zh.advanced_metrics.title, '特殊量化与极值统计');
+  assert.equal(translations.zh.stacking.stackTitle, '收入叠加分析');
+  assert.equal(translations.zh.charging.cwTitle, '充电窗口雷达');
+  assert.equal(translations.zh.cycleCost.ccTitle, '循环成本 vs 盈利性分析');
+});
+
+test('App uses readable localized labels for nav, sync, and month reset controls', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+
+  assert.match(source, /t\.nav\.fingrid/);
+  assert.match(source, /t\.nav\.developerPortal/);
+  assert.match(source, /t\.nav\.sync/);
+  assert.match(source, /t\.nav\.syncing/);
+  assert.match(source, /t\.filters\.resetFilters/);
+  assert.equal(source.includes('閼侯剙鍙'), false);
+  assert.equal(source.includes('瀵偓閸欐垼'), false);
+  assert.equal(source.includes('闁插秶鐤'), false);
 });

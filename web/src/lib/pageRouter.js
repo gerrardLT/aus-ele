@@ -1,3 +1,9 @@
 export function resolveRootPage(pathname = '/') {
-  return pathname.startsWith('/fingrid') ? 'fingrid' : 'aemo';
+  if (pathname.startsWith('/fingrid')) {
+    return 'fingrid';
+  }
+  if (pathname.startsWith('/developer')) {
+    return 'developer';
+  }
+  return 'aemo';
 }
