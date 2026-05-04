@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 
 FINLAND_BOARD_FIELDS = {
     "timestamp_local": {
@@ -100,7 +102,7 @@ FINLAND_BOARD_VIEWS = {
     "capacity_hourly": {
         "view_key": "capacity_hourly",
         "label": "Hourly capacity board",
-        "grain": "1h",
+        "granularity": "1h",
         "columns": [
             "timestamp_local",
             "fcr_n_capacity_price",
@@ -112,7 +114,7 @@ FINLAND_BOARD_VIEWS = {
     "activation_15m": {
         "view_key": "activation_15m",
         "label": "15-minute activation board",
-        "grain": "15m",
+        "granularity": "15m",
         "columns": [
             "timestamp_local",
             "fcr_n_activation_price",
@@ -123,7 +125,7 @@ FINLAND_BOARD_VIEWS = {
     "daily_capacity": {
         "view_key": "daily_capacity",
         "label": "Daily capacity summary",
-        "grain": "1d",
+        "granularity": "1d",
         "columns": [
             "market_date",
             "daily_capacity_revenue",
@@ -133,7 +135,7 @@ FINLAND_BOARD_VIEWS = {
     "daily_activation": {
         "view_key": "daily_activation",
         "label": "Daily activation summary",
-        "grain": "1d",
+        "granularity": "1d",
         "columns": [
             "market_date",
             "daily_activation_revenue",
@@ -143,7 +145,7 @@ FINLAND_BOARD_VIEWS = {
     "summary": {
         "view_key": "summary",
         "label": "Board summary",
-        "grain": "mixed",
+        "granularity": "mixed",
         "columns": [
             "daily_capacity_revenue",
             "daily_activation_revenue",
@@ -153,7 +155,7 @@ FINLAND_BOARD_VIEWS = {
     "dictionary": {
         "view_key": "dictionary",
         "label": "Field dictionary",
-        "grain": "contract",
+        "granularity": "contract",
         "columns": list(FINLAND_BOARD_FIELDS.keys()),
     },
 }
@@ -161,13 +163,13 @@ FINLAND_BOARD_VIEWS = {
 
 def get_finland_board_field(field_key: str) -> dict:
     try:
-        return FINLAND_BOARD_FIELDS[field_key]
+        return deepcopy(FINLAND_BOARD_FIELDS[field_key])
     except KeyError as exc:
         raise KeyError(field_key) from exc
 
 
 def get_finland_board_view(view_key: str) -> dict:
     try:
-        return FINLAND_BOARD_VIEWS[view_key]
+        return deepcopy(FINLAND_BOARD_VIEWS[view_key])
     except KeyError as exc:
         raise KeyError(view_key) from exc
