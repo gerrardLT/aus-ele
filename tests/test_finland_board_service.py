@@ -13,6 +13,8 @@ from finland_board_contracts import (
 
 
 class FinlandBoardContractTests(unittest.TestCase):
+    """Contract invariants for the Finland board field and view registries."""
+
     def test_capacity_hourly_view_declares_expected_columns_including_spot(self):
         view = get_finland_board_view("capacity_hourly")
 
@@ -42,6 +44,14 @@ class FinlandBoardContractTests(unittest.TestCase):
             for column in view["columns"]:
                 if column:
                     self.assertIn(column, FINLAND_BOARD_FIELDS, msg=f"{view_key}:{column}")
+
+    def test_field_registry_keys_match_embedded_field_key_values(self):
+        for field_key, field_def in FINLAND_BOARD_FIELDS.items():
+            self.assertEqual(field_def["field_key"], field_key)
+
+    def test_view_registry_keys_match_embedded_view_key_values(self):
+        for view_key, view_def in FINLAND_BOARD_VIEWS.items():
+            self.assertEqual(view_def["view_key"], view_key)
 
     def test_unknown_field_raises_key_error(self):
         with self.assertRaises(KeyError):
