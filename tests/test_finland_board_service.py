@@ -24,6 +24,7 @@ def _point(timestamp_utc, timestamp_local, value):
 
 class StubDatabase:
     def __init__(self):
+        self.calls = []
         self.series_by_field = {
             "fcr_n_price_eur_mw": [
                 _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 10.0),
@@ -66,6 +67,14 @@ class StubDatabase:
         }
 
     def fetch_finland_board_series(self, field_key, start=None, end=None, granularity=None):
+        self.calls.append(
+            {
+                "field_key": field_key,
+                "start": start,
+                "end": end,
+                "granularity": granularity,
+            }
+        )
         return list(self.series_by_field.get(field_key, []))
 
 
@@ -84,8 +93,9 @@ class FinlandBoardServiceTests(unittest.TestCase):
         )
 
     def test_overview_returns_six_cards(self):
+        db = StubDatabase()
         payload = build_finland_board_overview_payload(
-            StubDatabase(),
+            db,
             start="2026-04-01T00:00:00Z",
             end="2026-04-02T00:00:00Z",
         )
@@ -95,6 +105,9 @@ class FinlandBoardServiceTests(unittest.TestCase):
             [card["field_key"] for card in payload["cards"]],
             [card["field_key"] for card in FINLAND_BOARD_OVERVIEW_CARDS],
         )
+        join_card = payload["cards"][-1]
+        self.assertEqual(join_card["value"], 100.0)
+        self.assertEqual(join_card["latest_coverage_utc"], "2026-04-01T01:00:00Z")
 
     def test_capacity_table_exposes_spot_join_column(self):
         payload = build_finland_board_table_payload(
@@ -109,6 +122,23 @@ class FinlandBoardServiceTests(unittest.TestCase):
         self.assertEqual(spot_column["source_type"], "external_join")
         self.assertEqual(payload["rows"][0]["spot_price_fi_eur_mwh"], 75.0)
 
+    def test_activation_view_fetches_spot_with_field_granularity(self):
+        db = StubDatabase()
+
+        payload = build_finland_board_table_payload(
+            db,
+            view="activation_15m",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            tz="Europe/Helsinki",
+        )
+
+        self.assertEqual(payload["rows"][0]["spot_price_fi_eur_mwh"], 75.0)
+        spot_call = next(call for call in db.calls if call["field_key"] == "spot_price_fi_eur_mwh")
+        activation_call = next(call for call in db.calls if call["field_key"] == "afrr_act_up_eur_mwh")
+        self.assertEqual(spot_call["granularity"], "1h")
+        self.assertEqual(activation_call["granularity"], "15m")
+
     def test_spread_chart_returns_difference_series_key(self):
         payload = build_finland_board_chart_payload(
             StubDatabase(),
@@ -116,7 +146,7 @@ class FinlandBoardServiceTests(unittest.TestCase):
             mode="spread",
             start="2026-04-01T00:00:00Z",
             end="2026-04-02T00:00:00Z",
-            granularity="hour",
+            granularity="1h",
         )
 
         self.assertEqual(payload["mode"], "spread")
@@ -125,6 +155,18 @@ class FinlandBoardServiceTests(unittest.TestCase):
             "imbalance_price_eur_mwh-minus-spot_price_fi_eur_mwh",
         )
         self.assertEqual(payload["series"][0]["points"][0]["value"], 30.0)
+
+    def test_chart_granularity_alias_is_normalized(self):
+        payload = build_finland_board_chart_payload(
+            StubDatabase(),
+            fields=["spot_price_fi_eur_mwh"],
+            mode="single",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            granularity="hour",
+        )
+
+        self.assertEqual(payload["granularity"], "1h")
 
     def test_field_catalog_rows_are_registry_backed(self):
         rows = build_finland_board_field_catalog_rows()
@@ -156,6 +198,27 @@ class FinlandBoardServiceTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["live_source_count"], 2)
         self.assertEqual(payload["sources"][1]["integration"]["readiness"], "configured")
         self.assertIn("planned_external_sources", payload["warnings"])
+
+    def test_invalid_view_raises_key_error(self):
+        with self.assertRaises(KeyError):
+            build_finland_board_table_payload(
+                StubDatabase(),
+                view="unknown_view",
+                start="2026-04-01T00:00:00Z",
+                end="2026-04-02T00:00:00Z",
+                tz="Europe/Helsinki",
+            )
+
+    def test_invalid_chart_mode_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            build_finland_board_chart_payload(
+                StubDatabase(),
+                fields=["imbalance_price_eur_mwh"],
+                mode="invalid",
+                start="2026-04-01T00:00:00Z",
+                end="2026-04-02T00:00:00Z",
+                granularity="1h",
+            )
 
 
 if __name__ == "__main__":

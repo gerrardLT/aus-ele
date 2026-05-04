@@ -11,6 +11,15 @@ from finland_board_contracts import (
     get_finland_board_view,
 )
 
+GRANULARITY_ALIASES = {
+    "hour": "1h",
+    "1h": "1h",
+    "15m": "15m",
+    "day": "day",
+}
+
+VALID_CHART_MODES = {"single", "compare", "spread"}
+
 
 def _parse_timestamp(value: str) -> datetime:
     if value.endswith("Z"):
@@ -52,6 +61,7 @@ def _build_metric_card(field_key: str, start: str | None, end: str | None, granu
 
 
 def _build_join_card(start: str | None, end: str | None, db) -> dict:
+    field = get_finland_board_field("join_completeness")
     capacity_rows = _fetch_series(db, "fcr_n_price_eur_mw", start, end, "1h")
     spot_rows = _fetch_series(db, "spot_price_fi_eur_mwh", start, end, "1h")
     capacity_keys = {row["timestamp_utc"] for row in capacity_rows}
@@ -65,10 +75,10 @@ def _build_join_card(start: str | None, end: str | None, db) -> dict:
             [row["timestamp_utc"] for row in capacity_rows] + [row["timestamp_utc"] for row in spot_rows]
         )
     return {
-        "field_key": "join_completeness",
-        "label": "Join Completeness And Freshness",
-        "unit": "%",
-        "granularity": "board",
+        "field_key": field["field_key"],
+        "label": field["label"],
+        "unit": field["unit"],
+        "granularity": field["granularity"],
         "value": completeness,
         "change_vs_previous": None,
         "sparkline": [completeness] if completeness is not None else [],
@@ -94,7 +104,8 @@ def _join_rows_for_view(view_config: dict, db, start: str | None, end: str | Non
     for field_key in view_config["columns"]:
         if field_key in {"timestamp_helsinki", "date"}:
             continue
-        rows = _fetch_series(db, field_key, start, end, view_config.get("granularity"))
+        field = get_finland_board_field(field_key)
+        rows = _fetch_series(db, field_key, start, end, field.get("granularity"))
         for point in rows:
             timestamp_utc = point["timestamp_utc"]
             row = row_map.setdefault(
@@ -123,6 +134,13 @@ def _points_for_series(db, field_key: str, start: str | None, end: str | None, g
         }
         for row in rows
     ]
+
+
+def _normalize_chart_granularity(granularity: str) -> str:
+    normalized = GRANULARITY_ALIASES.get(granularity)
+    if normalized is None:
+        raise ValueError(f"Unsupported chart granularity: {granularity}")
+    return normalized
 
 
 def build_finland_board_overview_payload(db, start: str | None, end: str | None) -> dict:
@@ -159,9 +177,12 @@ def build_finland_board_chart_payload(
     end: str | None,
     granularity: str,
 ) -> dict:
+    if mode not in VALID_CHART_MODES:
+        raise ValueError(f"Unsupported chart mode: {mode}")
+    normalized_granularity = _normalize_chart_granularity(granularity)
     if mode == "spread" and len(fields) == 2:
-        left_rows = {row["timestamp_utc"]: row for row in _fetch_series(db, fields[0], start, end, granularity)}
-        right_rows = {row["timestamp_utc"]: row for row in _fetch_series(db, fields[1], start, end, granularity)}
+        left_rows = {row["timestamp_utc"]: row for row in _fetch_series(db, fields[0], start, end, normalized_granularity)}
+        right_rows = {row["timestamp_utc"]: row for row in _fetch_series(db, fields[1], start, end, normalized_granularity)}
         points = []
         for timestamp_utc in sorted(left_rows.keys() & right_rows.keys()):
             points.append(
@@ -182,13 +203,13 @@ def build_finland_board_chart_payload(
             {
                 "field_key": field_key,
                 "label": get_finland_board_field(field_key)["label"],
-                "points": _points_for_series(db, field_key, start, end, granularity),
+                "points": _points_for_series(db, field_key, start, end, normalized_granularity),
             }
             for field_key in fields
         ]
     return {
         "mode": mode,
-        "granularity": granularity,
+        "granularity": normalized_granularity,
         "series": series,
         "window": {"start": start, "end": end},
     }

@@ -167,6 +167,17 @@ FINLAND_BOARD_FIELDS = {
         "category": "spot",
         "methodology_note": "Nord Pool Finland day-ahead reference joined into board views.",
     },
+    "join_completeness": {
+        "field_key": "join_completeness",
+        "label": "Join Completeness And Freshness",
+        "unit": "%",
+        "granularity": "board",
+        "source_name": "Derived",
+        "source_dataset_id": None,
+        "source_type": "derived",
+        "category": "quality",
+        "methodology_note": "Share of timestamps where hourly reserve-capacity rows and Finland spot rows align, plus latest joined coverage.",
+    },
 }
 
 
