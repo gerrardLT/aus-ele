@@ -428,7 +428,7 @@ test('Finland translations keep readable zh copy and correct language toggles', 
   assert.equal(translations.zh.finlandBoard.title, '芬兰市场看板');
   assert.equal(
     translations.zh.finlandBoard.subtitle,
-    '读取 overview 与 readiness 接口，先搭建工作台外壳，不进入表格联动和分析链路。',
+    '先读取真实的 overview 与 readiness 接口，再把表格工作台、字段词典和联动分析接入到统一看板。',
   );
   assert.equal(translations.zh.finlandBoard.toggleLanguage, 'EN / 中');
   assert.equal(translations.en.finlandBoard.toggleLanguage, '中 / EN');
