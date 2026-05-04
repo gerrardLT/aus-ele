@@ -882,20 +882,26 @@ translations.en.finlandBoard = {
   },
   linkedChart: {
     eyebrow: 'Linked Analysis',
-    title: 'Selection-driven chart shell',
+    title: 'Selection-driven board chart',
     emptyTitle: 'No fields selected',
-    emptyDescription: 'Select one or more stable table descriptors to stage the linked comparison view.',
-    populatedDescription: 'Task 6 only carries stable field selection into the linked-analysis shell. Chart endpoint wiring stays out of scope.',
+    emptyDescription: 'Select one or more board fields from the current table view to load the linked chart.',
+    loading: 'Loading linked chart...',
+    populatedDescription: 'The chart reflects the current field selection against the backend board chart route.',
     selectionCountSuffix: 'selected',
   },
   fieldDetailPanel: {
     eyebrow: 'Field Detail',
-    title: 'Selected field detail shell',
+    title: 'Selected field details',
     emptyTitle: 'Waiting for a field selection',
-    emptyDescription: 'Choose fields from the table to preview the stable detail slots reserved for later dictionary, provenance, and drill-down wiring.',
-    listTitle: 'Active field slots',
-    pending: 'Pending linked detail wiring',
-    selectionDescription: 'This panel is intentionally limited to stable selection awareness for Task 6.',
+    emptyDescription: 'Choose fields from the board table to inspect field catalog details and latest values.',
+    listTitle: 'Selected board fields',
+    labels: {
+      source: 'Source',
+      granularity: 'Granularity',
+      dataset: 'Dataset',
+      latestValue: 'Latest value',
+      methodology: 'Methodology',
+    },
   },
   task7: {
     dailyModesLabel: 'Daily Split',
@@ -1048,3 +1054,25 @@ translations.zh.finlandBoard.fieldDetailPanel = {
 };
 
 translations.zh.finlandBoard.fieldCatalog = [...translations.en.finlandBoard.fieldCatalog];
+translations.zh.finlandBoard.linkedChart = {
+  ...translations.zh.finlandBoard.linkedChart,
+  title: '联动图表',
+  emptyTitle: '尚未选择字段',
+  emptyDescription: '从当前表格中选择一个或多个字段后，这里会请求真实 board chart 接口。',
+  loading: '联动图表加载中...',
+  populatedDescription: '图表直接跟随当前字段选择，并请求后端 board chart 数据。',
+};
+translations.zh.finlandBoard.fieldDetailPanel = {
+  ...translations.zh.finlandBoard.fieldDetailPanel,
+  title: '字段详情',
+  emptyTitle: '等待字段选择',
+  emptyDescription: '从 board 表格中选择字段后，这里会显示字段目录中的来源、粒度、数据集与方法说明。',
+  listTitle: '已选字段',
+  labels: {
+    source: '来源',
+    granularity: '粒度',
+    dataset: '数据集',
+    latestValue: '最新值',
+    methodology: '方法说明',
+  },
+};

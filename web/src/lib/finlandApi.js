@@ -2,6 +2,8 @@ export const FINLAND_DAILY_BOARD_VIEWS = ['daily_capacity', 'daily_activation'];
 export const FINLAND_PRIMARY_BOARD_TABS = ['capacity_hourly', 'activation_15m', 'daily'];
 
 const ACTIVATION_FIELD_KEY_PATTERN = /(act_|imbalance_price)/;
+const NON_SELECTABLE_FIELD_CATEGORIES = new Set(['time']);
+const NON_SELECTABLE_GRANULARITIES = new Set(['display']);
 
 export function buildFinlandBoardOverviewUrl(apiBase, { start, end } = {}) {
   const params = new URLSearchParams();
@@ -40,6 +42,106 @@ export function buildFinlandBoardFieldCatalogUrl(apiBase) {
 
 export function buildFinlandBoardReadinessUrl(apiBase) {
   return `${apiBase}/finland/board/readiness`;
+}
+
+export function getFinlandBoardOverviewCards(overviewPayload) {
+  return Array.isArray(overviewPayload?.cards) ? overviewPayload.cards : [];
+}
+
+export function getFinlandBoardTableColumns(tablePayload) {
+  return Array.isArray(tablePayload?.columns) ? tablePayload.columns : [];
+}
+
+export function getFinlandBoardTableRows(tablePayload) {
+  return Array.isArray(tablePayload?.rows) ? tablePayload.rows : [];
+}
+
+export function buildFinlandBoardDictionaryRows(fieldCatalogItems = []) {
+  return fieldCatalogItems.map((item) => ({
+    ...item,
+    preferredView: getFinlandDictionaryTargetView(item.field_key, item.granularity),
+  }));
+}
+
+function getFinlandLatestFieldValue(rows, fieldKey) {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const value = rows[index]?.[fieldKey];
+    if (value !== null && value !== undefined) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function isSelectableBoardColumn(column) {
+  if (!column?.field_key) {
+    return false;
+  }
+  if (NON_SELECTABLE_FIELD_CATEGORIES.has(column.category)) {
+    return false;
+  }
+  if (NON_SELECTABLE_GRANULARITIES.has(column.granularity)) {
+    return false;
+  }
+  return true;
+}
+
+export function buildFinlandBoardSelectedFields({
+  selectedFieldIds = [],
+  tablePayload,
+  fieldCatalogItems = [],
+} = {}) {
+  const columns = getFinlandBoardTableColumns(tablePayload);
+  const rows = getFinlandBoardTableRows(tablePayload);
+  const catalogByKey = new Map(fieldCatalogItems.map((item) => [item.field_key, item]));
+  const columnsByKey = new Map(columns.map((column) => [column.field_key, column]));
+
+  return selectedFieldIds.map((fieldId) => {
+    const column = columnsByKey.get(fieldId) || {};
+    const catalog = catalogByKey.get(fieldId) || {};
+    const fieldKey = column.field_key || catalog.field_key;
+
+    if (!fieldKey) {
+      return null;
+    }
+
+    return {
+      field_key: fieldKey,
+      id: fieldKey,
+      label: column.label || catalog.label || fieldKey,
+      unit: column.unit ?? catalog.unit ?? null,
+      source_name: column.source_name || catalog.source_name || null,
+      source_dataset_id: catalog.source_dataset_id || null,
+      source_type: column.source_type || catalog.source_type || null,
+      category: column.category || catalog.category || null,
+      granularity: column.granularity || catalog.granularity || null,
+      methodology_note: catalog.methodology_note || null,
+      latestValue: getFinlandLatestFieldValue(rows, fieldKey),
+    };
+  }).filter(Boolean);
+}
+
+export function buildFinlandBoardChartRequest({
+  selectedFields = [],
+  viewGranularity,
+} = {}) {
+  const fields = selectedFields
+    .map((field) => field?.field_key || field?.id)
+    .filter(Boolean);
+
+  if (!fields.length) {
+    return null;
+  }
+
+  return {
+    fields,
+    mode: fields.length === 1 ? 'single' : 'compare',
+    granularity: viewGranularity || selectedFields[0]?.granularity || '1h',
+  };
+}
+
+export function isFinlandBoardSelectableColumn(column) {
+  return isSelectableBoardColumn(column);
 }
 
 export function resolveFinlandBoardView(activeTab, dailyMode = 'daily_capacity') {

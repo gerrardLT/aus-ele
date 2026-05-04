@@ -8,11 +8,17 @@ import {
   FINLAND_DAILY_BOARD_VIEWS,
   FINLAND_PRIMARY_BOARD_TABS,
   buildFinlandBoardChartUrl,
+  buildFinlandBoardChartRequest,
+  buildFinlandBoardDictionaryRows,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
+  buildFinlandBoardSelectedFields,
   buildFinlandBoardTableUrl,
   getFinlandDictionaryTargetView,
+  getFinlandBoardOverviewCards,
+  getFinlandBoardTableColumns,
+  getFinlandBoardTableRows,
   normalizeFinlandDictionaryJumpTarget,
   resolveFinlandBoardView,
 } from './finlandApi.js';
@@ -107,6 +113,154 @@ test('buildFinlandBoardFieldCatalogUrl and buildFinlandBoardReadinessUrl target 
   );
 });
 
+test('Finland board helpers preserve backend overview cards and tabular payload shape', () => {
+  const overviewCards = [
+    { field_key: 'fcr_n_price_eur_mw', label: 'FCR-N Capacity Price', value: 12.5 },
+    { field_key: 'join_completeness', label: 'Join Completeness And Freshness', value: 100.0 },
+  ];
+  const tablePayload = {
+    columns: [
+      { field_key: 'timestamp_helsinki', label: 'Time (Europe/Helsinki)', source_type: 'derived' },
+      { field_key: 'spot_price_fi_eur_mwh', label: 'Finland Spot Price', unit: 'EUR/MWh', source_type: 'external_join' },
+    ],
+    rows: [
+      { timestamp_helsinki: '2026-04-01T03:00:00+03:00', spot_price_fi_eur_mwh: 75.0 },
+    ],
+  };
+
+  assert.deepEqual(getFinlandBoardOverviewCards({ cards: overviewCards }), overviewCards);
+  assert.deepEqual(getFinlandBoardOverviewCards({ cards: null }), []);
+  assert.deepEqual(getFinlandBoardTableColumns(tablePayload), tablePayload.columns);
+  assert.deepEqual(getFinlandBoardTableRows(tablePayload), tablePayload.rows);
+});
+
+test('Finland board helpers derive dictionary jumps, selected field details, and chart requests from real contracts', () => {
+  const fieldCatalogItems = [
+    {
+      field_key: 'spot_price_fi_eur_mwh',
+      label: 'Finland Spot Price',
+      unit: 'EUR/MWh',
+      granularity: '1h',
+      source_name: 'Nord Pool',
+      source_dataset_id: 'nordpool_day_ahead_fi',
+      source_type: 'external_join',
+      category: 'spot',
+      methodology_note: 'Joined day-ahead price series.',
+    },
+    {
+      field_key: 'imbalance_price_eur_mwh',
+      label: 'Imbalance Settlement Price',
+      unit: 'EUR/MWh',
+      granularity: '15m',
+      source_name: 'Fingrid',
+      source_dataset_id: '319',
+      source_type: 'live',
+      category: 'balancing',
+      methodology_note: 'Settlement reference price.',
+    },
+  ];
+  const tablePayload = {
+    granularity: '1h',
+    columns: [
+      {
+        field_key: 'timestamp_helsinki',
+        label: 'Time (Europe/Helsinki)',
+        source_name: 'Derived',
+        source_type: 'derived',
+        category: 'time',
+        granularity: 'display',
+      },
+      {
+        field_key: 'spot_price_fi_eur_mwh',
+        label: 'Finland Spot Price',
+        unit: 'EUR/MWh',
+        source_name: 'Nord Pool',
+        source_type: 'external_join',
+        category: 'spot',
+        granularity: '1h',
+      },
+    ],
+    rows: [
+      { timestamp_helsinki: '2026-04-01T03:00:00+03:00', spot_price_fi_eur_mwh: 75.0 },
+      { timestamp_helsinki: '2026-04-01T04:00:00+03:00', spot_price_fi_eur_mwh: 82.0 },
+    ],
+  };
+
+  assert.deepEqual(buildFinlandBoardDictionaryRows(fieldCatalogItems), [
+    {
+      ...fieldCatalogItems[0],
+      preferredView: 'capacity_hourly',
+    },
+    {
+      ...fieldCatalogItems[1],
+      preferredView: 'activation_15m',
+    },
+  ]);
+
+  assert.deepEqual(
+    buildFinlandBoardSelectedFields({
+      selectedFieldIds: ['spot_price_fi_eur_mwh', 'imbalance_price_eur_mwh'],
+      tablePayload,
+      fieldCatalogItems,
+    }),
+    [
+      {
+        field_key: 'spot_price_fi_eur_mwh',
+        id: 'spot_price_fi_eur_mwh',
+        label: 'Finland Spot Price',
+        unit: 'EUR/MWh',
+        source_name: 'Nord Pool',
+        source_dataset_id: 'nordpool_day_ahead_fi',
+        source_type: 'external_join',
+        category: 'spot',
+        granularity: '1h',
+        methodology_note: 'Joined day-ahead price series.',
+        latestValue: 82.0,
+      },
+      {
+        field_key: 'imbalance_price_eur_mwh',
+        id: 'imbalance_price_eur_mwh',
+        label: 'Imbalance Settlement Price',
+        unit: 'EUR/MWh',
+        source_name: 'Fingrid',
+        source_dataset_id: '319',
+        source_type: 'live',
+        category: 'balancing',
+        granularity: '15m',
+        methodology_note: 'Settlement reference price.',
+        latestValue: null,
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    buildFinlandBoardChartRequest({
+      selectedFields: [{ field_key: 'spot_price_fi_eur_mwh', granularity: '1h' }],
+      viewGranularity: '1h',
+    }),
+    {
+      fields: ['spot_price_fi_eur_mwh'],
+      mode: 'single',
+      granularity: '1h',
+    },
+  );
+  assert.deepEqual(
+    buildFinlandBoardChartRequest({
+      selectedFields: [
+        { field_key: 'spot_price_fi_eur_mwh', granularity: '1h' },
+        { field_key: 'imbalance_price_eur_mwh', granularity: '15m' },
+      ],
+      viewGranularity: 'day',
+    }),
+    {
+      fields: ['spot_price_fi_eur_mwh', 'imbalance_price_eur_mwh'],
+      mode: 'compare',
+      granularity: 'day',
+    },
+  );
+  assert.equal(buildFinlandBoardChartRequest({ selectedFields: [], viewGranularity: '1h' }), null);
+});
+
 test('main.jsx mounts a real FinlandPage import for the finland root page', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../main.jsx'), 'utf8');
 
@@ -159,39 +313,50 @@ test('FinlandPage wires dictionary jumps back into primary tabs and field select
   assert.doesNotMatch(source, /setActiveTab\(preferredView/);
 });
 
-test('FinlandPage tracks selected fields and wires them into the linked analysis shell', () => {
+test('FinlandPage tracks selected fields and wires real board payloads into the linked analysis shell', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
 
   assert.match(source, /const \[selectedFieldIds,\s*setSelectedFieldIds\] = useState\(\[\]\)/);
-  assert.match(source, /const fieldDescriptors = useMemo\(/);
   assert.match(source, /const selectedFields = useMemo\(/);
-  assert.match(source, /<FinlandDataTable[\s\S]*selectedFieldIds=\{selectedFieldIds\}[\s\S]*onSelectField=\{setSelectedFieldIds\}/);
-  assert.match(source, /<FinlandLinkedChart[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{copy\.linkedChart\}/);
-  assert.match(source, /<FinlandFieldDetailPanel[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{copy\.fieldDetailPanel\}/);
-  assert.doesNotMatch(source, /id:\s*`\$\{sourceLabel\}-\$\{key\}`/);
-  assert.doesNotMatch(source, /Object\.entries\(payload \|\| \{\}\)/);
+  assert.match(source, /const chartRequest = useMemo\(/);
+  assert.match(source, /const overviewCards = useMemo\(/);
+  assert.match(source, /const tableColumns = useMemo\(/);
+  assert.match(source, /const tableRows = useMemo\(/);
+  assert.match(source, /const selectedFields = useMemo\(/);
+  assert.match(source, /<FinlandOverviewCards cards=\{overviewCards\} copy=\{copy\} \/>/);
+  assert.match(source, /<FinlandDataTable[\s\S]*columns=\{tableColumns\}[\s\S]*rows=\{tableRows\}[\s\S]*selectedFieldIds=\{selectedFieldIds\}[\s\S]*onSelectField=\{setSelectedFieldIds\}/);
+  assert.match(source, /<FinlandLinkedChart[\s\S]*chartRequest=\{chartRequest\}[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{copy\.linkedChart\}/);
+  assert.match(source, /<FinlandFieldDetailPanel[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{\{[\s\S]*copy\.fieldDetailPanel/);
+  assert.doesNotMatch(source, /buildOverviewCards/);
+  assert.doesNotMatch(source, /buildFieldDescriptors/);
 });
 
-test('Finland workbench components rely on page-owned copy and stable descriptor contracts', () => {
+test('Finland workbench components rely on page-owned copy and real board contracts', () => {
   const tableSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandDataTable.jsx'), 'utf8');
   const chartSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandLinkedChart.jsx'), 'utf8');
   const detailSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandFieldDetailPanel.jsx'), 'utf8');
 
+  assert.match(tableSource, /columns = \[\]/);
+  assert.match(tableSource, /rows = \[\]/);
+  assert.match(tableSource, /columns\.map/);
+  assert.match(tableSource, /rows\.map/);
   assert.match(tableSource, /onSelectField/);
   assert.match(tableSource, /selectedFieldIds/);
   assert.match(tableSource, /sticky top-0/);
   assert.match(tableSource, /sticky left-0/);
-  assert.match(tableSource, /field\.unit/);
+  assert.match(tableSource, /column\.field_key/);
+  assert.match(tableSource, /row\?\.\[column\.field_key\]/);
   assert.doesNotMatch(tableSource, /DEFAULT_COPY/);
+  assert.match(chartSource, /fetchJson/);
+  assert.match(chartSource, /buildFinlandBoardChartUrl/);
+  assert.match(chartSource, /chartRequest/);
+  assert.match(chartSource, /payload\?\.series/);
   assert.match(chartSource, /selectedFields/);
-  assert.match(chartSource, /selectedFields\.length/);
-  assert.match(chartSource, /field\.label/);
-  assert.match(chartSource, /field\.unit/);
   assert.doesNotMatch(chartSource, /DEFAULT_COPY/);
   assert.match(detailSource, /selectedFields/);
   assert.match(detailSource, /selectedFields\.map/);
-  assert.match(detailSource, /field\.label/);
-  assert.match(detailSource, /field\.unit/);
+  assert.match(detailSource, /field\.methodology_note/);
+  assert.match(detailSource, /field\.source_dataset_id/);
   assert.doesNotMatch(detailSource, /DEFAULT_COPY/);
 });
 
@@ -209,8 +374,9 @@ test('Finland translations include table, chart, and detail shell copy owned by 
   assert.equal(translations.en.finlandBoard.tableShell.columns.field, 'Field');
   assert.equal(translations.en.finlandBoard.tableShell.columns.unit, 'Unit');
   assert.equal(translations.en.finlandBoard.linkedChart.emptyTitle, 'No fields selected');
-  assert.equal(translations.en.finlandBoard.fieldDetailPanel.pending, 'Pending linked detail wiring');
-  assert.equal(translations.en.finlandBoard.fieldCatalog.length, 4);
+  assert.equal(translations.en.finlandBoard.linkedChart.loading, 'Loading linked chart...');
+  assert.equal(translations.en.finlandBoard.fieldDetailPanel.labels.source, 'Source');
+  assert.equal(translations.en.finlandBoard.fieldDetailPanel.labels.methodology, 'Methodology');
   assert.equal(translations.en.finlandBoard.task7.dailyModesLabel, 'Daily Split');
   assert.equal(translations.en.finlandBoard.task7.tabs.capacity.label, 'Capacity 1H');
   assert.equal(translations.en.finlandBoard.task7.dictionary.jumpLabel, 'Jump');

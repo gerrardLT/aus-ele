@@ -10,11 +10,16 @@ import { fetchJson } from '../lib/apiClient';
 import {
   FINLAND_DAILY_BOARD_VIEWS,
   FINLAND_PRIMARY_BOARD_TABS,
+  buildFinlandBoardChartRequest,
+  buildFinlandBoardDictionaryRows,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
+  buildFinlandBoardSelectedFields,
   buildFinlandBoardTableUrl,
-  getFinlandDictionaryTargetView,
+  getFinlandBoardOverviewCards,
+  getFinlandBoardTableColumns,
+  getFinlandBoardTableRows,
   normalizeFinlandDictionaryJumpTarget,
   resolveFinlandBoardView,
 } from '../lib/finlandApi';
@@ -51,115 +56,12 @@ function formatCoverageWindow(overviewPayload, readinessPayload, copy) {
   return start || end || copy.notAvailable;
 }
 
-function buildOverviewCards(copy, overviewPayload, readinessPayload) {
-  const sourceCount = readPath(overviewPayload, 'summary.source_count')
-    || readPath(overviewPayload, 'data.summary.source_count')
-    || readPath(readinessPayload, 'summary.live_source_count')
-    || 0;
-  const readinessValue = readPath(readinessPayload, 'summary.field_count')
-    || readPath(readinessPayload, 'summary.live_source_count')
-    || copy.pending;
-  const traceValue = readPath(overviewPayload, 'generated_at_utc')
-    || readPath(readinessPayload, 'warnings.0')
-    || copy.notAvailable;
-
-  return [
-    {
-      id: 'coverage-window',
-      label: copy.cards.coverageWindow.label,
-      value: formatCoverageWindow(overviewPayload, readinessPayload, copy),
-      description: copy.cards.coverageWindow.description,
-    },
-    {
-      id: 'source-count',
-      label: copy.cards.sourceCount.label,
-      value: sourceCount,
-      description: copy.cards.sourceCount.description,
-    },
-    {
-      id: 'readiness',
-      label: copy.cards.readiness.label,
-      value: readinessValue,
-      description: copy.cards.readiness.description,
-    },
-    {
-      id: 'trace',
-      label: copy.cards.trace.label,
-      value: traceValue,
-      description: copy.cards.trace.description,
-    },
-  ];
-}
-
 function buildHeaderMetrics(copy, overviewPayload, readinessPayload) {
   return {
     overviewCount: Array.isArray(overviewPayload?.cards) ? overviewPayload.cards.length : Object.keys(overviewPayload || {}).length,
     readinessCount: Array.isArray(readinessPayload?.sources) ? readinessPayload.sources.length : Object.keys(readinessPayload || {}).length,
     deliveryValue: copy.deliveryValue,
   };
-}
-
-function summarizeValue(value, fallback) {
-  if (value === null || value === undefined || value === '') {
-    return fallback;
-  }
-  if (typeof value === 'object') {
-    return Array.isArray(value) ? `${value.length} items` : `${Object.keys(value).length} keys`;
-  }
-  return String(value);
-}
-
-function summarizeColumnValue(rows, fieldKey, fallback) {
-  const lastDefinedRow = [...(rows || [])].reverse().find((row) => row?.[fieldKey] !== null && row?.[fieldKey] !== undefined);
-  return summarizeValue(lastDefinedRow?.[fieldKey], fallback);
-}
-
-function buildFieldDescriptors(copy, tablePayload, fieldCatalogItems) {
-  const catalogByKey = new Map(fieldCatalogItems.map((item) => [item.field_key, item]));
-  const rows = tablePayload?.rows || [];
-
-  return (tablePayload?.columns || []).map((column) => {
-    const catalogRow = catalogByKey.get(column.field_key) || {};
-
-    return {
-      id: column.field_key,
-      label: column.label,
-      unit: column.unit,
-      source: column.source_name || catalogRow.source_name || copy.notAvailable,
-      readiness: copy.tableShell.ready,
-      value: summarizeColumnValue(rows, column.field_key, copy.notAvailable),
-    };
-  });
-}
-
-function buildDictionaryRows(fieldCatalogItems) {
-  return fieldCatalogItems.map((item) => ({
-    ...item,
-    preferredView: getFinlandDictionaryTargetView(item.field_key, item.granularity),
-  }));
-}
-
-function buildSelectedFields(selectedFieldIds, fieldDescriptors, dictionaryRows) {
-  const mergedFields = new Map();
-
-  for (const field of fieldDescriptors) {
-    mergedFields.set(field.id, field);
-  }
-
-  for (const row of dictionaryRows) {
-    if (!mergedFields.has(row.field_key)) {
-      mergedFields.set(row.field_key, {
-        id: row.field_key,
-        label: row.label,
-        unit: row.unit,
-        source: row.source_name,
-        readiness: row.source_type,
-        value: row.methodology_note,
-      });
-    }
-  }
-
-  return selectedFieldIds.map((fieldId) => mergedFields.get(fieldId)).filter(Boolean);
 }
 
 export default function FinlandPage() {
@@ -182,9 +84,9 @@ export default function FinlandPage() {
   const navCopy = translations[lang]?.nav || translations.en.nav;
   const activeBoardView = activeTab === 'daily' ? dailyMode : activeTab;
   const resolvedBoardView = resolveFinlandBoardView(activeTab, dailyMode);
-  const cards = useMemo(
-    () => buildOverviewCards(copy, overviewPayload, readinessPayload),
-    [copy, overviewPayload, readinessPayload],
+  const overviewCards = useMemo(
+    () => getFinlandBoardOverviewCards(overviewPayload),
+    [overviewPayload],
   );
   const headerMetrics = useMemo(
     () => buildHeaderMetrics(copy, overviewPayload, readinessPayload),
@@ -194,17 +96,25 @@ export default function FinlandPage() {
     () => (Array.isArray(fieldCatalogPayload?.items) ? fieldCatalogPayload.items : []),
     [fieldCatalogPayload],
   );
-  const fieldDescriptors = useMemo(
-    () => buildFieldDescriptors(copy, tablePayload, fieldCatalogItems),
-    [copy, tablePayload, fieldCatalogItems],
+  const tableColumns = useMemo(
+    () => getFinlandBoardTableColumns(tablePayload),
+    [tablePayload],
+  );
+  const tableRows = useMemo(
+    () => getFinlandBoardTableRows(tablePayload),
+    [tablePayload],
   );
   const dictionaryRows = useMemo(
-    () => buildDictionaryRows(fieldCatalogItems),
+    () => buildFinlandBoardDictionaryRows(fieldCatalogItems),
     [fieldCatalogItems],
   );
   const selectedFields = useMemo(
-    () => buildSelectedFields(selectedFieldIds, fieldDescriptors, dictionaryRows),
-    [selectedFieldIds, fieldDescriptors, dictionaryRows],
+    () => buildFinlandBoardSelectedFields({ selectedFieldIds, tablePayload, fieldCatalogItems }),
+    [selectedFieldIds, tablePayload, fieldCatalogItems],
+  );
+  const chartRequest = useMemo(
+    () => buildFinlandBoardChartRequest({ selectedFields, viewGranularity: tablePayload?.granularity }),
+    [selectedFields, tablePayload],
   );
   const workbenchCopy = useMemo(
     () => ({
@@ -325,12 +235,17 @@ export default function FinlandPage() {
       setError('');
 
       try {
-        const [nextTablePayload, nextFieldCatalogPayload] = await Promise.all([
+        const [nextTablePayload, nextFieldCatalogPayload] = await Promise.all(
           shouldLoadTable
-            ? fetchJson(buildFinlandBoardTableUrl(API_BASE, { view: activeBoardView, tz: BOARD_TIMEZONE }))
-            : Promise.resolve(null),
-          fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
-        ]);
+            ? [
+              fetchJson(buildFinlandBoardTableUrl(API_BASE, { view: activeBoardView, tz: BOARD_TIMEZONE })),
+              fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
+            ]
+            : [
+              Promise.resolve(tablePayload),
+              fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
+            ],
+        );
 
         if (cancelled) {
           return;
@@ -395,7 +310,7 @@ export default function FinlandPage() {
           headerMetrics={headerMetrics}
         />
 
-        <FinlandOverviewCards cards={cards} copy={copy} />
+        <FinlandOverviewCards cards={overviewCards} copy={copy} />
 
         {error ? (
           <section className="rounded-lg border border-[var(--color-error)]/35 bg-[var(--color-panel)] p-5 text-sm text-[var(--color-error)]">
@@ -418,11 +333,13 @@ export default function FinlandPage() {
 
         {TABULAR_TABS.has(activeTab) ? (
           <FinlandDataTable
-            fields={fieldDescriptors}
+            columns={tableColumns}
+            rows={tableRows}
             selectedFieldIds={selectedFieldIds}
             onSelectField={setSelectedFieldIds}
             copy={{
               ...copy.tableShell,
+              notAvailable: copy.notAvailable,
               description: `${copy.task7.tableDescriptionPrefix} ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
             }}
           />
@@ -431,10 +348,15 @@ export default function FinlandPage() {
         {activeTab === 'analysis' ? (
           <section className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
             <FinlandLinkedChart
+              apiBase={API_BASE}
+              chartRequest={chartRequest}
               selectedFields={selectedFields}
               copy={copy.linkedChart}
             />
-            <FinlandFieldDetailPanel selectedFields={selectedFields} copy={copy.fieldDetailPanel} />
+            <FinlandFieldDetailPanel
+              selectedFields={selectedFields}
+              copy={{ ...copy.fieldDetailPanel, notAvailable: copy.notAvailable }}
+            />
           </section>
         ) : null}
       </div>
