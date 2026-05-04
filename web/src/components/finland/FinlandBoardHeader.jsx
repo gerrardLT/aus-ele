@@ -2,11 +2,8 @@ export default function FinlandBoardHeader({
   copy,
   loading,
   error,
-  overviewPayload,
-  readinessPayload,
+  headerMetrics,
 }) {
-  const overviewCount = Object.keys(overviewPayload || {}).length;
-  const readinessCount = Object.keys(readinessPayload || {}).length;
   const statusTone = error
     ? 'border-[var(--color-error)]/50 text-[var(--color-error)]'
     : loading
@@ -46,15 +43,15 @@ export default function FinlandBoardHeader({
           <div className="grid gap-2 text-sm text-white/78">
             <div className="flex items-center justify-between gap-3">
               <span className="text-white/45">{copy.overviewPayloadLabel}</span>
-              <span>{overviewCount}</span>
+              <span>{headerMetrics.overviewCount}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-white/45">{copy.readinessPayloadLabel}</span>
-              <span>{readinessCount}</span>
+              <span>{headerMetrics.readinessCount}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-white/45">{copy.deliveryLabel}</span>
-              <span>{copy.deliveryValue}</span>
+              <span>{headerMetrics.deliveryValue}</span>
             </div>
           </div>
         </div>

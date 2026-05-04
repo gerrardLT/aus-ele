@@ -81,6 +81,14 @@ function buildOverviewCards(copy, overviewPayload, readinessPayload) {
   ];
 }
 
+function buildHeaderMetrics(copy, overviewPayload, readinessPayload) {
+  return {
+    overviewCount: Object.keys(overviewPayload || {}).length,
+    readinessCount: Object.keys(readinessPayload || {}).length,
+    deliveryValue: copy.deliveryValue,
+  };
+}
+
 export default function FinlandPage() {
   const [lang, setLang] = useState(() => readPreferredLang());
   const [overviewPayload, setOverviewPayload] = useState(null);
@@ -95,6 +103,10 @@ export default function FinlandPage() {
   const navCopy = translations[lang]?.nav || translations.en.nav;
   const cards = useMemo(
     () => buildOverviewCards(copy, overviewPayload, readinessPayload),
+    [copy, overviewPayload, readinessPayload],
+  );
+  const headerMetrics = useMemo(
+    () => buildHeaderMetrics(copy, overviewPayload, readinessPayload),
     [copy, overviewPayload, readinessPayload],
   );
   const tabs = useMemo(
@@ -199,8 +211,7 @@ export default function FinlandPage() {
           copy={copy}
           loading={loading}
           error={error}
-          overviewPayload={overviewPayload}
-          readinessPayload={readinessPayload}
+          headerMetrics={headerMetrics}
         />
 
         <FinlandOverviewCards cards={cards} copy={copy} />

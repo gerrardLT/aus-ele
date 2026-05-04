@@ -11,6 +11,7 @@ import {
   buildFinlandBoardReadinessUrl,
   buildFinlandBoardTableUrl,
 } from './finlandApi.js';
+import { translations } from '../translations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -107,14 +108,19 @@ test('FinlandPage uses board overview and readiness helpers with workspace shell
   assert.match(source, /FinlandOverviewCards/);
   assert.match(source, /FinlandWorkbenchTabs/);
   assert.match(source, /Promise\.all\(\s*\[/);
+  assert.match(source, /headerMetrics=/);
 });
 
-test('Finland board components expose overview and workbench shell structure', () => {
+test('Finland board components expose overview and workbench shell structure with page-owned header metrics', () => {
   const headerSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandBoardHeader.jsx'), 'utf8');
   const cardsSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandOverviewCards.jsx'), 'utf8');
   const tabsSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandWorkbenchTabs.jsx'), 'utf8');
 
   assert.match(headerSource, /copy\./);
+  assert.match(headerSource, /headerMetrics/);
+  assert.doesNotMatch(headerSource, /overviewPayload,/);
+  assert.doesNotMatch(headerSource, /readinessPayload,/);
+  assert.doesNotMatch(headerSource, /Object\.keys/);
   assert.match(cardsSource, /cards\.map/);
   assert.match(tabsSource, /tabs\.map/);
   assert.match(tabsSource, /aria-selected/);
@@ -131,4 +137,18 @@ test('app shell and translations include Finland navigation entry and localized 
   assert.match(translationsSource, /finland:/);
   assert.match(translationsSource, /translations\.zh\.finlandBoard = \{/);
   assert.match(translationsSource, /translations\.en\.finlandBoard = \{/);
+});
+
+test('Finland translations keep readable zh copy and correct language toggles', () => {
+  assert.equal(translations.zh.nav.finland, '芬兰市场看板');
+  assert.equal(translations.en.nav.finland, 'Finland Board');
+  assert.equal(translations.zh.finlandBoard.title, '芬兰市场看板');
+  assert.equal(
+    translations.zh.finlandBoard.subtitle,
+    '读取 overview 与 readiness 接口，先搭建工作台外壳，不进入表格联动和分析链路。',
+  );
+  assert.equal(translations.zh.finlandBoard.toggleLanguage, 'EN / 中');
+  assert.equal(translations.en.finlandBoard.toggleLanguage, '中 / EN');
+  assert.equal(translations.zh.finlandBoard.status.loading, '加载中');
+  assert.equal(translations.zh.finlandBoard.errorTitle, 'Finland board 接口加载失败');
 });
