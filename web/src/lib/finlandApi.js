@@ -1,3 +1,7 @@
+export const FINLAND_DAILY_BOARD_VIEWS = ['daily_capacity', 'daily_activation'];
+
+const ACTIVATION_FIELD_KEY_PATTERN = /(act_|imbalance_price)/;
+
 export function buildFinlandBoardOverviewUrl(apiBase, { start, end } = {}) {
   const params = new URLSearchParams();
   if (start) params.set('start', start);
@@ -35,4 +39,20 @@ export function buildFinlandBoardFieldCatalogUrl(apiBase) {
 
 export function buildFinlandBoardReadinessUrl(apiBase) {
   return `${apiBase}/finland/board/readiness`;
+}
+
+export function resolveFinlandBoardView(activeTab, dailyMode = 'daily_capacity') {
+  return activeTab === 'daily' ? dailyMode : activeTab;
+}
+
+export function getFinlandDictionaryTargetView(fieldKey, granularity) {
+  const normalizedFieldKey = String(fieldKey || '');
+  const normalizedGranularity = String(granularity || '');
+  const targetsDailyActivation = ACTIVATION_FIELD_KEY_PATTERN.test(normalizedFieldKey);
+
+  if (normalizedGranularity === 'day') {
+    return targetsDailyActivation ? 'daily_activation' : 'daily_capacity';
+  }
+
+  return targetsDailyActivation ? 'activation_15m' : 'capacity_hourly';
 }

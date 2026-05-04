@@ -5,11 +5,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  FINLAND_DAILY_BOARD_VIEWS,
   buildFinlandBoardChartUrl,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
   buildFinlandBoardTableUrl,
+  getFinlandDictionaryTargetView,
+  resolveFinlandBoardView,
 } from './finlandApi.js';
 import { translations } from '../translations.js';
 
@@ -55,6 +58,15 @@ test('buildFinlandBoardTableUrl omits undefined params and bare trailing query m
     }),
     'http://127.0.0.1:8085/api/finland/board/table?tz=Europe%2FHelsinki',
   );
+});
+
+test('Finland board view helpers resolve daily tabs and dictionary jumps to backend view keys', () => {
+  assert.deepEqual(FINLAND_DAILY_BOARD_VIEWS, ['daily_capacity', 'daily_activation']);
+  assert.equal(resolveFinlandBoardView('daily', 'daily_activation'), 'daily_activation');
+  assert.equal(resolveFinlandBoardView('capacity_hourly', 'daily_capacity'), 'capacity_hourly');
+  assert.equal(getFinlandDictionaryTargetView('afrr_act_up_eur_mwh', '15m'), 'activation_15m');
+  assert.equal(getFinlandDictionaryTargetView('mfrr_act_down_eur_mwh', 'day'), 'daily_activation');
+  assert.equal(getFinlandDictionaryTargetView('fcr_n_price_eur_mw', '1h'), 'capacity_hourly');
 });
 
 test('buildFinlandBoardChartUrl encodes repeated fields and chart controls', () => {
@@ -114,6 +126,29 @@ test('FinlandPage uses board overview and readiness helpers with workspace shell
   assert.match(source, /headerMetrics=/);
 });
 
+test('FinlandPage supports daily segmented modes and real board payload state', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+
+  assert.match(source, /const \[dailyMode,\s*setDailyMode\] = useState\('daily_capacity'\)/);
+  assert.match(source, /daily_activation/);
+  assert.match(source, /buildFinlandBoardTableUrl/);
+  assert.match(source, /buildFinlandBoardFieldCatalogUrl/);
+  assert.match(source, /const \[tablePayload,\s*setTablePayload\] = useState\(null\)/);
+  assert.match(source, /const \[fieldCatalogPayload,\s*setFieldCatalogPayload\] = useState\(null\)/);
+  assert.match(source, /activeTab === 'daily' \? dailyMode : activeTab/);
+  assert.match(source, /fetchJson\(buildFinlandBoardTableUrl\(API_BASE,\s*\{[\s\S]*view:\s*activeBoardView/);
+  assert.match(source, /fetchJson\(buildFinlandBoardFieldCatalogUrl\(API_BASE\)\)/);
+});
+
+test('FinlandPage wires dictionary jumps back into primary tabs and field selection', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+
+  assert.match(source, /const handleDictionaryJump = \(fieldKey,\s*preferredView\) =>/);
+  assert.match(source, /setActiveTab\(preferredView/);
+  assert.match(source, /setSelectedFieldIds\(\[fieldKey\]\)/);
+  assert.match(source, /onDictionaryJump=\{handleDictionaryJump\}/);
+});
+
 test('FinlandPage tracks selected fields and wires them into the linked analysis shell', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
 
@@ -148,6 +183,16 @@ test('Finland workbench components rely on page-owned copy and stable descriptor
   assert.match(detailSource, /field\.label/);
   assert.match(detailSource, /field\.unit/);
   assert.doesNotMatch(detailSource, /DEFAULT_COPY/);
+});
+
+test('FinlandWorkbenchTabs exposes a daily segmented control and dictionary jump surface', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandWorkbenchTabs.jsx'), 'utf8');
+
+  assert.match(source, /dailyModes/);
+  assert.match(source, /daily_capacity/);
+  assert.match(source, /daily_activation/);
+  assert.match(source, /onDailyModeChange/);
+  assert.match(source, /onDictionaryJump/);
 });
 
 test('Finland translations include table, chart, and detail shell copy owned by the page', () => {

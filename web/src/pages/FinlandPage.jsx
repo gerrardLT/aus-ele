@@ -8,13 +8,20 @@ import FinlandOverviewCards from '../components/finland/FinlandOverviewCards';
 import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
 import { fetchJson } from '../lib/apiClient';
 import {
+  FINLAND_DAILY_BOARD_VIEWS,
+  buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
+  buildFinlandBoardTableUrl,
+  getFinlandDictionaryTargetView,
+  resolveFinlandBoardView,
 } from '../lib/finlandApi';
 import { translations } from '../translations.js';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const BOARD_TIMEZONE = 'Europe/Helsinki';
 const LANG_STORAGE_KEY = 'app_lang';
+const TABULAR_TABS = new Set(['capacity_hourly', 'activation_15m', 'daily']);
 
 function readPreferredLang() {
   try {
@@ -45,15 +52,13 @@ function formatCoverageWindow(overviewPayload, readinessPayload, copy) {
 function buildOverviewCards(copy, overviewPayload, readinessPayload) {
   const sourceCount = readPath(overviewPayload, 'summary.source_count')
     || readPath(overviewPayload, 'data.summary.source_count')
-    || readPath(readinessPayload, 'sources.ready')
-    || readPath(readinessPayload, 'sources.total')
+    || readPath(readinessPayload, 'summary.live_source_count')
     || 0;
-  const readinessValue = readPath(readinessPayload, 'summary.status')
-    || readPath(readinessPayload, 'status')
-    || readPath(readinessPayload, 'readiness.status')
+  const readinessValue = readPath(readinessPayload, 'summary.field_count')
+    || readPath(readinessPayload, 'summary.live_source_count')
     || copy.pending;
-  const traceValue = readPath(overviewPayload, 'meta.trace_id')
-    || readPath(readinessPayload, 'meta.trace_id')
+  const traceValue = readPath(overviewPayload, 'generated_at_utc')
+    || readPath(readinessPayload, 'warnings.0')
     || copy.notAvailable;
 
   return [
@@ -86,8 +91,8 @@ function buildOverviewCards(copy, overviewPayload, readinessPayload) {
 
 function buildHeaderMetrics(copy, overviewPayload, readinessPayload) {
   return {
-    overviewCount: Object.keys(overviewPayload || {}).length,
-    readinessCount: Object.keys(readinessPayload || {}).length,
+    overviewCount: Array.isArray(overviewPayload?.cards) ? overviewPayload.cards.length : Object.keys(overviewPayload || {}).length,
+    readinessCount: Array.isArray(readinessPayload?.sources) ? readinessPayload.sources.length : Object.keys(readinessPayload || {}).length,
     deliveryValue: copy.deliveryValue,
   };
 }
@@ -102,35 +107,79 @@ function summarizeValue(value, fallback) {
   return String(value);
 }
 
-function buildFieldDescriptors(copy, overviewPayload, readinessPayload) {
-  return copy.fieldCatalog.map((descriptor) => {
-    const payload = descriptor.source === 'overview' ? overviewPayload : readinessPayload;
-    const rawValue = readPath(payload, descriptor.path);
+function summarizeColumnValue(rows, fieldKey, fallback) {
+  const lastDefinedRow = [...(rows || [])].reverse().find((row) => row?.[fieldKey] !== null && row?.[fieldKey] !== undefined);
+  return summarizeValue(lastDefinedRow?.[fieldKey], fallback);
+}
+
+function buildFieldDescriptors(copy, tablePayload, fieldCatalogItems) {
+  const catalogByKey = new Map(fieldCatalogItems.map((item) => [item.field_key, item]));
+  const rows = tablePayload?.rows || [];
+
+  return (tablePayload?.columns || []).map((column) => {
+    const catalogRow = catalogByKey.get(column.field_key) || {};
 
     return {
-      id: descriptor.id,
-      label: descriptor.label,
-      unit: descriptor.unit,
-      source: descriptor.source,
-      readiness: rawValue === null || rawValue === undefined ? copy.pending : copy.tableShell.ready,
-      value: summarizeValue(rawValue, copy.notAvailable),
+      id: column.field_key,
+      label: column.label,
+      unit: column.unit,
+      source: column.source_name || catalogRow.source_name || copy.notAvailable,
+      readiness: copy.tableShell.ready,
+      value: summarizeColumnValue(rows, column.field_key, copy.notAvailable),
     };
   });
+}
+
+function buildDictionaryRows(fieldCatalogItems) {
+  return fieldCatalogItems.map((item) => ({
+    ...item,
+    preferredView: getFinlandDictionaryTargetView(item.field_key, item.granularity),
+  }));
+}
+
+function buildSelectedFields(selectedFieldIds, fieldDescriptors, dictionaryRows) {
+  const mergedFields = new Map();
+
+  for (const field of fieldDescriptors) {
+    mergedFields.set(field.id, field);
+  }
+
+  for (const row of dictionaryRows) {
+    if (!mergedFields.has(row.field_key)) {
+      mergedFields.set(row.field_key, {
+        id: row.field_key,
+        label: row.label,
+        unit: row.unit,
+        source: row.source_name,
+        readiness: row.source_type,
+        value: row.methodology_note,
+      });
+    }
+  }
+
+  return selectedFieldIds.map((fieldId) => mergedFields.get(fieldId)).filter(Boolean);
 }
 
 export default function FinlandPage() {
   const [lang, setLang] = useState(() => readPreferredLang());
   const [overviewPayload, setOverviewPayload] = useState(null);
   const [readinessPayload, setReadinessPayload] = useState(null);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [tablePayload, setTablePayload] = useState(null);
+  const [fieldCatalogPayload, setFieldCatalogPayload] = useState(null);
+  const [activeTab, setActiveTab] = useState('capacity_hourly');
+  const [dailyMode, setDailyMode] = useState('daily_capacity');
   const [selectedFieldIds, setSelectedFieldIds] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [boardLoading, setBoardLoading] = useState(true);
   const [error, setError] = useState('');
+  const loading = overviewLoading || boardLoading;
   const copy = useMemo(
     () => translations[lang]?.finlandBoard || translations.en.finlandBoard,
     [lang],
   );
   const navCopy = translations[lang]?.nav || translations.en.nav;
+  const activeBoardView = activeTab === 'daily' ? dailyMode : activeTab;
+  const resolvedBoardView = resolveFinlandBoardView(activeTab, dailyMode);
   const cards = useMemo(
     () => buildOverviewCards(copy, overviewPayload, readinessPayload),
     [copy, overviewPayload, readinessPayload],
@@ -139,37 +188,131 @@ export default function FinlandPage() {
     () => buildHeaderMetrics(copy, overviewPayload, readinessPayload),
     [copy, overviewPayload, readinessPayload],
   );
+  const fieldCatalogItems = useMemo(
+    () => (Array.isArray(fieldCatalogPayload?.items) ? fieldCatalogPayload.items : []),
+    [fieldCatalogPayload],
+  );
   const fieldDescriptors = useMemo(
-    () => buildFieldDescriptors(copy, overviewPayload, readinessPayload),
-    [copy, overviewPayload, readinessPayload],
+    () => buildFieldDescriptors(copy, tablePayload, fieldCatalogItems),
+    [copy, tablePayload, fieldCatalogItems],
+  );
+  const dictionaryRows = useMemo(
+    () => buildDictionaryRows(fieldCatalogItems),
+    [fieldCatalogItems],
   );
   const selectedFields = useMemo(
-    () => fieldDescriptors.filter((field) => selectedFieldIds.includes(field.id)),
-    [fieldDescriptors, selectedFieldIds],
+    () => buildSelectedFields(selectedFieldIds, fieldDescriptors, dictionaryRows),
+    [selectedFieldIds, fieldDescriptors, dictionaryRows],
   );
-  const tabs = useMemo(
-    () => [
+  const workbenchCopy = useMemo(() => {
+    if (lang === 'zh') {
+      return {
+        ...copy.workbenchPanel,
+        dailyModesLabel: '日度视图',
+        dictionaryTitle: '字段字典',
+        dictionaryDescription: '点击字段可跳到对应主表并选中该字段。',
+        dictionaryFieldLabel: '字段',
+        dictionarySourceLabel: '来源',
+        dictionaryMethodLabel: '方法',
+        dictionaryJumpLabel: '跳转',
+        dictionaryEmpty: '暂无字段目录。',
+      };
+    }
+
+    return {
+      ...copy.workbenchPanel,
+      dailyModesLabel: 'Daily Split',
+      dictionaryTitle: 'Field Dictionary',
+      dictionaryDescription: 'Jump a field back into its related board view and keep the selection in sync.',
+      dictionaryFieldLabel: 'Field',
+      dictionarySourceLabel: 'Source',
+      dictionaryMethodLabel: 'Method',
+      dictionaryJumpLabel: 'Jump',
+      dictionaryEmpty: 'No field catalog rows available.',
+    };
+  }, [copy, lang]);
+  const tabs = useMemo(() => {
+    if (lang === 'zh') {
+      return [
+        {
+          id: 'capacity_hourly',
+          label: '容量 1h',
+          panelTitle: '容量主表',
+          panelDescription: '对接 `capacity_hourly` 视图，显示容量与现货的实时主表。',
+        },
+        {
+          id: 'activation_15m',
+          label: '激活 15m',
+          panelTitle: '激活主表',
+          panelDescription: '对接 `activation_15m` 视图，聚焦激活结算与不平衡价格。',
+        },
+        {
+          id: 'daily',
+          label: '日度',
+          panelTitle: '日度汇总',
+          panelDescription: '用 segmented control 在 `daily_capacity` 和 `daily_activation` 之间切换。',
+        },
+        {
+          id: 'field_dictionary',
+          label: '字典',
+          panelTitle: '字段字典',
+          panelDescription: '按真实 field catalog 展示字段来源、方法与跳转入口。',
+        },
+        {
+          id: 'analysis',
+          label: '联动分析',
+          panelTitle: '联动分析',
+          panelDescription: '保留已选字段，继续沿用下方 linked analysis 面板。',
+        },
+      ];
+    }
+
+    return [
       {
-        id: 'overview',
-        label: copy.tabs.overview.label,
-        panelTitle: copy.tabs.overview.panelTitle,
-        panelDescription: copy.tabs.overview.panelDescription,
+        id: 'capacity_hourly',
+        label: 'Capacity 1H',
+        panelTitle: 'Capacity primary view',
+        panelDescription: 'Backed by the real `capacity_hourly` board table view.',
       },
       {
-        id: 'table',
-        label: copy.tabs.table.label,
-        panelTitle: copy.tabs.table.panelTitle,
-        panelDescription: copy.tabs.table.panelDescription,
+        id: 'activation_15m',
+        label: 'Activation 15M',
+        panelTitle: 'Activation primary view',
+        panelDescription: 'Backed by the real `activation_15m` board table view.',
+      },
+      {
+        id: 'daily',
+        label: 'Daily',
+        panelTitle: 'Daily aggregates',
+        panelDescription: 'Use the segmented control to swap between `daily_capacity` and `daily_activation`.',
+      },
+      {
+        id: 'field_dictionary',
+        label: 'Dictionary',
+        panelTitle: 'Field dictionary',
+        panelDescription: 'Uses the real field catalog payload and jumps fields back into their primary table views.',
       },
       {
         id: 'analysis',
-        label: copy.tabs.analysis.label,
-        panelTitle: copy.tabs.analysis.panelTitle,
-        panelDescription: copy.tabs.analysis.panelDescription,
+        label: 'Linked Analysis',
+        panelTitle: 'Linked analysis',
+        panelDescription: 'Keeps selection-driven chart and detail slots active.',
       },
-    ],
-    [copy],
-  );
+    ];
+  }, [copy, lang]);
+  const dailyModes = useMemo(() => {
+    if (lang === 'zh') {
+      return [
+        { id: 'daily_capacity', label: '容量日度' },
+        { id: 'daily_activation', label: '激活日度' },
+      ];
+    }
+
+    return [
+      { id: 'daily_capacity', label: 'Daily Capacity' },
+      { id: 'daily_activation', label: 'Daily Activation' },
+    ];
+  }, [lang]);
   const workspaceLinks = [
     { key: 'home', href: '/', label: navCopy.brand },
     { key: 'finland', href: '/finland', label: navCopy.finland },
@@ -188,8 +331,8 @@ export default function FinlandPage() {
   useEffect(() => {
     let cancelled = false;
 
-    const loadBoard = async () => {
-      setLoading(true);
+    const loadBoardOverview = async () => {
+      setOverviewLoading(true);
       setError('');
 
       try {
@@ -212,17 +355,67 @@ export default function FinlandPage() {
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          setOverviewLoading(false);
         }
       }
     };
 
-    loadBoard();
+    loadBoardOverview();
 
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const shouldLoadTable = TABULAR_TABS.has(activeTab);
+
+    const loadBoardWorkbench = async () => {
+      setBoardLoading(true);
+      setError('');
+
+      try {
+        const [nextTablePayload, nextFieldCatalogPayload] = await Promise.all([
+          shouldLoadTable
+            ? fetchJson(buildFinlandBoardTableUrl(API_BASE, { view: activeBoardView, tz: BOARD_TIMEZONE }))
+            : Promise.resolve(null),
+          fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setTablePayload(nextTablePayload);
+        setFieldCatalogPayload(nextFieldCatalogPayload);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err?.message || String(err));
+          setTablePayload(null);
+          setFieldCatalogPayload(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setBoardLoading(false);
+        }
+      }
+    };
+
+    loadBoardWorkbench();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeBoardView, activeTab]);
+
+  const handleDictionaryJump = (fieldKey, preferredView) => {
+    if (FINLAND_DAILY_BOARD_VIEWS.includes(preferredView)) {
+      setDailyMode(preferredView);
+    }
+    setActiveTab(preferredView && FINLAND_DAILY_BOARD_VIEWS.includes(preferredView) ? 'daily' : preferredView || 'capacity_hourly');
+    setSelectedFieldIds([fieldKey]);
+  };
 
   return (
     <main className="min-h-screen bg-[var(--color-background)] px-6 py-8 text-[var(--color-text)]">
@@ -265,15 +458,25 @@ export default function FinlandPage() {
           tabs={tabs}
           activeTab={activeTab}
           onTabChange={setActiveTab}
-          panelCopy={copy.workbenchPanel}
+          panelCopy={workbenchCopy}
+          dailyModes={dailyModes}
+          dailyMode={dailyMode}
+          onDailyModeChange={setDailyMode}
+          dictionaryRows={dictionaryRows}
+          onDictionaryJump={handleDictionaryJump}
         />
 
-        {activeTab === 'table' ? (
+        {TABULAR_TABS.has(activeTab) ? (
           <FinlandDataTable
             fields={fieldDescriptors}
             selectedFieldIds={selectedFieldIds}
             onSelectField={setSelectedFieldIds}
-            copy={copy.tableShell}
+            copy={{
+              ...copy.tableShell,
+              description: lang === 'zh'
+                ? `当前视图：${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`
+                : `Current view: ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
+            }}
           />
         ) : null}
 
