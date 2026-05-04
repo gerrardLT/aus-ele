@@ -3249,7 +3249,6 @@ def get_finland_board_field_catalog():
 )
 def get_finland_board_readiness():
     try:
-        fingrid_service.seed_dataset_catalog(db)
         market_model_payload = build_finland_market_model_payload(db)
         return build_finland_board_readiness_payload(db, market_model_payload=market_model_payload)
     except HTTPException:
