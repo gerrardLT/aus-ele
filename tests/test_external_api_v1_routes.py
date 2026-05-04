@@ -242,3 +242,84 @@ class ExternalApiV1RouteTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["client_id"], "starter-client")
         self.assertEqual(payload["items"][0]["quota"]["daily_unit_limit"], 1000)
         self.assertEqual(payload["ledger"]["items"][0]["request_units"], 250)
+
+    def test_finland_board_overview_route_returns_cards(self):
+        payload = {
+            "cards": [{"field_key": "fcr_n_price_eur_mw", "value": 12.5}],
+            "window": {"start": "2026-04-01T00:00:00Z", "end": "2026-04-02T00:00:00Z"},
+            "generated_at_utc": "2026-04-02T01:00:00Z",
+        }
+
+        with mock.patch("server.build_finland_board_overview_payload", return_value=payload) as builder:
+            result = server.get_finland_board_overview(
+                start="2026-04-01T00:00:00Z",
+                end="2026-04-02T00:00:00Z",
+            )
+
+        self.assertEqual(result["cards"][0]["field_key"], "fcr_n_price_eur_mw")
+        builder.assert_called_once_with(
+            self.db,
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+        )
+
+    def test_finland_board_table_route_supports_capacity_hourly(self):
+        payload = {
+            "view": "capacity_hourly",
+            "title": "capacity_1h",
+            "granularity": "1h",
+            "timezone": "Europe/Helsinki",
+            "columns": [{"field_key": "spot_price_fi_eur_mwh"}],
+            "rows": [{"timestamp_helsinki": "2026-04-01T03:00:00+03:00", "spot_price_fi_eur_mwh": 75.0}],
+        }
+
+        with mock.patch("server.build_finland_board_table_payload", return_value=payload) as builder:
+            result = server.get_finland_board_table(
+                view="capacity_hourly",
+                start="2026-04-01T00:00:00Z",
+                end="2026-04-02T00:00:00Z",
+                tz="Europe/Helsinki",
+            )
+
+        self.assertEqual(result["view"], "capacity_hourly")
+        self.assertEqual(result["rows"][0]["spot_price_fi_eur_mwh"], 75.0)
+        builder.assert_called_once_with(
+            self.db,
+            view="capacity_hourly",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            tz="Europe/Helsinki",
+        )
+
+    def test_finland_board_chart_route_supports_spread(self):
+        payload = {
+            "mode": "spread",
+            "granularity": "1h",
+            "series": [
+                {
+                    "field_key": "imbalance_price_eur_mwh-minus-spot_price_fi_eur_mwh",
+                    "points": [{"timestamp_utc": "2026-04-01T00:00:00Z", "value": 30.0}],
+                }
+            ],
+            "window": {"start": "2026-04-01T00:00:00Z", "end": "2026-04-02T00:00:00Z"},
+        }
+
+        with mock.patch("server.build_finland_board_chart_payload", return_value=payload) as builder:
+            result = server.get_finland_board_chart(
+                fields=["imbalance_price_eur_mwh", "spot_price_fi_eur_mwh"],
+                mode="spread",
+                start="2026-04-01T00:00:00Z",
+                end="2026-04-02T00:00:00Z",
+                granularity="hour",
+            )
+
+        self.assertEqual(result["mode"], "spread")
+        self.assertEqual(result["series"][0]["points"][0]["value"], 30.0)
+        builder.assert_called_once_with(
+            self.db,
+            fields=["imbalance_price_eur_mwh", "spot_price_fi_eur_mwh"],
+            mode="spread",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            granularity="hour",
+        )
