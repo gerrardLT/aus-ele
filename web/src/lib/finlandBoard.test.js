@@ -6,12 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 import {
   FINLAND_DAILY_BOARD_VIEWS,
+  FINLAND_PRIMARY_BOARD_TABS,
   buildFinlandBoardChartUrl,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
   buildFinlandBoardTableUrl,
   getFinlandDictionaryTargetView,
+  normalizeFinlandDictionaryJumpTarget,
   resolveFinlandBoardView,
 } from './finlandApi.js';
 import { translations } from '../translations.js';
@@ -62,11 +64,16 @@ test('buildFinlandBoardTableUrl omits undefined params and bare trailing query m
 
 test('Finland board view helpers resolve daily tabs and dictionary jumps to backend view keys', () => {
   assert.deepEqual(FINLAND_DAILY_BOARD_VIEWS, ['daily_capacity', 'daily_activation']);
+  assert.deepEqual(FINLAND_PRIMARY_BOARD_TABS, ['capacity_hourly', 'activation_15m', 'daily']);
   assert.equal(resolveFinlandBoardView('daily', 'daily_activation'), 'daily_activation');
   assert.equal(resolveFinlandBoardView('capacity_hourly', 'daily_capacity'), 'capacity_hourly');
   assert.equal(getFinlandDictionaryTargetView('afrr_act_up_eur_mwh', '15m'), 'activation_15m');
   assert.equal(getFinlandDictionaryTargetView('mfrr_act_down_eur_mwh', 'day'), 'daily_activation');
   assert.equal(getFinlandDictionaryTargetView('fcr_n_price_eur_mw', '1h'), 'capacity_hourly');
+  assert.equal(normalizeFinlandDictionaryJumpTarget('daily_activation'), 'daily');
+  assert.equal(normalizeFinlandDictionaryJumpTarget('activation_15m'), 'activation_15m');
+  assert.equal(normalizeFinlandDictionaryJumpTarget('field_dictionary'), 'capacity_hourly');
+  assert.equal(normalizeFinlandDictionaryJumpTarget('nope'), 'capacity_hourly');
 });
 
 test('buildFinlandBoardChartUrl encodes repeated fields and chart controls', () => {
@@ -144,9 +151,12 @@ test('FinlandPage wires dictionary jumps back into primary tabs and field select
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
 
   assert.match(source, /const handleDictionaryJump = \(fieldKey,\s*preferredView\) =>/);
-  assert.match(source, /setActiveTab\(preferredView/);
+  assert.match(source, /normalizeFinlandDictionaryJumpTarget/);
+  assert.match(source, /const nextActiveTab = normalizeFinlandDictionaryJumpTarget\(preferredView\)/);
+  assert.match(source, /setActiveTab\(nextActiveTab\)/);
   assert.match(source, /setSelectedFieldIds\(\[fieldKey\]\)/);
   assert.match(source, /onDictionaryJump=\{handleDictionaryJump\}/);
+  assert.doesNotMatch(source, /setActiveTab\(preferredView/);
 });
 
 test('FinlandPage tracks selected fields and wires them into the linked analysis shell', () => {
@@ -201,6 +211,21 @@ test('Finland translations include table, chart, and detail shell copy owned by 
   assert.equal(translations.en.finlandBoard.linkedChart.emptyTitle, 'No fields selected');
   assert.equal(translations.en.finlandBoard.fieldDetailPanel.pending, 'Pending linked detail wiring');
   assert.equal(translations.en.finlandBoard.fieldCatalog.length, 4);
+  assert.equal(translations.en.finlandBoard.task7.dailyModesLabel, 'Daily Split');
+  assert.equal(translations.en.finlandBoard.task7.tabs.capacity.label, 'Capacity 1H');
+  assert.equal(translations.en.finlandBoard.task7.dictionary.jumpLabel, 'Jump');
+  assert.equal(translations.en.finlandBoard.task7.tableDescriptionPrefix, 'Current view:');
+  assert.ok(translations.zh.finlandBoard.task7);
+});
+
+test('FinlandPage reads Task 7 labels from translation-backed copy instead of inline literals', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+
+  assert.match(source, /copy\.task7/);
+  assert.doesNotMatch(source, /Daily Split/);
+  assert.doesNotMatch(source, /Field Dictionary/);
+  assert.doesNotMatch(source, /Current view:/);
+  assert.doesNotMatch(source, /No field catalog rows available\./);
 });
 
 test('Finland board components expose overview and workbench shell structure with page-owned header metrics', () => {

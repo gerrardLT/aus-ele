@@ -9,11 +9,13 @@ import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
 import { fetchJson } from '../lib/apiClient';
 import {
   FINLAND_DAILY_BOARD_VIEWS,
+  FINLAND_PRIMARY_BOARD_TABS,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
   buildFinlandBoardTableUrl,
   getFinlandDictionaryTargetView,
+  normalizeFinlandDictionaryJumpTarget,
   resolveFinlandBoardView,
 } from '../lib/finlandApi';
 import { translations } from '../translations.js';
@@ -21,7 +23,7 @@ import { translations } from '../translations.js';
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
 const BOARD_TIMEZONE = 'Europe/Helsinki';
 const LANG_STORAGE_KEY = 'app_lang';
-const TABULAR_TABS = new Set(['capacity_hourly', 'activation_15m', 'daily']);
+const TABULAR_TABS = new Set(FINLAND_PRIMARY_BOARD_TABS);
 
 function readPreferredLang() {
   try {
@@ -204,115 +206,62 @@ export default function FinlandPage() {
     () => buildSelectedFields(selectedFieldIds, fieldDescriptors, dictionaryRows),
     [selectedFieldIds, fieldDescriptors, dictionaryRows],
   );
-  const workbenchCopy = useMemo(() => {
-    if (lang === 'zh') {
-      return {
-        ...copy.workbenchPanel,
-        dailyModesLabel: '日度视图',
-        dictionaryTitle: '字段字典',
-        dictionaryDescription: '点击字段可跳到对应主表并选中该字段。',
-        dictionaryFieldLabel: '字段',
-        dictionarySourceLabel: '来源',
-        dictionaryMethodLabel: '方法',
-        dictionaryJumpLabel: '跳转',
-        dictionaryEmpty: '暂无字段目录。',
-      };
-    }
-
-    return {
+  const workbenchCopy = useMemo(
+    () => ({
       ...copy.workbenchPanel,
-      dailyModesLabel: 'Daily Split',
-      dictionaryTitle: 'Field Dictionary',
-      dictionaryDescription: 'Jump a field back into its related board view and keep the selection in sync.',
-      dictionaryFieldLabel: 'Field',
-      dictionarySourceLabel: 'Source',
-      dictionaryMethodLabel: 'Method',
-      dictionaryJumpLabel: 'Jump',
-      dictionaryEmpty: 'No field catalog rows available.',
-    };
-  }, [copy, lang]);
-  const tabs = useMemo(() => {
-    if (lang === 'zh') {
-      return [
-        {
-          id: 'capacity_hourly',
-          label: '容量 1h',
-          panelTitle: '容量主表',
-          panelDescription: '对接 `capacity_hourly` 视图，显示容量与现货的实时主表。',
-        },
-        {
-          id: 'activation_15m',
-          label: '激活 15m',
-          panelTitle: '激活主表',
-          panelDescription: '对接 `activation_15m` 视图，聚焦激活结算与不平衡价格。',
-        },
-        {
-          id: 'daily',
-          label: '日度',
-          panelTitle: '日度汇总',
-          panelDescription: '用 segmented control 在 `daily_capacity` 和 `daily_activation` 之间切换。',
-        },
-        {
-          id: 'field_dictionary',
-          label: '字典',
-          panelTitle: '字段字典',
-          panelDescription: '按真实 field catalog 展示字段来源、方法与跳转入口。',
-        },
-        {
-          id: 'analysis',
-          label: '联动分析',
-          panelTitle: '联动分析',
-          panelDescription: '保留已选字段，继续沿用下方 linked analysis 面板。',
-        },
-      ];
-    }
-
-    return [
+      dailyModesLabel: copy.task7.dailyModesLabel,
+      dictionaryTitle: copy.task7.dictionary.title,
+      dictionaryDescription: copy.task7.dictionary.description,
+      dictionaryFieldLabel: copy.task7.dictionary.fieldLabel,
+      dictionarySourceLabel: copy.task7.dictionary.sourceLabel,
+      dictionaryMethodLabel: copy.task7.dictionary.methodLabel,
+      dictionaryJumpLabel: copy.task7.dictionary.jumpLabel,
+      dictionaryEmpty: copy.task7.dictionary.empty,
+    }),
+    [copy],
+  );
+  const tabs = useMemo(
+    () => [
       {
         id: 'capacity_hourly',
-        label: 'Capacity 1H',
-        panelTitle: 'Capacity primary view',
-        panelDescription: 'Backed by the real `capacity_hourly` board table view.',
+        label: copy.task7.tabs.capacity.label,
+        panelTitle: copy.task7.tabs.capacity.panelTitle,
+        panelDescription: copy.task7.tabs.capacity.panelDescription,
       },
       {
         id: 'activation_15m',
-        label: 'Activation 15M',
-        panelTitle: 'Activation primary view',
-        panelDescription: 'Backed by the real `activation_15m` board table view.',
+        label: copy.task7.tabs.activation.label,
+        panelTitle: copy.task7.tabs.activation.panelTitle,
+        panelDescription: copy.task7.tabs.activation.panelDescription,
       },
       {
         id: 'daily',
-        label: 'Daily',
-        panelTitle: 'Daily aggregates',
-        panelDescription: 'Use the segmented control to swap between `daily_capacity` and `daily_activation`.',
+        label: copy.task7.tabs.daily.label,
+        panelTitle: copy.task7.tabs.daily.panelTitle,
+        panelDescription: copy.task7.tabs.daily.panelDescription,
       },
       {
         id: 'field_dictionary',
-        label: 'Dictionary',
-        panelTitle: 'Field dictionary',
-        panelDescription: 'Uses the real field catalog payload and jumps fields back into their primary table views.',
+        label: copy.task7.tabs.dictionary.label,
+        panelTitle: copy.task7.tabs.dictionary.panelTitle,
+        panelDescription: copy.task7.tabs.dictionary.panelDescription,
       },
       {
         id: 'analysis',
-        label: 'Linked Analysis',
-        panelTitle: 'Linked analysis',
-        panelDescription: 'Keeps selection-driven chart and detail slots active.',
+        label: copy.task7.tabs.analysis.label,
+        panelTitle: copy.task7.tabs.analysis.panelTitle,
+        panelDescription: copy.task7.tabs.analysis.panelDescription,
       },
-    ];
-  }, [copy, lang]);
-  const dailyModes = useMemo(() => {
-    if (lang === 'zh') {
-      return [
-        { id: 'daily_capacity', label: '容量日度' },
-        { id: 'daily_activation', label: '激活日度' },
-      ];
-    }
-
-    return [
-      { id: 'daily_capacity', label: 'Daily Capacity' },
-      { id: 'daily_activation', label: 'Daily Activation' },
-    ];
-  }, [lang]);
+    ],
+    [copy],
+  );
+  const dailyModes = useMemo(
+    () => [
+      { id: 'daily_capacity', label: copy.task7.dailyModes.capacity },
+      { id: 'daily_activation', label: copy.task7.dailyModes.activation },
+    ],
+    [copy],
+  );
   const workspaceLinks = [
     { key: 'home', href: '/', label: navCopy.brand },
     { key: 'finland', href: '/finland', label: navCopy.finland },
@@ -413,7 +362,8 @@ export default function FinlandPage() {
     if (FINLAND_DAILY_BOARD_VIEWS.includes(preferredView)) {
       setDailyMode(preferredView);
     }
-    setActiveTab(preferredView && FINLAND_DAILY_BOARD_VIEWS.includes(preferredView) ? 'daily' : preferredView || 'capacity_hourly');
+    const nextActiveTab = normalizeFinlandDictionaryJumpTarget(preferredView);
+    setActiveTab(nextActiveTab);
     setSelectedFieldIds([fieldKey]);
   };
 
@@ -473,9 +423,7 @@ export default function FinlandPage() {
             onSelectField={setSelectedFieldIds}
             copy={{
               ...copy.tableShell,
-              description: lang === 'zh'
-                ? `当前视图：${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`
-                : `Current view: ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
+              description: `${copy.task7.tableDescriptionPrefix} ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
             }}
           />
         ) : null}

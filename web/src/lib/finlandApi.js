@@ -1,4 +1,5 @@
 export const FINLAND_DAILY_BOARD_VIEWS = ['daily_capacity', 'daily_activation'];
+export const FINLAND_PRIMARY_BOARD_TABS = ['capacity_hourly', 'activation_15m', 'daily'];
 
 const ACTIVATION_FIELD_KEY_PATTERN = /(act_|imbalance_price)/;
 
@@ -55,4 +56,16 @@ export function getFinlandDictionaryTargetView(fieldKey, granularity) {
   }
 
   return targetsDailyActivation ? 'activation_15m' : 'capacity_hourly';
+}
+
+export function normalizeFinlandDictionaryJumpTarget(preferredView) {
+  if (FINLAND_DAILY_BOARD_VIEWS.includes(preferredView)) {
+    return 'daily';
+  }
+
+  if (FINLAND_PRIMARY_BOARD_TABS.includes(preferredView)) {
+    return preferredView;
+  }
+
+  return 'capacity_hourly';
 }

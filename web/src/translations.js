@@ -897,6 +897,50 @@ translations.en.finlandBoard = {
     pending: 'Pending linked detail wiring',
     selectionDescription: 'This panel is intentionally limited to stable selection awareness for Task 6.',
   },
+  task7: {
+    dailyModesLabel: 'Daily Split',
+    tableDescriptionPrefix: 'Current view:',
+    dailyModes: {
+      capacity: 'Daily Capacity',
+      activation: 'Daily Activation',
+    },
+    dictionary: {
+      title: 'Field Dictionary',
+      description: 'Jump a field back into its related board view and keep the selection in sync.',
+      fieldLabel: 'Field',
+      sourceLabel: 'Source',
+      methodLabel: 'Method',
+      jumpLabel: 'Jump',
+      empty: 'No field catalog rows available.',
+    },
+    tabs: {
+      capacity: {
+        label: 'Capacity 1H',
+        panelTitle: 'Capacity primary view',
+        panelDescription: 'Backed by the real `capacity_hourly` board table view.',
+      },
+      activation: {
+        label: 'Activation 15M',
+        panelTitle: 'Activation primary view',
+        panelDescription: 'Backed by the real `activation_15m` board table view.',
+      },
+      daily: {
+        label: 'Daily',
+        panelTitle: 'Daily aggregates',
+        panelDescription: 'Use the segmented control to swap between `daily_capacity` and `daily_activation`.',
+      },
+      dictionary: {
+        label: 'Dictionary',
+        panelTitle: 'Field dictionary',
+        panelDescription: 'Uses the real field catalog payload and jumps fields back into their primary table views.',
+      },
+      analysis: {
+        label: 'Linked Analysis',
+        panelTitle: 'Linked analysis',
+        panelDescription: 'Keeps selection-driven chart and detail slots active.',
+      },
+    },
+  },
   fieldCatalog: [
     {
       id: 'coverage_window',
@@ -927,6 +971,51 @@ translations.en.finlandBoard = {
       path: 'meta.trace_id',
     },
   ],
+};
+
+translations.zh.finlandBoard.task7 = {
+  dailyModesLabel: '日度视图',
+  tableDescriptionPrefix: '当前视图：',
+  dailyModes: {
+    capacity: '容量日度',
+    activation: '激活日度',
+  },
+  dictionary: {
+    title: '字段字典',
+    description: '点击字段可跳到对应主表并选中该字段。',
+    fieldLabel: '字段',
+    sourceLabel: '来源',
+    methodLabel: '方法',
+    jumpLabel: '跳转',
+    empty: '暂无字段目录。',
+  },
+  tabs: {
+    capacity: {
+      label: '容量 1h',
+      panelTitle: '容量主表',
+      panelDescription: '对接 `capacity_hourly` 视图，显示容量与现货的实时主表。',
+    },
+    activation: {
+      label: '激活 15m',
+      panelTitle: '激活主表',
+      panelDescription: '对接 `activation_15m` 视图，聚焦激活结算与不平衡价格。',
+    },
+    daily: {
+      label: '日度',
+      panelTitle: '日度汇总',
+      panelDescription: '用 segmented control 在 `daily_capacity` 和 `daily_activation` 之间切换。',
+    },
+    dictionary: {
+      label: '字典',
+      panelTitle: '字段字典',
+      panelDescription: '按真实 field catalog 展示字段来源、方法与跳转入口。',
+    },
+    analysis: {
+      label: '联动分析',
+      panelTitle: '联动分析',
+      panelDescription: '保留已选字段，继续沿用下方 linked analysis 面板。',
+    },
+  },
 };
 
 translations.zh.finlandBoard.tableShell = {
