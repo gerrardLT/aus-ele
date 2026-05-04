@@ -269,7 +269,291 @@ GET /api/grid-forecast?market=NEM&region=NSW1&horizon=24h
 }
 ```
 
-### 8.3 `POST /api/bess/backtests`
+### 8.3 Finland Board Routes
+
+以下契约对应 Finland board 第一版聚合接口：
+
+- `GET /api/finland/board/overview`
+- `GET /api/finland/board/table`
+- `GET /api/finland/board/chart`
+- `GET /api/finland/board/field-catalog`
+- `GET /api/finland/board/readiness`
+
+这些接口当前不复用第 1 节中的统一 `metadata` 包装，而是返回面向 board 视图的轻量聚合结构。错误响应仍遵循第 7 节：参数错误返回 `400`，不支持的 field / view 返回 `404`，未捕获异常返回 `500`。
+
+#### 8.3.1 `GET /api/finland/board/overview`
+
+请求参数：
+
+- `start`：可选，ISO-8601 起始时间
+- `end`：可选，ISO-8601 结束时间
+
+响应字段：
+
+- `cards`：长度固定为 6 的概览卡片数组，当前顺序由后端 registry 固定
+- `window.start` / `window.end`：原样回传请求时间窗口
+- `generated_at_utc`：后端生成时间
+
+`cards[*]` 当前字段：
+
+- `field_key`
+- `label`
+- `unit`
+- `granularity`
+- `value`
+- `change_vs_previous`
+- `sparkline`
+- `latest_coverage_utc`：仅 `join_completeness` 卡片包含
+
+响应示例：
+
+```json
+{
+  "cards": [
+    {
+      "field_key": "fcr_n_price_eur_mw",
+      "label": "FCR-N Capacity Price",
+      "unit": "EUR/MW",
+      "granularity": "1h",
+      "value": 12.5,
+      "change_vs_previous": null,
+      "sparkline": [10.0, 14.0, 13.5]
+    },
+    {
+      "field_key": "join_completeness",
+      "label": "Join Completeness And Freshness",
+      "unit": "%",
+      "granularity": "board",
+      "value": 100.0,
+      "change_vs_previous": null,
+      "sparkline": [100.0],
+      "latest_coverage_utc": "2026-04-02T00:00:00Z"
+    }
+  ],
+  "window": {
+    "start": "2026-04-01T00:00:00Z",
+    "end": "2026-04-02T00:00:00Z"
+  },
+  "generated_at_utc": "2026-04-02T01:00:00Z"
+}
+```
+
+#### 8.3.2 `GET /api/finland/board/table`
+
+请求参数：
+
+- `view`：必填，当前支持 `capacity_hourly`、`activation_15m`、`daily_capacity`、`daily_activation`
+- `start`：可选，ISO-8601 起始时间
+- `end`：可选，ISO-8601 结束时间
+- `tz`：可选，默认 `Europe/Helsinki`
+
+说明：
+
+- `summary_stats` 与 `field_dictionary` 是 registry 中保留 view key，但当前不是 tabular board table view；传入这两个值时接口返回 `400`
+- 未注册的 `view` 返回 `404`
+
+响应字段：
+
+- `view`
+- `title`
+- `granularity`
+- `timezone`
+- `columns`：列定义数组
+- `rows`：表格数据数组
+
+`columns[*]` 当前字段：
+
+- `field_key`
+- `label`
+- `unit`
+- `granularity`
+- `source_name`
+- `source_type`
+- `category`
+
+响应示例：
+
+```json
+{
+  "view": "capacity_hourly",
+  "title": "capacity_1h",
+  "granularity": "1h",
+  "timezone": "Europe/Helsinki",
+  "columns": [
+    {
+      "field_key": "timestamp_helsinki",
+      "label": "Time (Europe/Helsinki)",
+      "unit": null,
+      "granularity": "display",
+      "source_name": "Derived",
+      "source_type": "derived",
+      "category": "time"
+    },
+    {
+      "field_key": "spot_price_fi_eur_mwh",
+      "label": "Finland Spot Price",
+      "unit": "EUR/MWh",
+      "granularity": "1h",
+      "source_name": "Nord Pool",
+      "source_type": "external_join",
+      "category": "spot"
+    }
+  ],
+  "rows": [
+    {
+      "timestamp_utc": "2026-04-01T00:00:00Z",
+      "timestamp_helsinki": "2026-04-01T03:00:00+03:00",
+      "date": "2026-04-01",
+      "spot_price_fi_eur_mwh": 75.0
+    }
+  ]
+}
+```
+
+#### 8.3.3 `GET /api/finland/board/chart`
+
+请求参数：
+
+- `fields`：必填，可重复 query 参数；`mode=single|compare` 时支持 1..n 个 field，`mode=spread` 时必须恰好 2 个 field
+- `mode`：可选，默认 `single`；当前支持 `single`、`compare`、`spread`
+- `start`：可选，ISO-8601 起始时间
+- `end`：可选，ISO-8601 结束时间
+- `granularity`：可选，默认 `1h`；当前支持 `1h`、`hour`、`15m`、`day`
+
+说明：
+
+- `hour` 会在响应中归一化为 `1h`
+- 不支持的 `mode` 或 `granularity` 返回 `400`
+- 不支持的 `field` 返回 `404`
+
+响应字段：
+
+- `mode`
+- `granularity`
+- `series`
+- `window`
+
+`series[*]` 当前字段：
+
+- `field_key`
+- `label`
+- `points`
+
+`points[*]` 当前字段：
+
+- `timestamp_utc`
+- `timestamp_local`：`single` / `compare` 模式下按数据源原样透传，`spread` 模式当前不返回
+- `value`
+
+响应示例：
+
+```json
+{
+  "mode": "spread",
+  "granularity": "1h",
+  "series": [
+    {
+      "field_key": "imbalance_price_eur_mwh-minus-spot_price_fi_eur_mwh",
+      "label": "Imbalance Settlement Price - Finland Spot Price",
+      "points": [
+        {
+          "timestamp_utc": "2026-04-01T00:00:00Z",
+          "value": 30.0
+        }
+      ]
+    }
+  ],
+  "window": {
+    "start": "2026-04-01T00:00:00Z",
+    "end": "2026-04-02T00:00:00Z"
+  }
+}
+```
+
+#### 8.3.4 `GET /api/finland/board/field-catalog`
+
+请求参数：无。
+
+响应字段：
+
+- `items`
+
+`items[*]` 当前字段：
+
+- `field_key`
+- `label`
+- `unit`
+- `granularity`
+- `source_name`
+- `source_dataset_id`
+- `source_type`
+- `category`
+- `methodology_note`
+
+响应示例：
+
+```json
+{
+  "items": [
+    {
+      "field_key": "spot_price_fi_eur_mwh",
+      "label": "Finland Spot Price",
+      "unit": "EUR/MWh",
+      "granularity": "1h",
+      "source_name": "Nord Pool",
+      "source_dataset_id": "nordpool_day_ahead_fi",
+      "source_type": "external_join",
+      "category": "spot",
+      "methodology_note": "Nord Pool Finland day-ahead reference joined into board views."
+    }
+  ]
+}
+```
+
+#### 8.3.5 `GET /api/finland/board/readiness`
+
+请求参数：无。
+
+说明：
+
+- 该接口内部复用 `/api/finland/market-model` 的 source summary / sources / metadata.warnings 语义
+- 当前 route 不会触发 `fingrid_service.seed_dataset_catalog(db)` 副作用
+
+响应字段：
+
+- `summary.live_source_count`
+- `summary.configured_external_source_count`
+- `summary.field_count`
+- `sources`
+- `warnings`
+
+响应示例：
+
+```json
+{
+  "summary": {
+    "live_source_count": 1,
+    "configured_external_source_count": 1,
+    "field_count": 16
+  },
+  "sources": [
+    {
+      "source_key": "fingrid",
+      "status": "live"
+    },
+    {
+      "source_key": "nord_pool",
+      "status": "configured",
+      "integration": {
+        "readiness": "configured"
+      }
+    }
+  ],
+  "warnings": ["planned_external_sources"]
+}
+```
+
+### 8.4 `POST /api/bess/backtests`
 
 请求示例：
 
@@ -317,7 +601,7 @@ GET /api/grid-forecast?market=NEM&region=NSW1&horizon=24h
 }
 ```
 
-### 8.4 `POST /api/investment-analysis`
+### 8.5 `POST /api/investment-analysis`
 
 请求示例：
 

@@ -38,6 +38,13 @@ from models.p3_bess_decision_params import P3BessDecisionParams
 from models.financial_params import InvestmentParams
 from engines.bess_backtest_v1 import run_bess_backtest_v1
 from engines.p3_dispatch_optimizer import build_p3_strategy_bundle
+from finland_board_service import (
+    build_finland_board_chart_payload,
+    build_finland_board_field_catalog_rows,
+    build_finland_board_overview_payload,
+    build_finland_board_readiness_payload,
+    build_finland_board_table_payload,
+)
 from finland_market_model import build_finland_market_model_payload
 from lineage import build_job_lineage_payload, build_source_freshness_payload
 from model_governance import build_governance_summary_payload, build_p2_governance_payload, build_p3_governance_payload
@@ -379,6 +386,38 @@ class RunNextJobPayload(BaseModel):
 
 class FingridDatasetCatalogPayload(BaseModel):
     datasets: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FinlandBoardOverviewPayload(BaseModel):
+    cards: list[dict[str, Any]] = Field(default_factory=list)
+    window: dict[str, Any] = Field(default_factory=dict)
+    generated_at_utc: str | None = None
+
+
+class FinlandBoardTablePayload(BaseModel):
+    view: str
+    title: str
+    granularity: str
+    timezone: str
+    columns: list[dict[str, Any]] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FinlandBoardChartPayload(BaseModel):
+    mode: str
+    granularity: str
+    series: list[dict[str, Any]] = Field(default_factory=list)
+    window: dict[str, Any] = Field(default_factory=dict)
+
+
+class FinlandBoardFieldCatalogPayload(BaseModel):
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FinlandBoardReadinessPayload(BaseModel):
+    summary: dict[str, Any] = Field(default_factory=dict)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[Any] = Field(default_factory=list)
 
 
 class AvailableYearsPayload(BaseModel):
@@ -5040,6 +5079,139 @@ def get_fingrid_datasets():
 def get_finland_market_model():
     fingrid_service.seed_dataset_catalog(db)
     return build_finland_market_model_payload(db)
+
+
+@app.get(
+    "/api/finland/board/overview",
+    summary="Get Finland board overview",
+    description="Returns the Finland board overview cards for the requested time window.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=FinlandBoardOverviewPayload,
+)
+def get_finland_board_overview(
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+):
+    try:
+        return build_finland_board_overview_payload(
+            db,
+            start=start,
+            end=end,
+        )
+    except HTTPException:
+        raise
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Finland board overview API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/api/finland/board/table",
+    summary="Get Finland board table",
+    description="Returns a Finland board table view for the requested time window and timezone.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=FinlandBoardTablePayload,
+)
+def get_finland_board_table(
+    view: str = Query(..., description="Board table view key"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    tz: str = Query("Europe/Helsinki"),
+):
+    try:
+        return build_finland_board_table_payload(
+            db,
+            view=view,
+            start=start,
+            end=end,
+            tz=tz,
+        )
+    except HTTPException:
+        raise
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Finland board table API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/api/finland/board/chart",
+    summary="Get Finland board chart",
+    description="Returns one or more Finland board chart series for the requested fields and granularity.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=FinlandBoardChartPayload,
+)
+def get_finland_board_chart(
+    fields: list[str] = Query(..., description="One or more Finland board field keys"),
+    mode: str = Query("single", description="Chart mode"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    granularity: str = Query("1h"),
+):
+    try:
+        return build_finland_board_chart_payload(
+            db,
+            fields=fields,
+            mode=mode,
+            start=start,
+            end=end,
+            granularity=granularity,
+        )
+    except HTTPException:
+        raise
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Finland board chart API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/api/finland/board/field-catalog",
+    summary="Get Finland board field catalog",
+    description="Returns the field registry that backs the Finland board views.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=FinlandBoardFieldCatalogPayload,
+)
+def get_finland_board_field_catalog():
+    try:
+        return {"items": build_finland_board_field_catalog_rows()}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Finland board field catalog API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get(
+    "/api/finland/board/readiness",
+    summary="Get Finland board readiness",
+    description="Returns Finland board readiness by combining the board field catalog with Finland market model source context.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=FinlandBoardReadinessPayload,
+)
+def get_finland_board_readiness():
+    try:
+        market_model_payload = build_finland_market_model_payload(db)
+        return build_finland_board_readiness_payload(db, market_model_payload=market_model_payload)
+    except HTTPException:
+        raise
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Finland board readiness API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get(

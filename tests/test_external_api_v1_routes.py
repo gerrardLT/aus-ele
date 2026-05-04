@@ -5,6 +5,8 @@ import types
 import unittest
 from unittest import mock
 
+from fastapi.testclient import TestClient
+
 from tests.support import ensure_repo_import_paths
 
 ensure_repo_import_paths()
@@ -24,6 +26,7 @@ class ExternalApiV1RouteTests(unittest.TestCase):
         self.original_db = server.db
         server.db = self.db
         server.job_orchestrator.db = self.db
+        self.client = TestClient(server.app)
         self.db.upsert_organization(
             {
                 "organization_id": "org_ext",
@@ -350,3 +353,152 @@ class ExternalApiV1RouteTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["client_id"], "starter-client")
         self.assertEqual(payload["items"][0]["quota"]["daily_unit_limit"], 1000)
         self.assertEqual(payload["ledger"]["items"][0]["request_units"], 250)
+
+    def test_finland_board_overview_route_returns_cards(self):
+        payload = {
+            "cards": [{"field_key": "fcr_n_price_eur_mw", "value": 12.5}],
+            "window": {"start": "2026-04-01T00:00:00Z", "end": "2026-04-02T00:00:00Z"},
+            "generated_at_utc": "2026-04-02T01:00:00Z",
+        }
+
+        with mock.patch("server.build_finland_board_overview_payload", return_value=payload) as builder:
+            response = self.client.get(
+                "/api/finland/board/overview",
+                params={
+                    "start": "2026-04-01T00:00:00Z",
+                    "end": "2026-04-02T00:00:00Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["cards"][0]["field_key"], "fcr_n_price_eur_mw")
+        builder.assert_called_once_with(
+            self.db,
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+        )
+
+    def test_finland_board_table_route_supports_capacity_hourly(self):
+        payload = {
+            "view": "capacity_hourly",
+            "title": "capacity_1h",
+            "granularity": "1h",
+            "timezone": "Europe/Helsinki",
+            "columns": [{"field_key": "spot_price_fi_eur_mwh"}],
+            "rows": [{"timestamp_helsinki": "2026-04-01T03:00:00+03:00", "spot_price_fi_eur_mwh": 75.0}],
+        }
+
+        with mock.patch("server.build_finland_board_table_payload", return_value=payload) as builder:
+            response = self.client.get(
+                "/api/finland/board/table",
+                params={
+                    "view": "capacity_hourly",
+                    "start": "2026-04-01T00:00:00Z",
+                    "end": "2026-04-02T00:00:00Z",
+                    "tz": "Europe/Helsinki",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["view"], "capacity_hourly")
+        self.assertEqual(result["rows"][0]["spot_price_fi_eur_mwh"], 75.0)
+        builder.assert_called_once_with(
+            self.db,
+            view="capacity_hourly",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            tz="Europe/Helsinki",
+        )
+
+    def test_finland_board_chart_route_supports_spread(self):
+        payload = {
+            "mode": "spread",
+            "granularity": "1h",
+            "series": [
+                {
+                    "field_key": "imbalance_price_eur_mwh-minus-spot_price_fi_eur_mwh",
+                    "points": [{"timestamp_utc": "2026-04-01T00:00:00Z", "value": 30.0}],
+                }
+            ],
+            "window": {"start": "2026-04-01T00:00:00Z", "end": "2026-04-02T00:00:00Z"},
+        }
+
+        with mock.patch("server.build_finland_board_chart_payload", return_value=payload) as builder:
+            response = self.client.get(
+                "/api/finland/board/chart",
+                params=[
+                    ("fields", "imbalance_price_eur_mwh"),
+                    ("fields", "spot_price_fi_eur_mwh"),
+                    ("mode", "spread"),
+                    ("start", "2026-04-01T00:00:00Z"),
+                    ("end", "2026-04-02T00:00:00Z"),
+                    ("granularity", "hour"),
+                ],
+            )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["mode"], "spread")
+        self.assertEqual(result["series"][0]["points"][0]["value"], 30.0)
+        builder.assert_called_once_with(
+            self.db,
+            fields=["imbalance_price_eur_mwh", "spot_price_fi_eur_mwh"],
+            mode="spread",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            granularity="hour",
+        )
+
+    def test_finland_board_field_catalog_route_returns_items(self):
+        payload = {
+            "items": [
+                {
+                    "field_key": "spot_price_fi_eur_mwh",
+                    "label": "Finland Spot Price",
+                    "source_type": "external_join",
+                }
+            ]
+        }
+
+        with mock.patch("server.build_finland_board_field_catalog_rows", return_value=payload["items"]) as builder:
+            response = self.client.get("/api/finland/board/field-catalog")
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["items"][0]["field_key"], "spot_price_fi_eur_mwh")
+        self.assertEqual(result["items"][0]["source_type"], "external_join")
+        builder.assert_called_once_with()
+
+    def test_finland_board_readiness_route_returns_sources_without_seed_side_effect(self):
+        market_model_payload = {
+            "summary": {"live_source_count": 1, "configured_external_source_count": 1},
+            "sources": [{"source_key": "fingrid", "status": "live"}],
+            "metadata": {"warnings": ["planned_external_sources"]},
+        }
+        readiness_payload = {
+            "summary": {"live_source_count": 1, "configured_external_source_count": 1, "field_count": 2},
+            "sources": [{"source_key": "fingrid", "status": "live"}],
+            "warnings": ["planned_external_sources"],
+        }
+
+        with mock.patch("server.build_finland_market_model_payload", return_value=market_model_payload) as model_builder:
+            with mock.patch("server.build_finland_board_readiness_payload", return_value=readiness_payload) as readiness_builder:
+                with mock.patch("server.fingrid_service.seed_dataset_catalog") as seed_catalog:
+                    response = self.client.get("/api/finland/board/readiness")
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["summary"]["field_count"], 2)
+        self.assertEqual(result["sources"][0]["source_key"], "fingrid")
+        seed_catalog.assert_not_called()
+        model_builder.assert_called_once_with(self.db)
+        readiness_builder.assert_called_once_with(self.db, market_model_payload=market_model_payload)
+
+    def test_finland_board_table_route_maps_unknown_view_to_404(self):
+        with mock.patch("server.build_finland_board_table_payload", side_effect=KeyError("Unsupported Finland board view: nope")):
+            response = self.client.get("/api/finland/board/table", params={"view": "nope"})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "'Unsupported Finland board view: nope'")
