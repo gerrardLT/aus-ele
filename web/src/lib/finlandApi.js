@@ -8,11 +8,12 @@ export function buildFinlandBoardOverviewUrl(apiBase, { start, end } = {}) {
 
 export function buildFinlandBoardTableUrl(apiBase, { view, start, end, tz } = {}) {
   const params = new URLSearchParams();
-  params.set('view', view);
+  if (view) params.set('view', view);
   if (start) params.set('start', start);
   if (end) params.set('end', end);
   if (tz) params.set('tz', tz);
-  return `${apiBase}/finland/board/table?${params.toString()}`;
+  const suffix = params.toString();
+  return `${apiBase}/finland/board/table${suffix ? `?${suffix}` : ''}`;
 }
 
 export function buildFinlandBoardChartUrl(apiBase, { fields = [], mode, start, end, granularity } = {}) {
@@ -24,7 +25,8 @@ export function buildFinlandBoardChartUrl(apiBase, { fields = [], mode, start, e
   if (start) params.set('start', start);
   if (end) params.set('end', end);
   if (granularity) params.set('granularity', granularity);
-  return `${apiBase}/finland/board/chart?${params.toString()}`;
+  const suffix = params.toString();
+  return `${apiBase}/finland/board/chart${suffix ? `?${suffix}` : ''}`;
 }
 
 export function buildFinlandBoardFieldCatalogUrl(apiBase) {
