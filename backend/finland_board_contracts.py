@@ -246,6 +246,40 @@ FINLAND_BOARD_VIEWS = {
 }
 
 
+FINLAND_BOARD_OVERVIEW_CARDS = [
+    {
+        "field_key": "fcr_n_price_eur_mw",
+        "granularity": "1h",
+        "kind": "metric",
+    },
+    {
+        "field_key": "afrr_act_up_eur_mwh",
+        "granularity": "15m",
+        "kind": "metric",
+    },
+    {
+        "field_key": "mfrr_act_up_eur_mwh",
+        "granularity": "15m",
+        "kind": "metric",
+    },
+    {
+        "field_key": "imbalance_price_eur_mwh",
+        "granularity": "15m",
+        "kind": "metric",
+    },
+    {
+        "field_key": "spot_price_fi_eur_mwh",
+        "granularity": "1h",
+        "kind": "metric",
+    },
+    {
+        "field_key": "join_completeness",
+        "granularity": "board",
+        "kind": "join_health",
+    },
+]
+
+
 def get_finland_board_field(field_key: str) -> dict:
     if field_key not in FINLAND_BOARD_FIELDS:
         raise KeyError(f"Unsupported Finland board field: {field_key}")
@@ -256,3 +290,7 @@ def get_finland_board_view(view_key: str) -> dict:
     if view_key not in FINLAND_BOARD_VIEWS:
         raise KeyError(f"Unsupported Finland board view: {view_key}")
     return FINLAND_BOARD_VIEWS[view_key]
+
+
+def get_finland_board_overview_cards() -> list[dict]:
+    return list(FINLAND_BOARD_OVERVIEW_CARDS)

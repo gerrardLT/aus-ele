@@ -4,6 +4,7 @@ from tests.support import ensure_repo_import_paths
 
 ensure_repo_import_paths()
 
+from finland_board_contracts import FINLAND_BOARD_OVERVIEW_CARDS
 from finland_board_service import (
     build_finland_board_chart_payload,
     build_finland_board_field_catalog_rows,
@@ -69,6 +70,19 @@ class StubDatabase:
 
 
 class FinlandBoardServiceTests(unittest.TestCase):
+    def test_overview_card_contract_is_stable_and_registry_backed(self):
+        self.assertEqual(
+            [card["field_key"] for card in FINLAND_BOARD_OVERVIEW_CARDS],
+            [
+                "fcr_n_price_eur_mw",
+                "afrr_act_up_eur_mwh",
+                "mfrr_act_up_eur_mwh",
+                "imbalance_price_eur_mwh",
+                "spot_price_fi_eur_mwh",
+                "join_completeness",
+            ],
+        )
+
     def test_overview_returns_six_cards(self):
         payload = build_finland_board_overview_payload(
             StubDatabase(),
@@ -77,6 +91,10 @@ class FinlandBoardServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload["cards"]), 6)
+        self.assertEqual(
+            [card["field_key"] for card in payload["cards"]],
+            [card["field_key"] for card in FINLAND_BOARD_OVERVIEW_CARDS],
+        )
 
     def test_capacity_table_exposes_spot_join_column(self):
         payload = build_finland_board_table_payload(

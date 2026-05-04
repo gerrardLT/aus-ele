@@ -4,16 +4,12 @@ from datetime import datetime, timezone
 from statistics import mean
 from zoneinfo import ZoneInfo
 
-from finland_board_contracts import FINLAND_BOARD_FIELDS, get_finland_board_field, get_finland_board_view
-
-
-OVERVIEW_CARD_SPECS = [
-    ("fcr_n_price_eur_mw", "1h"),
-    ("afrr_act_up_eur_mwh", "15m"),
-    ("mfrr_act_up_eur_mwh", "15m"),
-    ("imbalance_price_eur_mwh", "15m"),
-    ("spot_price_fi_eur_mwh", "1h"),
-]
+from finland_board_contracts import (
+    FINLAND_BOARD_FIELDS,
+    get_finland_board_field,
+    get_finland_board_overview_cards,
+    get_finland_board_view,
+)
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -130,8 +126,12 @@ def _points_for_series(db, field_key: str, start: str | None, end: str | None, g
 
 
 def build_finland_board_overview_payload(db, start: str | None, end: str | None) -> dict:
-    cards = [_build_metric_card(field_key, start, end, granularity, db) for field_key, granularity in OVERVIEW_CARD_SPECS]
-    cards.append(_build_join_card(start, end, db))
+    cards = []
+    for spec in get_finland_board_overview_cards():
+        if spec["kind"] == "join_health":
+            cards.append(_build_join_card(start, end, db))
+        else:
+            cards.append(_build_metric_card(spec["field_key"], start, end, spec["granularity"], db))
     return {
         "cards": cards,
         "window": {"start": start, "end": end},
