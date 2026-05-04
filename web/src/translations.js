@@ -606,6 +606,7 @@ export const translations = {
 
 translations.zh.nav = {
   ...translations.zh.nav,
+  finland: '芬兰市场看板',
   fingrid: 'Fingrid',
   developerPortal: '\u5f00\u53d1\u8005\u95e8\u6237',
   sync: '\u540c\u6b65\u6570\u636e',
@@ -614,6 +615,7 @@ translations.zh.nav = {
 
 translations.en.nav = {
   ...translations.en.nav,
+  finland: 'Finland Board',
   fingrid: 'Fingrid',
   developerPortal: 'Developer Portal',
   sync: 'Sync',
@@ -722,4 +724,355 @@ translations.en.developerPortal = {
   endpoint: 'Endpoint',
   method: 'Method',
   noLedger: 'No ledger items are available.',
+};
+
+translations.zh.finlandBoard = {
+  brand: 'FINLAND BOARD',
+  title: '\u82ac\u5170\u5e02\u573a\u770b\u677f',
+  subtitle: '\u5148\u8bfb\u53d6\u771f\u5b9e\u7684 overview \u4e0e readiness \u63a5\u53e3\uff0c\u518d\u628a\u8868\u683c\u5de5\u4f5c\u53f0\u3001\u5b57\u6bb5\u8bcd\u5178\u548c\u8054\u52a8\u5206\u6790\u63a5\u5165\u5230\u7edf\u4e00\u770b\u677f\u3002',
+  toggleLanguage: 'EN / \u4e2d',
+  toggleLanguageAriaLabel: '\u5207\u6362\u82ac\u5170\u9875\u9762\u8bed\u8a00',
+  meta: {
+    scope: 'Finland market board',
+  },
+  status: {
+    loading: '\u52a0\u8f7d\u4e2d',
+    ready: '\u5df2\u8fde\u63a5',
+    error: '\u8bf7\u6c42\u5f02\u5e38',
+  },
+  heroTitle: '\u82ac\u5170\u5e02\u573a\u9875\u5df2\u63a5\u5165\u771f\u5b9e board \u5951\u7ea6\u3002',
+  heroDescription: '\u8fd9\u5c42\u9875\u9762\u8d1f\u8d23\u627f\u63a5\u6982\u89c8\u5361\u7247\u3001\u5de5\u4f5c\u53f0\u5207\u6362\u548c\u9009\u62e9\u8054\u52a8\uff0c\u8ba9\u4e0a\u6e38\u6570\u636e\u6e90\u4e0e\u524d\u7aef\u5c55\u793a\u5f62\u6210\u7a33\u5b9a\u95ed\u73af\u3002',
+  signalLabel: 'Payload \u6307\u6807',
+  overviewPayloadLabel: 'Overview \u5b57\u6bb5\u6570',
+  readinessPayloadLabel: 'Readiness \u5b57\u6bb5\u6570',
+  deliveryLabel: '\u5f53\u524d\u4ea4\u4ed8',
+  deliveryValue: '\u771f\u5b9e\u770b\u677f',
+  cardFallback: '\u6682\u65e0',
+  cardDescriptionFallback: '\u7b49\u5f85\u540e\u7eed\u6570\u636e\u8865\u9f50',
+  notAvailable: '\u6682\u65e0',
+  pending: '\u5f85\u8bc4\u4f30',
+  errorTitle: 'Finland board \u63a5\u53e3\u52a0\u8f7d\u5931\u8d25',
+  cards: {
+    coverageWindow: {
+      label: '\u8986\u76d6\u7a97\u53e3',
+      description: '\u4f18\u5148\u663e\u793a overview / readiness \u66b4\u9732\u51fa\u7684\u65f6\u95f4\u7a97\u53e3\u3002',
+    },
+    sourceCount: {
+      label: '\u5df2\u63a5\u5165\u6765\u6e90',
+      description: '\u6982\u89c8\u5c42\u53ea\u663e\u793a source footprint\uff0c\u4e0d\u5c55\u5f00\u9010\u5b57\u6bb5\u8868\u683c\u3002',
+    },
+    readiness: {
+      label: 'Readiness',
+      description: '\u4fdd\u7559 readiness \u72b6\u6001\u8bfb\u6570\uff0c\u4f5c\u4e3a\u540e\u7eed\u8868\u683c\u53ef\u7528\u6027\u7684\u5165\u53e3\u3002',
+    },
+    trace: {
+      label: 'Trace',
+      description: '\u4fbf\u4e8e\u540e\u7eed\u8054\u8c03 overview \u4e0e readiness \u8fd4\u56de\u94fe\u8def\u3002',
+    },
+  },
+  tabs: {
+    overview: {
+      label: 'Overview',
+      panelTitle: 'Overview \u5df2\u5c31\u4f4d',
+      panelDescription: '\u9876\u90e8\u6982\u89c8\u533a\u5df2\u7ecf\u63a5\u4e0a\u771f\u5b9e board overview \u5951\u7ea6\u3002',
+    },
+    table: {
+      label: 'Board Table',
+      panelTitle: '\u8868\u683c\u5de5\u4f5c\u53f0\u5df2\u63a5\u5165',
+      panelDescription: '\u4e2d\u90e8\u5de5\u4f5c\u53f0\u73b0\u5728\u76f4\u63a5\u6d88\u8d39\u771f\u5b9e table \u4e0e field catalog \u5951\u7ea6\u3002',
+    },
+    analysis: {
+      label: 'Linked Analysis',
+      panelTitle: '\u8054\u52a8\u5206\u6790\u5df2\u63a5\u5165',
+      panelDescription: '\u5b57\u6bb5\u9009\u62e9\u4f1a\u9a71\u52a8\u56fe\u8868\u4e0e\u8be6\u60c5\u9762\u677f\uff0c\u5f62\u6210\u95ed\u73af\u5206\u6790\u8def\u5f84\u3002',
+    },
+  },
+  workbenchPanel: {
+    tabListLabel: 'Finland workbench tabs',
+    eyebrow: 'Workbench',
+    defaultTitle: 'Finland board workspace',
+    defaultDescription: '\u5f53\u524d\u9875\u9762\u7531\u6982\u89c8\u3001\u5de5\u4f5c\u53f0\u548c\u8054\u52a8\u5206\u6790\u4e09\u5c42\u7ec4\u6210\u3002',
+  },
+};
+
+translations.en.finlandBoard = {
+  brand: 'FINLAND BOARD',
+  title: 'Finland Market Board',
+  subtitle: 'Load the real overview and readiness payloads first, while keeping the table and linked analysis out of scope.',
+  toggleLanguage: '中 / EN',
+  toggleLanguageAriaLabel: 'Toggle Finland page language',
+  meta: {
+    scope: 'Task 5 shell / overview / navigation',
+  },
+  status: {
+    loading: 'Loading',
+    ready: 'Connected',
+    error: 'Request error',
+  },
+  heroTitle: 'The Finland route now reads from live board endpoints.',
+  heroDescription: 'This pass is intentionally narrow: top-level workspace framing, overview cards, and a workbench tab shell. The full table and linked analysis stay for later tasks.',
+  signalLabel: 'Payload Signals',
+  overviewPayloadLabel: 'Overview keys',
+  readinessPayloadLabel: 'Readiness keys',
+  deliveryLabel: 'Current delivery',
+  deliveryValue: 'Shell only',
+  cardFallback: 'Not available',
+  cardDescriptionFallback: 'Waiting for the later table and linked-analysis tasks.',
+  notAvailable: 'Not available',
+  pending: 'Pending',
+  errorTitle: 'Failed to load Finland board endpoints',
+  cards: {
+    coverageWindow: {
+      label: 'Coverage Window',
+      description: 'Prefers any time window exposed by the overview or readiness payload.',
+    },
+    sourceCount: {
+      label: 'Source Footprint',
+      description: 'The shell only shows the source footprint and does not expand into field-level tables yet.',
+    },
+    readiness: {
+      label: 'Readiness',
+      description: 'Keeps the readiness readout visible as the handoff point for later table work.',
+    },
+    trace: {
+      label: 'Trace',
+      description: 'Useful for tracing the overview and readiness request chain during follow-on work.',
+    },
+  },
+  tabs: {
+    overview: {
+      label: 'Overview',
+      panelTitle: 'Overview shell is in place',
+      panelDescription: 'This tab holds the overview surface now. The full board table lands in a later task.',
+    },
+    table: {
+      label: 'Board Table',
+      panelTitle: 'Table workbench is intentionally deferred',
+      panelDescription: 'This task does not implement the table, field catalog, filters, or scroll-linked behavior.',
+    },
+    analysis: {
+      label: 'Linked Analysis',
+      panelTitle: 'Linked-analysis shell is reserved',
+      panelDescription: 'This task only keeps the future entry point visible. Drill-down and cross-link behavior are not built yet.',
+    },
+  },
+  workbenchPanel: {
+    tabListLabel: 'Finland workbench tabs',
+    eyebrow: 'Workbench Shell',
+    defaultTitle: 'Finland board shell',
+    defaultDescription: 'Only the page shell and overview layer are active right now.',
+  },
+  tableShell: {
+    eyebrow: 'Board Table',
+    title: 'Selectable board table shell',
+    description: 'Task 6 keeps the table on a small, stable descriptor list so selection can drive linked analysis without depending on transport keys.',
+    empty: 'No field rows available yet.',
+    ready: 'Ready',
+    columns: {
+      field: 'Field',
+      source: 'Source',
+      unit: 'Unit',
+      readiness: 'Readiness',
+      value: 'Signal',
+    },
+    action: {
+      selected: 'Selected',
+      available: 'Select',
+    },
+  },
+  linkedChart: {
+    eyebrow: 'Linked Analysis',
+    title: 'Selection-driven board chart',
+    emptyTitle: 'No fields selected',
+    emptyDescription: 'Select one or more board fields from the current table view to load the linked chart.',
+    loading: 'Loading linked chart...',
+    populatedDescription: 'The chart reflects the current field selection against the backend board chart route.',
+    selectionCountSuffix: 'selected',
+  },
+  fieldDetailPanel: {
+    eyebrow: 'Field Detail',
+    title: 'Selected field details',
+    emptyTitle: 'Waiting for a field selection',
+    emptyDescription: 'Choose fields from the board table to inspect field catalog details and latest values.',
+    listTitle: 'Selected board fields',
+    labels: {
+      source: 'Source',
+      granularity: 'Granularity',
+      dataset: 'Dataset',
+      latestValue: 'Latest value',
+      methodology: 'Methodology',
+    },
+  },
+  task7: {
+    dailyModesLabel: 'Daily Split',
+    tableDescriptionPrefix: 'Current view:',
+    dailyModes: {
+      capacity: 'Daily Capacity',
+      activation: 'Daily Activation',
+    },
+    dictionary: {
+      title: 'Field Dictionary',
+      description: 'Jump a field back into its related board view and keep the selection in sync.',
+      fieldLabel: 'Field',
+      sourceLabel: 'Source',
+      methodLabel: 'Method',
+      jumpLabel: 'Jump',
+      empty: 'No field catalog rows available.',
+    },
+    tabs: {
+      capacity: {
+        label: 'Capacity 1H',
+        panelTitle: 'Capacity primary view',
+        panelDescription: 'Backed by the real `capacity_hourly` board table view.',
+      },
+      activation: {
+        label: 'Activation 15M',
+        panelTitle: 'Activation primary view',
+        panelDescription: 'Backed by the real `activation_15m` board table view.',
+      },
+      daily: {
+        label: 'Daily',
+        panelTitle: 'Daily aggregates',
+        panelDescription: 'Use the segmented control to swap between `daily_capacity` and `daily_activation`.',
+      },
+      dictionary: {
+        label: 'Dictionary',
+        panelTitle: 'Field dictionary',
+        panelDescription: 'Uses the real field catalog payload and jumps fields back into their primary table views.',
+      },
+      analysis: {
+        label: 'Linked Analysis',
+        panelTitle: 'Linked analysis',
+        panelDescription: 'Keeps selection-driven chart and detail slots active.',
+      },
+    },
+  },
+  fieldCatalog: [
+    {
+      id: 'coverage_window',
+      label: 'Coverage Window',
+      unit: 'time',
+      source: 'overview',
+      path: 'window.start',
+    },
+    {
+      id: 'source_footprint',
+      label: 'Source Footprint',
+      unit: 'sources',
+      source: 'overview',
+      path: 'summary.source_count',
+    },
+    {
+      id: 'readiness_status',
+      label: 'Readiness',
+      unit: 'status',
+      source: 'readiness',
+      path: 'summary.status',
+    },
+    {
+      id: 'trace_id',
+      label: 'Trace',
+      unit: 'id',
+      source: 'overview',
+      path: 'meta.trace_id',
+    },
+  ],
+};
+
+translations.zh.finlandBoard.task7 = {
+  dailyModesLabel: '\u65e5\u5ea6\u89c6\u56fe',
+  tableDescriptionPrefix: '\u5f53\u524d\u89c6\u56fe\uff1a',
+  dailyModes: {
+    capacity: '\u5bb9\u91cf\u65e5\u5ea6',
+    activation: '\u6fc0\u6d3b\u65e5\u5ea6',
+  },
+  dictionary: {
+    title: '\u5b57\u6bb5\u5b57\u5178',
+    description: '\u70b9\u51fb\u5b57\u6bb5\u53ef\u8df3\u5230\u5bf9\u5e94\u4e3b\u8868\uff0c\u5e76\u4fdd\u6301\u5b57\u6bb5\u9009\u4e2d\u72b6\u6001\u3002',
+    fieldLabel: '\u5b57\u6bb5',
+    sourceLabel: '\u6765\u6e90',
+    methodLabel: '\u65b9\u6cd5',
+    jumpLabel: '\u8df3\u8f6c',
+    empty: '\u6682\u65e0\u5b57\u6bb5\u76ee\u5f55\u3002',
+  },
+  tabs: {
+    capacity: {
+      label: '\u5bb9\u91cf 1H',
+      panelTitle: '\u5bb9\u91cf\u4e3b\u8868',
+      panelDescription: '\u5bf9\u5e94\u771f\u5b9e\u7684 `capacity_hourly` \u89c6\u56fe\uff0c\u5c55\u793a\u5bb9\u91cf\u4ef7\u683c\u4e0e\u73b0\u8d27\u62fc\u63a5\u7ed3\u679c\u3002',
+    },
+    activation: {
+      label: '\u6fc0\u6d3b 15M',
+      panelTitle: '\u6fc0\u6d3b\u4e3b\u8868',
+      panelDescription: '\u5bf9\u5e94\u771f\u5b9e\u7684 `activation_15m` \u89c6\u56fe\uff0c\u805a\u7126\u6fc0\u6d3b\u4ef7\u683c\u4e0e\u4e0d\u5e73\u8861\u7ed3\u7b97\u3002',
+    },
+    daily: {
+      label: '\u65e5\u5ea6',
+      panelTitle: '\u65e5\u5ea6\u805a\u5408',
+      panelDescription: '\u4f7f\u7528 segmented control \u5728 `daily_capacity` \u548c `daily_activation` \u4e4b\u95f4\u5207\u6362\u3002',
+    },
+    dictionary: {
+      label: '\u5b57\u5178',
+      panelTitle: '\u5b57\u6bb5\u5b57\u5178',
+      panelDescription: '\u6309\u771f\u5b9e field catalog \u5c55\u793a\u5b57\u6bb5\u6765\u6e90\u3001\u65b9\u6cd5\u8bf4\u660e\u4e0e\u8df3\u8f6c\u5165\u53e3\u3002',
+    },
+    analysis: {
+      label: '\u8054\u52a8\u5206\u6790',
+      panelTitle: '\u8054\u52a8\u5206\u6790',
+      panelDescription: '\u4fdd\u7559\u5f53\u524d\u5df2\u9009\u5b57\u6bb5\uff0c\u5e76\u9a71\u52a8\u4e0b\u65b9 linked analysis \u9762\u677f\u3002',
+    },
+  },
+};
+
+translations.zh.finlandBoard.tableShell = {
+  eyebrow: 'Board Table',
+  title: '\u53ef\u9009\u62e9\u7684\u5e02\u573a\u4e3b\u8868',
+  description: '\u8868\u683c\u76f4\u63a5\u6d88\u8d39\u540e\u7aef columns \u4e0e rows \u5951\u7ea6\uff0c\u5b57\u6bb5\u9009\u62e9\u4f1a\u7ee7\u7eed\u9a71\u52a8\u4e0b\u65b9\u8054\u52a8\u5206\u6790\u3002',
+  empty: '\u6682\u65e0\u5b57\u6bb5\u884c\u53ef\u5c55\u793a\u3002',
+  ready: 'Ready',
+  columns: translations.en.finlandBoard.tableShell.columns,
+  action: translations.en.finlandBoard.tableShell.action,
+};
+
+translations.zh.finlandBoard.linkedChart = {
+  eyebrow: 'Linked Analysis',
+  title: '\u8054\u52a8\u56fe\u8868',
+  emptyTitle: '\u5c1a\u672a\u9009\u62e9\u5b57\u6bb5',
+  emptyDescription: '\u4ece\u5f53\u524d\u8868\u683c\u4e2d\u9009\u62e9\u4e00\u4e2a\u6216\u591a\u4e2a\u5b57\u6bb5\u540e\uff0c\u8fd9\u91cc\u4f1a\u8bf7\u6c42\u771f\u5b9e\u7684 board chart \u63a5\u53e3\u3002',
+  populatedDescription: '\u56fe\u8868\u4f1a\u8ddf\u968f\u5f53\u524d\u5b57\u6bb5\u9009\u62e9\uff0c\u5e76\u76f4\u63a5\u8bfb\u53d6\u540e\u7aef board chart \u6570\u636e\u3002',
+  selectionCountSuffix: 'selected',
+};
+
+translations.zh.finlandBoard.fieldDetailPanel = {
+  eyebrow: 'Field Detail',
+  title: '\u5b57\u6bb5\u8be6\u60c5',
+  emptyTitle: '\u7b49\u5f85\u5b57\u6bb5\u9009\u62e9',
+  emptyDescription: '\u4ece board \u8868\u683c\u4e2d\u9009\u62e9\u5b57\u6bb5\u540e\uff0c\u8fd9\u91cc\u4f1a\u5c55\u793a\u5b57\u6bb5\u76ee\u5f55\u4e2d\u7684\u6765\u6e90\u3001\u7c92\u5ea6\u3001\u6570\u636e\u96c6\u4e0e\u65b9\u6cd5\u8bf4\u660e\u3002',
+  listTitle: '\u5df2\u9009\u5b57\u6bb5',
+  pending: 'Pending linked detail wiring',
+  selectionDescription: '\u5b57\u6bb5\u8be6\u60c5\u9762\u677f\u4e0e\u56fe\u8868\u5171\u7528\u5f53\u524d\u9009\u4e2d\u5b57\u6bb5\uff0c\u540e\u7eed\u53ef\u4ee5\u7ee7\u7eed\u5f80 drill-down \u548c\u4ea4\u53c9\u5206\u6790\u65b9\u5411\u6269\u5c55\u3002',
+};
+
+translations.zh.finlandBoard.fieldCatalog = [...translations.en.finlandBoard.fieldCatalog];
+translations.zh.finlandBoard.linkedChart = {
+  ...translations.zh.finlandBoard.linkedChart,
+  title: '\u8054\u52a8\u56fe\u8868',
+  emptyTitle: '\u5c1a\u672a\u9009\u62e9\u5b57\u6bb5',
+  emptyDescription: '\u4ece\u5f53\u524d\u8868\u683c\u4e2d\u9009\u62e9\u4e00\u4e2a\u6216\u591a\u4e2a\u5b57\u6bb5\u540e\uff0c\u8fd9\u91cc\u4f1a\u8bf7\u6c42\u771f\u5b9e\u7684 board chart \u63a5\u53e3\u3002',
+  loading: '\u8054\u52a8\u56fe\u8868\u52a0\u8f7d\u4e2d...',
+  populatedDescription: '\u56fe\u8868\u4f1a\u8ddf\u968f\u5f53\u524d\u5b57\u6bb5\u9009\u62e9\uff0c\u5e76\u76f4\u63a5\u8bfb\u53d6\u540e\u7aef board chart \u6570\u636e\u3002',
+};
+translations.zh.finlandBoard.fieldDetailPanel = {
+  ...translations.zh.finlandBoard.fieldDetailPanel,
+  title: '\u5b57\u6bb5\u8be6\u60c5',
+  emptyTitle: '\u7b49\u5f85\u5b57\u6bb5\u9009\u62e9',
+  emptyDescription: '\u4ece board \u8868\u683c\u4e2d\u9009\u62e9\u5b57\u6bb5\u540e\uff0c\u8fd9\u91cc\u4f1a\u5c55\u793a\u5b57\u6bb5\u76ee\u5f55\u4e2d\u7684\u6765\u6e90\u3001\u7c92\u5ea6\u3001\u6570\u636e\u96c6\u4e0e\u65b9\u6cd5\u8bf4\u660e\u3002',
+  listTitle: '\u5df2\u9009\u5b57\u6bb5',
+  labels: {
+    source: '\u6765\u6e90',
+    granularity: '\u7c92\u5ea6',
+    dataset: '\u6570\u636e\u96c6',
+    latestValue: '\u6700\u65b0\u503c',
+    methodology: '\u65b9\u6cd5\u8bf4\u660e',
+  },
 };
