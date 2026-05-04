@@ -31,6 +31,8 @@ class DataQualityStorageTests(unittest.TestCase):
                 "scope": "market",
                 "market": "NEM",
                 "dataset_key": "trading_price_2026:NSW1",
+                "source_id": "aemo_nem_trading_price",
+                "dataset_family": "settlement",
                 "data_grade": "analytical",
                 "quality_score": 0.95,
                 "coverage_ratio": 1.0,
@@ -45,6 +47,8 @@ class DataQualityStorageTests(unittest.TestCase):
                 "scope": "market",
                 "market": "NEM",
                 "dataset_key": "trading_price_2026:NSW1",
+                "source_id": "aemo_nem_trading_price",
+                "dataset_family": "settlement",
                 "data_grade": "analytical",
                 "quality_score": 0.95,
                 "coverage_ratio": 0.99,
@@ -59,6 +63,8 @@ class DataQualityStorageTests(unittest.TestCase):
                 "scope": "market",
                 "market": "NEM",
                 "dataset_key": "trading_price_2026:NSW1",
+                "source_id": "aemo_nem_trading_price",
+                "dataset_family": "settlement",
                 "data_grade": "analytical",
                 "quality_score": 0.95,
                 "coverage_ratio": 0.98,
@@ -89,6 +95,8 @@ class DataQualityStorageTests(unittest.TestCase):
         self.assertEqual(rows[0]["quality_score"], 0.95)
         self.assertEqual(rows[0]["coverage_ratio"], 0.98)
         self.assertEqual(rows[0]["freshness_minutes"], 13.0)
+        self.assertEqual(rows[0]["source_id"], "aemo_nem_trading_price")
+        self.assertEqual(rows[0]["dataset_family"], "settlement")
         self.assertEqual(
             rows[0]["issues_json"],
             [
@@ -137,6 +145,36 @@ class DataQualityStorageTests(unittest.TestCase):
         self.assertEqual(issue_rows[1][4], "info")
         self.assertEqual(issue_rows[1][5], "{}")
         self.assertEqual(issue_rows[1][6], "2026-04-27T00:13:00Z")
+
+    def test_ensure_data_quality_tables_migrates_source_identity_columns(self):
+        with self.db.get_connection() as conn:
+            conn.execute(
+                f"""
+                CREATE TABLE {self.db.DATA_QUALITY_SNAPSHOT_TABLE} (
+                    scope TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    dataset_key TEXT NOT NULL,
+                    data_grade TEXT NOT NULL,
+                    quality_score REAL,
+                    coverage_ratio REAL,
+                    freshness_minutes REAL,
+                    issues_json TEXT NOT NULL DEFAULT '[]',
+                    metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                    computed_at TEXT NOT NULL,
+                    PRIMARY KEY (scope, market, dataset_key)
+                )
+                """
+            )
+            self.db.ensure_data_quality_tables(conn)
+            columns = [
+                row[1]
+                for row in conn.execute(
+                    f"PRAGMA table_info({self.db.DATA_QUALITY_SNAPSHOT_TABLE})"
+                ).fetchall()
+            ]
+
+        self.assertIn("source_id", columns)
+        self.assertIn("dataset_family", columns)
 
     def test_replace_data_quality_snapshots_is_transactional(self):
         self.db.upsert_data_quality_snapshot(
@@ -251,6 +289,27 @@ class DataQualityStorageTests(unittest.TestCase):
         )
         self.assertEqual(issue_rows, [])
 
+    def test_upsert_and_fetch_aemo_source_sync_state(self):
+        self.db.upsert_aemo_source_sync_state(
+            source_id="aemo_nem_weather",
+            last_success_at="2026-05-01T00:10:00Z",
+            last_attempt_at="2026-05-01T00:10:00Z",
+            sync_status="degraded",
+            last_error="anonymous ftp timeout",
+            detail={"provider": "open_meteo_api", "fallback_used": True},
+        )
+
+        row = self.db.fetch_aemo_source_sync_state("aemo_nem_weather")
+        all_rows = self.db.fetch_aemo_source_sync_states()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_id"], "aemo_nem_weather")
+        self.assertEqual(row["sync_status"], "degraded")
+        self.assertEqual(row["last_error"], "anonymous ftp timeout")
+        self.assertEqual(row["detail_json"]["provider"], "open_meteo_api")
+        self.assertEqual(len(all_rows), 1)
+        self.assertEqual(all_rows[0]["source_id"], "aemo_nem_weather")
+
 
 class DataQualitySummaryTests(unittest.TestCase):
     def test_summarize_quality_snapshots_groups_by_market(self):
@@ -306,10 +365,12 @@ class DataQualitySummaryTests(unittest.TestCase):
         original_collectors = (
             data_quality._compute_nem_snapshots,
             data_quality._compute_wem_snapshots,
+            data_quality._compute_aemo_source_snapshots,
             data_quality._compute_fingrid_snapshots,
         )
         data_quality._compute_nem_snapshots = lambda db: None
         data_quality._compute_wem_snapshots = lambda db: None
+        data_quality._compute_aemo_source_snapshots = lambda db: None
         data_quality._compute_fingrid_snapshots = lambda db: None
 
         try:
@@ -319,6 +380,7 @@ class DataQualitySummaryTests(unittest.TestCase):
             (
                 data_quality._compute_nem_snapshots,
                 data_quality._compute_wem_snapshots,
+                data_quality._compute_aemo_source_snapshots,
                 data_quality._compute_fingrid_snapshots,
             ) = original_collectors
 
@@ -326,10 +388,12 @@ class DataQualitySummaryTests(unittest.TestCase):
         original_collectors = (
             data_quality._compute_nem_snapshots,
             data_quality._compute_wem_snapshots,
+            data_quality._compute_aemo_source_snapshots,
             data_quality._compute_fingrid_snapshots,
         )
         data_quality._compute_nem_snapshots = lambda db: []
         data_quality._compute_wem_snapshots = lambda db: None
+        data_quality._compute_aemo_source_snapshots = lambda db: None
         data_quality._compute_fingrid_snapshots = lambda db: None
 
         try:
@@ -338,6 +402,7 @@ class DataQualitySummaryTests(unittest.TestCase):
             (
                 data_quality._compute_nem_snapshots,
                 data_quality._compute_wem_snapshots,
+                data_quality._compute_aemo_source_snapshots,
                 data_quality._compute_fingrid_snapshots,
             ) = original_collectors
 
@@ -591,6 +656,359 @@ class DataQualitySummaryTests(unittest.TestCase):
             if os.path.exists(db_path):
                 os.remove(db_path)
 
+    def test_compute_quality_snapshots_includes_aemo_source_governance_rows(self):
+        handle, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(handle)
+        db = DatabaseManager(db_path)
+
+        try:
+            with db.get_connection() as conn:
+                db.ensure_aemo_source_sync_table(conn)
+                conn.execute(
+                    """
+                    CREATE TABLE bom_weather_observation (
+                        region_id TEXT NOT NULL,
+                        station_name TEXT NOT NULL,
+                        observation_time_utc TEXT NOT NULL,
+                        observation_time_local TEXT,
+                        air_temperature_c REAL,
+                        wind_speed_mps REAL,
+                        cloud_cover_pct REAL,
+                        apparent_temperature_c REAL,
+                        relative_humidity_pct REAL,
+                        rainfall_mm REAL,
+                        pressure_hpa REAL,
+                        source_file TEXT NOT NULL,
+                        PRIMARY KEY (region_id, observation_time_utc)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE pdpasa_duid_availability (
+                        run_datetime TEXT NOT NULL,
+                        duid TEXT NOT NULL,
+                        interval_datetime TEXT NOT NULL,
+                        generation_max_availability REAL,
+                        generation_pasa_availability REAL,
+                        generation_recall_period REAL,
+                        load_max_availability REAL,
+                        load_pasa_availability REAL,
+                        load_recall_period REAL,
+                        lastchanged TEXT,
+                        source_file TEXT NOT NULL,
+                        PRIMARY KEY (run_datetime, duid, interval_datetime)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE wem_reserve_shortfall_snapshot (
+                        interval_start_utc TEXT NOT NULL,
+                        interval_end_utc TEXT NOT NULL,
+                        reserve_service TEXT NOT NULL,
+                        shortfall_mw REAL NOT NULL,
+                        severity TEXT NOT NULL,
+                        source_table TEXT NOT NULL,
+                        source_interval TEXT NOT NULL,
+                        PRIMARY KEY (interval_start_utc, reserve_service)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE operational_demand_actual_hh (
+                        region_id TEXT NOT NULL,
+                        interval_datetime TEXT NOT NULL,
+                        operational_demand REAL,
+                        operational_demand_adjustment REAL,
+                        wdr_estimate REAL,
+                        lastchanged TEXT,
+                        source_file TEXT NOT NULL,
+                        PRIMARY KEY (region_id, interval_datetime)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE operational_demand_forecast_hh (
+                        region_id TEXT NOT NULL,
+                        interval_datetime TEXT NOT NULL,
+                        load_date TEXT NOT NULL,
+                        operational_demand_poe10 REAL,
+                        operational_demand_poe50 REAL,
+                        operational_demand_poe90 REAL,
+                        lastchanged TEXT,
+                        source_file TEXT NOT NULL,
+                        PRIMARY KEY (region_id, interval_datetime, load_date)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE rooftop_pv_actual_measurement (
+                        region_id TEXT NOT NULL,
+                        interval_datetime TEXT NOT NULL,
+                        power REAL,
+                        qi REAL,
+                        source_type TEXT,
+                        lastchanged TEXT,
+                        source_file TEXT NOT NULL,
+                        PRIMARY KEY (region_id, interval_datetime)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE dispatch_interconnector_flow (
+                        interconnector_id TEXT NOT NULL,
+                        settlement_date TEXT NOT NULL,
+                        from_regionid TEXT NOT NULL,
+                        to_regionid TEXT NOT NULL,
+                        mwflow REAL,
+                        meteredmwflow REAL,
+                        source_file TEXT NOT NULL,
+                        PRIMARY KEY (interconnector_id, settlement_date)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO bom_weather_observation (
+                        region_id, station_name, observation_time_utc, observation_time_local,
+                        air_temperature_c, wind_speed_mps, cloud_cover_pct, apparent_temperature_c,
+                        relative_humidity_pct, rainfall_mm, pressure_hpa, source_file
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "QLD1",
+                        "Brisbane",
+                        "2026-05-01T00:00:00Z",
+                        "2026-05-01T10:00:00+10:00",
+                        24.0,
+                        5.0,
+                        30.0,
+                        25.0,
+                        60.0,
+                        0.0,
+                        1012.0,
+                        "open_meteo_api",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO pdpasa_duid_availability (
+                        run_datetime, duid, interval_datetime, generation_max_availability,
+                        generation_pasa_availability, generation_recall_period, load_max_availability,
+                        load_pasa_availability, load_recall_period, lastchanged, source_file
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "2026-05-01 00:00:00",
+                        "BAT1",
+                        "2026-05-01 04:00:00",
+                        100.0,
+                        95.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        "2026-05-01 00:00:00",
+                        "PDPASA_20260501.zip",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO wem_reserve_shortfall_snapshot (
+                        interval_start_utc, interval_end_utc, reserve_service, shortfall_mw,
+                        severity, source_table, source_interval
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "2026-05-01T00:00:00Z",
+                        "2026-05-01T00:05:00Z",
+                        "REGULATION_RAISE",
+                        12.0,
+                        "market_shortfall",
+                        "wem_ess_market_price",
+                        "2026-05-01 00:00:00",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO operational_demand_actual_hh (
+                        region_id, interval_datetime, operational_demand, operational_demand_adjustment,
+                        wdr_estimate, lastchanged, source_file
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "NSW1",
+                        "2026/05/01 00:00:00",
+                        8000.0,
+                        0.0,
+                        0.0,
+                        "2026-05-01 00:00:00",
+                        "PUBLIC_ACTUAL_OPERATIONAL_DEMAND.zip",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO operational_demand_forecast_hh (
+                        region_id, interval_datetime, load_date, operational_demand_poe10,
+                        operational_demand_poe50, operational_demand_poe90, lastchanged, source_file
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "NSW1",
+                        "2026/05/01 00:30:00",
+                        "2026/05/01 00:00:00",
+                        7800.0,
+                        8000.0,
+                        8200.0,
+                        "2026-05-01 00:00:00",
+                        "PUBLIC_FORECAST_OPERATIONAL_DEMAND.zip",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO rooftop_pv_actual_measurement (
+                        region_id, interval_datetime, power, qi, source_type, lastchanged, source_file
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "SA1",
+                        "2026/05/01 00:00:00",
+                        1200.0,
+                        1.0,
+                        "MEASUREMENT",
+                        "2026-05-01 00:00:00",
+                        "PUBLIC_ROOFTOP_PV_ACTUAL.zip",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO dispatch_interconnector_flow (
+                        interconnector_id, settlement_date, from_regionid, to_regionid, mwflow, meteredmwflow, source_file
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "NSW1-QLD1",
+                        "2026-05-01 00:00:00",
+                        "NSW1",
+                        "QLD1",
+                        150.0,
+                        149.0,
+                        "PUBLIC_DISPATCHIS.zip",
+                    ),
+                )
+                conn.commit()
+
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_weather",
+                last_success_at="2026-05-01T00:10:00Z",
+                last_attempt_at="2026-05-01T00:10:00Z",
+                sync_status="degraded",
+                last_error=None,
+                detail={"provider": "open_meteo_api", "fallback_used": True},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_load_actual",
+                last_success_at="2026-05-01T00:05:00Z",
+                last_attempt_at="2026-05-01T00:05:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"row_count": 1},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_load_forecast",
+                last_success_at="2026-05-01T00:06:00Z",
+                last_attempt_at="2026-05-01T00:06:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"row_count": 1},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_rooftop_pv",
+                last_success_at="2026-05-01T00:07:00Z",
+                last_attempt_at="2026-05-01T00:07:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"row_count": 1},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_interconnector_flow",
+                last_success_at="2026-05-01T00:08:00Z",
+                last_attempt_at="2026-05-01T00:08:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"row_count": 1},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_wind_actual",
+                last_success_at="2026-05-01T00:09:00Z",
+                last_attempt_at="2026-05-01T00:09:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"row_count": 1, "metric": "ss_wind_clearedmw"},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_solar_actual",
+                last_success_at="2026-05-01T00:10:00Z",
+                last_attempt_at="2026-05-01T00:10:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"row_count": 1, "metric": "ss_solar_clearedmw"},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_nem_unit_availability",
+                last_success_at="2026-05-01T00:12:00Z",
+                last_attempt_at="2026-05-01T00:12:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"row_count": 1},
+            )
+            db.upsert_aemo_source_sync_state(
+                source_id="aemo_wem_reserve_shortfall",
+                last_success_at="2026-05-01T00:15:00Z",
+                last_attempt_at="2026-05-01T00:15:00Z",
+                sync_status="ok",
+                last_error=None,
+                detail={"derived_from": "wem_ess_market_price"},
+            )
+
+            rows = compute_quality_snapshots(db)
+            keyed = {row["source_id"]: row for row in rows if row.get("source_id")}
+
+            self.assertIn("aemo_nem_weather", keyed)
+            self.assertIn("aemo_nem_load_actual", keyed)
+            self.assertIn("aemo_nem_load_forecast", keyed)
+            self.assertIn("aemo_nem_rooftop_pv", keyed)
+            self.assertIn("aemo_nem_interconnector_flow", keyed)
+            self.assertIn("aemo_nem_unit_availability", keyed)
+            self.assertIn("aemo_wem_reserve_shortfall", keyed)
+            self.assertEqual(keyed["aemo_nem_weather"]["dataset_family"], "weather")
+            self.assertEqual(keyed["aemo_nem_weather"]["market"], "NEM")
+            self.assertEqual(keyed["aemo_nem_weather"]["data_grade"], "analytical-preview")
+            weather_issue_codes = {item["issue_code"] for item in keyed["aemo_nem_weather"]["issues_json"]}
+            self.assertIn("sync_not_ok", weather_issue_codes)
+            self.assertEqual(keyed["aemo_nem_load_actual"]["dataset_family"], "load_actual")
+            self.assertEqual(keyed["aemo_nem_load_forecast"]["dataset_family"], "load_forecast")
+            self.assertEqual(keyed["aemo_nem_rooftop_pv"]["dataset_family"], "rooftop_pv")
+            self.assertEqual(keyed["aemo_nem_interconnector_flow"]["dataset_family"], "interconnector_flow")
+            self.assertEqual(keyed["aemo_nem_unit_availability"]["dataset_family"], "unit_availability")
+            wind_actual_issue_codes = {item["issue_code"] for item in keyed["aemo_nem_wind_actual"]["issues_json"]}
+            solar_actual_issue_codes = {item["issue_code"] for item in keyed["aemo_nem_solar_actual"]["issues_json"]}
+            self.assertIn("actual_proxy_source", wind_actual_issue_codes)
+            self.assertIn("actual_proxy_source", solar_actual_issue_codes)
+            self.assertEqual(keyed["aemo_wem_reserve_shortfall"]["market"], "WEM")
+            self.assertEqual(
+                keyed["aemo_wem_reserve_shortfall"]["metadata_json"]["coverage_end"],
+                "2026-05-01T00:05:00Z",
+            )
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+
 
 class DataQualityApiTests(unittest.TestCase):
     @staticmethod
@@ -682,6 +1100,38 @@ class DataQualityApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 501)
         self.assertEqual(response.json()["detail"], "collectors unavailable")
+
+    def test_data_quality_refresh_route_persists_computed_snapshots(self):
+        original_compute_quality_snapshots = self.server.compute_quality_snapshots
+        snapshots = [
+            {
+                "scope": "dataset",
+                "market": "NEM",
+                "dataset_key": "bom_weather_observation",
+                "source_id": "aemo_nem_weather",
+                "dataset_family": "weather",
+                "data_grade": "analytical-preview",
+                "quality_score": 0.83,
+                "coverage_ratio": 1.0,
+                "freshness_minutes": 15,
+                "issues_json": [],
+                "metadata_json": {"row_count": 12},
+                "computed_at": "2026-05-01T00:15:00Z",
+            }
+        ]
+        self.server.compute_quality_snapshots = lambda db: snapshots
+
+        try:
+            response = self.client.post("/api/data-quality/refresh")
+        finally:
+            self.server.compute_quality_snapshots = original_compute_quality_snapshots
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(response.json()["snapshots_refreshed"], 1)
+        rows = self.db.fetch_data_quality_snapshots(scope="dataset", market="NEM")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source_id"], "aemo_nem_weather")
 
     def test_data_quality_markets_route_returns_market_rows(self):
         response = self.client.get("/api/data-quality/markets")

@@ -4,7 +4,9 @@ from tests.support import ensure_repo_import_paths
 
 ensure_repo_import_paths()
 
+from canonical_dataset_registry import DATASET_FAMILY_REGISTRY
 from canonical_market_schema import (
+    build_series_contract,
     map_fingrid_timeseries_row,
     map_nem_trading_price_row,
     map_wem_ess_market_row,
@@ -14,6 +16,14 @@ from fingrid.schemas import normalize_fingrid_row
 
 
 class CanonicalMarketSchemaTests(unittest.TestCase):
+    def test_dataset_family_registry_contains_required_p0_families(self):
+        self.assertIn("load_forecast", DATASET_FAMILY_REGISTRY)
+        self.assertIn("load_actual", DATASET_FAMILY_REGISTRY)
+        self.assertIn("wind_forecast", DATASET_FAMILY_REGISTRY)
+        self.assertIn("solar_actual", DATASET_FAMILY_REGISTRY)
+        self.assertIn("constraint", DATASET_FAMILY_REGISTRY)
+        self.assertIn("settlement", DATASET_FAMILY_REGISTRY)
+
     def test_maps_nem_trading_price_row_to_canonical_schema(self):
         row = map_nem_trading_price_row(
             {
@@ -108,6 +118,32 @@ class CanonicalMarketSchemaTests(unittest.TestCase):
                 "ingested_at": "2026-04-27T08:00:00Z",
             },
         )
+
+    def test_build_series_contract_returns_canonical_dataset_payload(self):
+        payload = build_series_contract(
+            dataset_family="load_forecast",
+            observation_kind="forecast",
+            market="NEM",
+            country="Australia",
+            region_or_zone="NSW1",
+            interval_minutes=30,
+            unit="MW",
+            points=[{"interval_start_utc": "2026-04-30T00:00:00Z", "value": 8450.0}],
+            source_name="AEMO",
+            source_version="p0_test_v1",
+            ingested_at="2026-04-30T01:00:00Z",
+            coverage={"coverage_ratio": 0.92},
+            freshness={"last_updated_at": "2026-04-30T01:00:00Z"},
+            quality={"completeness": 0.92},
+            warnings=["source_partial"],
+            lineage={"source_id": "aemo_operational_demand"},
+            counterpart_series_id="series-load-actual-nsw1",
+        )
+
+        self.assertEqual(payload["dataset_family"], "load_forecast")
+        self.assertEqual(payload["observation_kind"], "forecast")
+        self.assertEqual(payload["lineage"]["source_id"], "aemo_operational_demand")
+        self.assertEqual(payload["counterpart_series_id"], "series-load-actual-nsw1")
 
 
 if __name__ == "__main__":

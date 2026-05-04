@@ -330,6 +330,94 @@ GET /api/grid-forecast?market=NEM&region=NSW1&horizon=24h
 }
 ```
 
+## 9. P2 / P3 / P4 当前契约补充
+
+### 9.1 `GET /api/p2/forecast-layer`
+
+当前 P2 预测层返回的核心顶层字段为：
+
+- `metadata`
+- `summary`
+- `coverage`
+- `market_context`
+- `drivers`
+- `windows`
+- `baseline_forecast`
+- `governance`
+- `regime_compact`
+
+其中 `governance` 当前至少包含：
+
+- `lineage`
+- `freshness`
+- `drift`
+- `forecast_value_attribution`
+- `disclaimer`
+
+这意味着前端主工作台和外部消费方可以直接使用 `governance.freshness.status`、`governance.drift.status`、`governance.disclaimer.usage_scope` 做轻量治理提示，而不需要再自行推断。
+
+### 9.2 `POST /api/p3/bess/decision-layer`
+
+当前 P3 决策层返回的核心顶层字段为：
+
+- `metadata`
+- `decision_summary`
+- `forecast_context`
+- `strategy_bundle`
+- `revenue_attribution`
+- `governance`
+- `warnings`
+
+其中：
+
+- `decision_summary` 用于表达推荐策略、风险模式、reserve SoC、rolling horizon / co-optimization / degradation mode
+- `strategy_bundle` 用于表达 `rule_based_dispatch / forecast_driven_dispatch / stochastic_dispatch`
+- `revenue_attribution` 用于表达 timing alpha、regime capture alpha、FCAS stack proxy、decision-adjusted net revenue
+- `governance` 用于表达当前 P3 输出的 freshness / drift / disclaimer / forecast value attribution
+
+### 9.3 `GET /api/model-governance/summary`
+
+当前 P4 治理摘要接口返回的核心顶层字段为：
+
+- `freshness`
+- `quality`
+- `source_rows`
+- `drift`
+- `disclaimer`
+- `summary`
+
+其中：
+
+- `freshness.sources` 表达系统级 freshness 与 job 状态摘要
+- `source_rows` 表达 source-level governance rows，当前至少包含：
+  - `source_id`
+  - `source_key`
+  - `market`
+  - `dataset_family`
+  - `status`
+  - `freshness_status`
+  - `freshness_minutes`
+  - `last_updated_at`
+  - `data_grade`
+  - `quality_score`
+  - `coverage_ratio`
+  - `issue_count`
+  - `issues`
+  - `dataset_key`
+  - `lineage`
+- `drift.models` 表达当前已接入治理载荷的模型覆盖情况
+- `disclaimer` 表达研究用途与非 investment-grade 边界
+
+### 9.4 OpenAPI 当前状态
+
+当前以下接口已经不再只使用宽松对象 schema，而是具备专用响应模型引用：
+
+- `/api/p2/forecast-layer` -> `P2ForecastLayerPayload`
+- `/api/p3/bess/decision-layer` -> `P3BessDecisionLayerPayload`
+- `/api/model-governance/summary` -> `ModelGovernanceSummaryPayload`
+
+这一步的目标不是把所有嵌套字段全部刚性 typed 到最细，而是先把主 contract anchor 固定下来，便于前后端联调、OpenAPI 导出和后续进一步细化。
+
 响应示例（节选）：
 
 ```json

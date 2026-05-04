@@ -1,0 +1,97 @@
+export function buildP3DecisionUrl(apiBase) {
+  return `${apiBase}/p3/bess/decision-layer`;
+}
+
+export function normalizeP3DecisionPayload(payload = {}) {
+  return {
+    market: payload.market || '',
+    region: payload.region || '',
+    year: payload.year ?? null,
+    forecastContext: payload.forecast_context || {},
+    decisionSummary: payload.decision_summary || {},
+    strategyBundle: payload.strategy_bundle || {},
+    revenueAttribution: payload.revenue_attribution || {},
+    sourceBacktest: payload.source_backtest || {},
+    governance: payload.governance || null,
+    warnings: payload.warnings || [],
+    metadata: payload.metadata || {},
+  };
+}
+
+export function getP3DecisionCopy(locale = 'en') {
+  if (locale === 'zh') {
+    return {
+      title: '储能决策层',
+      subtitle: '把预测层和回测链路转成滚动调度、场景分布与收入归因。',
+      recommended: '推荐策略',
+      riskMode: '风险模式',
+      reserveSoc: '保留电量',
+      rollingMode: '滚动模式',
+      strategyBundle: '策略包',
+      revenueAttribution: '收入归因',
+      forecastDriven: '预测驱动',
+      ruleBased: '规则基线',
+      stochastic: '随机场景',
+      netRevenue: '净收益',
+      scenarioSpread: '场景价差',
+      timingAlpha: '择时增益',
+      regimeAlpha: 'Regime 增益',
+      fcasProxy: 'FCAS 代理增益',
+      degradationPenalty: '退化保守罚项',
+      grossEnergy: '毛能量收益',
+      degradationCost: '退化成本',
+      primaryRegime: '主导状态',
+      calibrationGrade: '校准等级',
+      errorGrade: '误差等级',
+      backtestSummary: '回测摘要',
+      timelinePoints: '轨迹点数',
+      equivalentCycles: '等效循环',
+      socStart: '起始 SoC',
+      socEnd: '结束 SoC',
+      governance: '治理状态',
+      freshness: '新鲜度',
+      drift: '漂移',
+      disclaimer: '使用范围',
+      lineage: '追溯',
+      warnings: '提示',
+      notAvailable: '暂无',
+    };
+  }
+
+  return {
+    title: 'BESS Decision Layer',
+    subtitle: 'Turns the forecast layer and backtest chain into rolling dispatch, scenario spread, and revenue attribution.',
+    recommended: 'Recommended',
+    riskMode: 'Risk Mode',
+    reserveSoc: 'Reserve SoC',
+    rollingMode: 'Rolling Mode',
+    strategyBundle: 'Strategy Bundle',
+    revenueAttribution: 'Revenue Attribution',
+    forecastDriven: 'Forecast-driven',
+    ruleBased: 'Rule-based',
+    stochastic: 'Stochastic',
+    netRevenue: 'Net Revenue',
+    scenarioSpread: 'Scenario Spread',
+    timingAlpha: 'Timing Alpha',
+    regimeAlpha: 'Regime Alpha',
+    fcasProxy: 'FCAS Proxy',
+    degradationPenalty: 'Degradation Penalty',
+    grossEnergy: 'Gross Energy',
+    degradationCost: 'Degradation Cost',
+    primaryRegime: 'Primary Regime',
+    calibrationGrade: 'Calibration Grade',
+    errorGrade: 'Error Grade',
+    backtestSummary: 'Backtest Summary',
+    timelinePoints: 'Timeline Points',
+    equivalentCycles: 'Equivalent Cycles',
+    socStart: 'Start SoC',
+    socEnd: 'End SoC',
+    governance: 'Governance',
+    freshness: 'Freshness',
+    drift: 'Drift',
+    disclaimer: 'Usage Scope',
+    lineage: 'Lineage',
+    warnings: 'Warnings',
+    notAvailable: 'n/a',
+  };
+}

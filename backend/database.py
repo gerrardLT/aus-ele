@@ -17,6 +17,7 @@ class DatabaseManager:
     GRID_EVENT_SYNC_TABLE = "grid_event_sync_state"
     GRID_FORECAST_SNAPSHOT_TABLE = "grid_forecast_snapshot"
     GRID_FORECAST_SYNC_TABLE = "grid_forecast_sync_state"
+    AEMO_SOURCE_SYNC_TABLE = "aemo_source_sync_state"
     ANALYSIS_CACHE_TABLE = "analysis_cache"
     FINGRID_DATASET_TABLE = "fingrid_dataset_catalog"
     FINGRID_TIMESERIES_TABLE = "fingrid_timeseries"
@@ -343,6 +344,24 @@ class DatabaseManager:
         """)
         conn.commit()
 
+    def ensure_aemo_source_sync_table(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.AEMO_SOURCE_SYNC_TABLE} (
+                source_id TEXT PRIMARY KEY,
+                last_success_at TEXT,
+                last_attempt_at TEXT,
+                sync_status TEXT NOT NULL,
+                last_error TEXT,
+                detail_json TEXT NOT NULL DEFAULT '{{}}'
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.AEMO_SOURCE_SYNC_TABLE}_status
+            ON {self.AEMO_SOURCE_SYNC_TABLE} (sync_status, last_success_at)
+        """)
+        conn.commit()
+
     def ensure_fingrid_tables(self, conn: sqlite3.Connection):
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -407,6 +426,8 @@ class DatabaseManager:
                 scope TEXT NOT NULL,
                 market TEXT NOT NULL,
                 dataset_key TEXT NOT NULL,
+                source_id TEXT,
+                dataset_family TEXT,
                 data_grade TEXT NOT NULL,
                 quality_score REAL,
                 coverage_ratio REAL,
@@ -417,6 +438,20 @@ class DatabaseManager:
                 PRIMARY KEY (scope, market, dataset_key)
             )
         """)
+        snapshot_columns = {
+            row[1]
+            for row in cursor.execute(
+                f"PRAGMA table_info({self.DATA_QUALITY_SNAPSHOT_TABLE})"
+            ).fetchall()
+        }
+        if "source_id" not in snapshot_columns:
+            cursor.execute(
+                f"ALTER TABLE {self.DATA_QUALITY_SNAPSHOT_TABLE} ADD COLUMN source_id TEXT"
+            )
+        if "dataset_family" not in snapshot_columns:
+            cursor.execute(
+                f"ALTER TABLE {self.DATA_QUALITY_SNAPSHOT_TABLE} ADD COLUMN dataset_family TEXT"
+            )
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.DATA_QUALITY_ISSUE_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1178,6 +1213,90 @@ class DatabaseManager:
             )
             conn.commit()
 
+    def upsert_aemo_source_sync_state(
+        self,
+        *,
+        source_id: str,
+        last_success_at: str | None,
+        last_attempt_at: str | None,
+        sync_status: str,
+        last_error: str | None,
+        detail: dict | None = None,
+    ):
+        with self.get_connection() as conn:
+            self.ensure_aemo_source_sync_table(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.AEMO_SOURCE_SYNC_TABLE} (
+                    source_id,
+                    last_success_at,
+                    last_attempt_at,
+                    sync_status,
+                    last_error,
+                    detail_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    last_success_at=excluded.last_success_at,
+                    last_attempt_at=excluded.last_attempt_at,
+                    sync_status=excluded.sync_status,
+                    last_error=excluded.last_error,
+                    detail_json=excluded.detail_json
+                """,
+                (
+                    source_id,
+                    last_success_at,
+                    last_attempt_at,
+                    sync_status,
+                    last_error,
+                    json.dumps(detail or {}),
+                ),
+            )
+            conn.commit()
+
+    def fetch_aemo_source_sync_state(self, source_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_aemo_source_sync_table(conn)
+            row = conn.execute(
+                f"""
+                SELECT source_id, last_success_at, last_attempt_at, sync_status, last_error, detail_json
+                FROM {self.AEMO_SOURCE_SYNC_TABLE}
+                WHERE source_id = ?
+                """,
+                (source_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "source_id": row[0],
+            "last_success_at": row[1],
+            "last_attempt_at": row[2],
+            "sync_status": row[3],
+            "last_error": row[4],
+            "detail_json": json.loads(row[5] or "{}"),
+        }
+
+    def fetch_aemo_source_sync_states(self) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_aemo_source_sync_table(conn)
+            rows = conn.execute(
+                f"""
+                SELECT source_id, last_success_at, last_attempt_at, sync_status, last_error, detail_json
+                FROM {self.AEMO_SOURCE_SYNC_TABLE}
+                ORDER BY source_id ASC
+                """
+            ).fetchall()
+        return [
+            {
+                "source_id": row[0],
+                "last_success_at": row[1],
+                "last_attempt_at": row[2],
+                "sync_status": row[3],
+                "last_error": row[4],
+                "detail_json": json.loads(row[5] or "{}"),
+            }
+            for row in rows
+        ]
+
     def fetch_analysis_cache(
         self,
         *,
@@ -1547,6 +1666,8 @@ class DatabaseManager:
                 scope,
                 market,
                 dataset_key,
+                source_id,
+                dataset_family,
                 data_grade,
                 quality_score,
                 coverage_ratio,
@@ -1554,8 +1675,10 @@ class DatabaseManager:
                 issues_json,
                 metadata_json,
                 computed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope, market, dataset_key) DO UPDATE SET
+                source_id=excluded.source_id,
+                dataset_family=excluded.dataset_family,
                 data_grade=excluded.data_grade,
                 quality_score=excluded.quality_score,
                 coverage_ratio=excluded.coverage_ratio,
@@ -1568,6 +1691,8 @@ class DatabaseManager:
                 scope,
                 market,
                 dataset_key,
+                record.get("source_id"),
+                record.get("dataset_family"),
                 record["data_grade"],
                 record.get("quality_score"),
                 record.get("coverage_ratio"),

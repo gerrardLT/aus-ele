@@ -25,11 +25,17 @@ test('App exposes a navigation entry to the developer portal', () => {
 test('Developer portal page loads portal payload and persists API key locally', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/DeveloperPortalPage.jsx'), 'utf8');
   assert.match(source, /\/developer\/portal/);
+  assert.match(source, /\/model-governance\/summary/);
   assert.match(source, /localStorage/);
   assert.match(source, /fetchJson/);
   assert.match(source, /quota/);
   assert.match(source, /billing/);
   assert.match(source, /ledger/);
+  assert.match(source, /governance\?\.source_rows/);
+  assert.match(source, /copy\.governanceSourceCatalog/);
+  assert.match(source, /copy\.governanceSourceId/);
+  assert.match(source, /copy\.governanceDatasetFamily/);
+  assert.match(source, /copy\.governanceLineage/);
   assert.match(source, /translations/);
   assert.doesNotMatch(source, /const COPY = \{/);
 });

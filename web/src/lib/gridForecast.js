@@ -6,6 +6,11 @@ const FORECAST_COPY = {
       subtitle: 'Forward-looking risk and opportunity forecast using official market and event signals.',
       signalDesk: 'Signal Desk',
       marketContext: 'Market Context',
+      governanceTitle: 'Governance Strip',
+      governanceFreshness: 'Freshness',
+      governanceDrift: 'Drift',
+      governanceDisclaimer: 'Usage Scope',
+      governanceLineage: 'Lineage',
       horizon24h: '24h',
       horizon7d: '7d',
       horizon30d: '30d',
@@ -130,6 +135,11 @@ const FORECAST_COPY = {
       subtitle: '基于官方市场与事件信号的未来风险与机会前瞻。',
       signalDesk: '信号总览',
       marketContext: '市场上下文',
+      governanceTitle: 'P4 治理条',
+      governanceFreshness: '新鲜度',
+      governanceDrift: '漂移',
+      governanceDisclaimer: '使用范围',
+      governanceLineage: '追溯',
       horizon24h: '24 ??',
       horizon7d: '7 ?',
       horizon30d: '30 ?',
@@ -277,7 +287,7 @@ function formatSigned(value, locale = 'en', fractionDigits = 1) {
   }).format(numeric);
 }
 
-function formatUnsigned(value, locale = 'en', fractionDigits = 1) {
+export function formatUnsigned(value, locale = 'en', fractionDigits = 1) {
   const numeric = toNumber(value);
   if (numeric === null) {
     return getCopy(locale).generic.notAvailable;
@@ -335,6 +345,18 @@ export function buildGridForecastUrl(apiBase, { market, region, horizon, asOf })
   return `${apiBase}/grid-forecast?${params.toString()}`;
 }
 
+export function buildForecastLayerUrl(apiBase, { market, region, horizon, asOf }) {
+  const params = new URLSearchParams({
+    market,
+    region,
+    horizon,
+  });
+  if (asOf) {
+    params.set('as_of', asOf);
+  }
+  return `${apiBase}/p2/forecast-layer?${params.toString()}`;
+}
+
 export function normalizeForecastResponse(payload = {}) {
   const metadata = {
     warnings: [],
@@ -366,8 +388,66 @@ export function normalizeForecastResponse(payload = {}) {
     marketContext: payload.market_context || {},
     windows,
     drivers,
+    baselineForecast: payload.baseline_forecast || {},
+    governance: payload.governance || null,
+    regime_compact: payload.regime_compact || null,
     disclaimer: payload.disclaimer || null,
   };
+}
+
+export function getForecastDiagnosticsCopy(locale = 'en') {
+  const normalized = normalizeLocale(locale);
+  return normalized === 'zh'
+    ? {
+        title: '预测诊断',
+        quantileBand: '分位区间',
+        diagnostics: '诊断结果',
+        calibration: '校准摘要',
+        probabilities: '概率输出',
+        p10: 'P10',
+        p50: 'P50',
+        p90: 'P90',
+        duration: '负价时长',
+        spikeProbability: '尖峰概率',
+        negativeProbability: '负价概率',
+        method: '方法',
+        sampleSize: '样本量',
+        errorGrade: '误差等级',
+        gapDomain: '主要偏差域',
+        summaryGrade: '校准等级',
+        note: '结论',
+      }
+    : {
+        title: 'Forecast Diagnostics',
+        quantileBand: 'Quantile Band',
+        diagnostics: 'Diagnostics',
+        calibration: 'Calibration',
+        probabilities: 'Probabilities',
+        p10: 'P10',
+        p50: 'P50',
+        p90: 'P90',
+        duration: 'Negative Duration',
+        spikeProbability: 'Spike Probability',
+        negativeProbability: 'Negative Probability',
+        method: 'Method',
+        walkForward: 'Walk-forward',
+        samplePoints: 'Sample Points',
+        infoValue: 'Info Value',
+        weakestRegime: 'Weakest Regime',
+        sampleSize: 'Sample Size',
+        errorGrade: 'Error Grade',
+        gapDomain: 'Primary Gap',
+        summaryGrade: 'Calibration Grade',
+        note: 'Summary',
+      };
+}
+
+export function formatForecastPercent(value, locale = 'en') {
+  const numeric = toNumber(value);
+  if (numeric === null) {
+    return getCopy(locale).generic.notAvailable;
+  }
+  return `${Math.round(numeric * 100)}%`;
 }
 
 export function getForecastCoverageCopy(coverageQuality, locale = 'en') {

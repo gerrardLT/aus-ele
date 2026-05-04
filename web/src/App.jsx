@@ -3,6 +3,10 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { ArrowRight, Activity, Database, ChevronUp, List } from 'lucide-react';
 import PriceChart from './components/PriceChart';
 import SummaryStats from './components/SummaryStats';
+import RegimeCompactPanel from './components/RegimeCompactPanel';
+import DataQualityBadge from './components/DataQualityBadge';
+import PageSection from './components/PageSection';
+import PageWorkspaceNav from './components/PageWorkspaceNav';
 import { fetchJson } from './lib/apiClient';
 import { translations } from './translations';
 
@@ -19,13 +23,13 @@ const GridForecast = lazy(() => import('./components/GridForecast'));
 
 "use client";
 
-function SectionFallback({ minHeight = '320px' }) {
+function SectionFallback({ minHeight = '320px', label = '' }) {
   return (
     <div
       className="flex items-center justify-center rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)]/70 px-6 text-sm text-[var(--color-muted)]"
       style={{ minHeight }}
     >
-      Loading section...
+      {label}
     </div>
   );
 }
@@ -175,7 +179,14 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const t = translations[lang];
+  const t = {
+    ...translations[lang],
+    status: translations[lang]?.status || {},
+    appShell: translations[lang]?.appShell || {},
+  };
+  const chartMetadata = chartData?.metadata || chartData?.summary?.metadata || null;
+  const sectionNavCopy = t.appShell.sectionNav || { sectionNavigation: '' };
+  const languageAriaLabel = t.appShell.toggleLanguage || '';
   const sectionLinks = [
     { id: 'sec-overview', label: lang === 'zh' ? '总览' : 'Overview' },
     { id: 'sec-forecast', label: t.forecast?.sectionLabel || (lang === 'zh' ? '电网预测' : 'Forecast') },
@@ -188,16 +199,19 @@ function App() {
     { id: 'sec-cycle', label: lang === 'zh' ? '循环成本' : 'Cycle Cost' },
     { id: 'sec-investment', label: lang === 'zh' ? '投资分析' : 'Investment' },
   ];
-  const simulatorScopeNote = t.simulator.fullYearModelNote || (
+  const simulatorScopeNote = t.appShell.simulatorScopeNote || t.simulator.fullYearModelNote || (
     lang === 'zh'
       ? '使用全年代表性参数；month / quarter / day_type 筛选不作用于本模块，事件与预测信号仅用于说明。'
       : 'Uses full-year representative data. Month, quarter, and day-type filters do not apply here. Event and forecast signals are explanatory only and are not injected into simulator results.'
   );
-  const investmentScopeNote = t.investment?.fullYearModelNote || (
+  const investmentScopeNote = t.appShell.investmentScopeNote || t.investment?.fullYearModelNote || (
     lang === 'zh'
       ? '使用全年历史与现金流假设；month / quarter / day_type 筛选不作用于本模块，事件与预测信号不会自动改写收益、NPV、IRR 或回本期。'
       : 'Uses full-year historical and cash-flow assumptions. Month, quarter, and day-type filters do not apply here. Event and forecast signals do not automatically change revenue, NPV, IRR, or payback.'
   );
+  const monthLabels = t.appShell.monthLabels || (lang === 'zh'
+    ? ['全年', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+    : ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']);
 
   // Initial Fetch Setup
   const fetchInitial = async () => {
@@ -305,7 +319,7 @@ function App() {
 
     const tocSections = [
       { id: 'sec-overview', label: lang === 'zh' ? '市场总览' : 'Overview', shortLabel: lang === 'zh' ? '总览' : 'Overview' },
-      { id: 'sec-forecast', label: t.forecast?.sectionLabel || (lang === 'zh' ? '电网预测' : 'Grid Forecast'), shortLabel: lang === 'zh' ? '预测' : 'Forecast' },
+      { id: 'sec-forecast', label: t.forecast?.sectionLabel || (lang === 'zh' ? '电网预测' : 'Forecast'), shortLabel: lang === 'zh' ? '预测' : 'Forecast' },
       { id: 'sec-negative', label: lang === 'zh' ? '负电价分布' : 'Negative Price', shortLabel: lang === 'zh' ? '负电价' : 'Negative' },
       { id: 'sec-arbitrage', label: lang === 'zh' ? '储能套利' : 'Arbitrage', shortLabel: lang === 'zh' ? '套利' : 'Arbitrage' },
       { id: 'sec-fcas', label: lang === 'zh' ? 'FCAS 分析' : 'FCAS', shortLabel: 'FCAS' },
@@ -346,7 +360,7 @@ function App() {
           </div>
         </div>
 
-        <div className="relative mt-4">
+        <div className="relative mt-4" role="navigation" aria-label={sectionNavCopy.sectionNavigation}>
           <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/38">
             {lang === 'zh' ? '市场模块' : 'Market Modules'}
           </div>
@@ -425,7 +439,7 @@ function App() {
             exit={{ opacity: 0, scale: 0.8 }}
             onClick={scrollToTop}
             className="fixed right-6 bottom-8 z-50 w-10 h-10 flex items-center justify-center bg-[var(--color-inverted)] text-[var(--color-inverted-text)] rounded-full shadow-lg hover:scale-110 transition-transform"
-            aria-label="Back to top"
+            aria-label={t.appShell.backToTop}
           >
             <ChevronUp size={20} />
           </motion.button>
@@ -498,44 +512,36 @@ function App() {
 
       <main className="grid-container">
 
-        <motion.header
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          className="col-span-12 mb-6 flex flex-col gap-4 border-b border-[var(--color-border)] pb-5 lg:flex-row lg:items-center lg:justify-between"
-        >
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-2">
-            <h1 className="text-2xl font-bold leading-tight md:text-3xl">
-              {t.header.title1} {t.header.title2}
-            </h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm font-sans text-[var(--color-muted)]">
-            {lastUpdate ? (
-              <span className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs">
-                {lastUpdate}
-              </span>
-            ) : null}
-            <button
-              onClick={handleSync}
-              disabled={isSyncing}
-              title="Trigger Background Data Sync"
-              className="flex min-h-[40px] items-center gap-2 rounded border border-[var(--color-border)] px-3 py-1.5 transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
-            >
-              <svg className={isSyncing ? "h-4 w-4 animate-spin" : "h-4 w-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span>{isSyncing ? (t.nav.syncing || 'Syncing') : (t.nav.sync || 'Sync')}</span>
-            </button>
-            <button
-              aria-label="Toggle language"
-              title="Toggle language"
-              onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
-              className="min-h-[40px] rounded border border-[var(--color-border)] px-3 py-1.5 transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
-            >
-              {t.nav.toggleOptions}
-            </button>
-          </div>
-        </motion.header>
+        <div className="col-span-12 mb-6">
+          <PageWorkspaceNav
+            brand={t.nav.brand}
+            subtitle={t.appShell.primarySignalTitle || `${t.header.title1} ${t.header.title2}`}
+            current="home"
+            links={[
+              { key: 'home', href: '/', label: t.appShell.stageOverview || 'Overview' },
+              { key: 'fingrid', href: '/fingrid', label: t.nav.fingrid || 'Fingrid' },
+              { key: 'developer', href: '/developer', label: t.nav.developerPortal || 'Developer Portal' },
+            ]}
+            languageLabel={t.nav.toggleOptions}
+            languageAriaLabel={t.appShell.toggleLanguage}
+            onToggleLanguage={() => setLang(lang === 'zh' ? 'en' : 'zh')}
+            title={t.appShell.recommendedPathLabel || `${t.header.title1} ${t.header.title2}`}
+            meta={lastUpdate ? <span>{lastUpdate}</span> : null}
+            actions={
+              <button
+                onClick={handleSync}
+                disabled={isSyncing}
+                title={t.appShell.syncTrigger}
+                className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded border border-[var(--color-border)] px-3 py-1.5 text-sm transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
+              >
+                <svg className={isSyncing ? "h-4 w-4 animate-spin" : "h-4 w-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>{isSyncing ? (t.nav.syncing || 'Syncing') : (t.nav.sync || 'Sync')}</span>
+              </button>
+            }
+          />
+        </div>
 
         {/* Filters Panel (Black/White minimal controls) */}
         <div ref={filterPanelRef} className="col-span-12 mb-5 flex flex-col gap-4.5">
@@ -661,9 +667,6 @@ function App() {
                 >
                   <div className="flex flex-wrap gap-2 pt-1">
                     {['ALL', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'].map((m) => {
-                      const monthLabels = lang === 'zh'
-                        ? ['全年', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
-                        : ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                       const idx = m === 'ALL' ? 0 : parseInt(m, 10);
                       return (
                         <button
@@ -709,7 +712,7 @@ function App() {
                   }
                 }}
                 className="px-6 py-3 border border-[var(--color-error)] text-[var(--color-error)] uppercase tracking-widest text-xs font-bold hover:bg-[var(--color-error)] hover:text-white transition-colors"
-                aria-label="Retry"
+                aria-label={t.status.retry}
               >
                 {t.status.retry}
               </button>
@@ -733,75 +736,87 @@ function App() {
               transition={{ duration: 0.5, ease: "easeOut" }}
               className="col-span-12 grid grid-cols-12 gap-12"
             >
-              {/* Left Column: Stats */}
-              <div id="sec-overview" className="col-span-12 md:col-span-3 scroll-mt-24">
-                <SummaryStats
-                  stats={visibleSummaryMetrics.stats}
-                  advancedStats={visibleSummaryMetrics.advancedStats}
-                  t={{ ...t.summary_stats, ...t.advanced_metrics }}
-                />
-              </div>
+              <PageSection
+                id="stage-overview"
+                title={t.appShell.stageOverview || 'Overview'}
+                description={t.appShell.primarySignalTitle || `${t.header.title1} ${t.header.title2}`}
+              >
+                <div id="sec-overview" className="col-span-12 grid grid-cols-12 gap-12 scroll-mt-24">
+                  <div className="col-span-12 md:col-span-3">
+                    <RegimeCompactPanel compact={chartData?.regime_compact} t={t.regime_compact} />
+                    <SummaryStats
+                      stats={visibleSummaryMetrics.stats}
+                      advancedStats={visibleSummaryMetrics.advancedStats}
+                      t={{ ...t.summary_stats, ...t.advanced_metrics }}
+                    />
+                  </div>
 
-              {/* Right Column: Chart */}
-              <div className="col-span-12 md:col-span-9">
-                <div className="h-[500px]">
-                  <PriceChart
-                    data={chartData?.data}
-                    t={t.price_chart}
-                    overlay={eventOverlay}
-                    locale={lang}
-                    onWindowDataChange={setVisibleChartData}
-                  />
-                </div>
-              </div>
-
-              <div id="sec-forecast" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
-                  <GridForecast
-                    apiBase={API_BASE}
-                    region={selectedRegion}
-                    locale={lang}
-                    t={t.forecast}
-                  />
-                </Suspense>
-              </div>
-
-              {/* Lower View: Anomalous Bidding Analytics */}
-              <div id="sec-negative" className="col-span-12 mt-16 pt-12 border-t border-[var(--color-border)] scroll-mt-24">
-                <div className="flex items-center justify-between mb-8">
-                  <h2 className="text-3xl font-serif">{t.hourly_dist.title || 'Negative Price Time Dist.'}</h2>
-                  <div className="text-[var(--color-muted)] text-sm tracking-widest uppercase font-bold">{t.advanced_metrics.deepDive}</div>
-                </div>
-
-                <div className="grid grid-cols-12 gap-12">
-                  <div className="col-span-12 md:col-span-10 md:col-start-2">
-                    <Suspense fallback={<SectionFallback minHeight="360px" />}>
-                      <HourlyDistributionChart data={chartData?.hourly_distribution} t={t.hourly_dist} />
-                    </Suspense>
+                  <div className="col-span-12 md:col-span-9 space-y-4">
+                    <DataQualityBadge metadata={chartMetadata} lang={lang} />
+                    <div className="h-[500px]">
+                      <PriceChart
+                        data={chartData?.data}
+                        t={t.price_chart}
+                        overlay={eventOverlay}
+                        locale={lang}
+                        onWindowDataChange={setVisibleChartData}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              </PageSection>
 
-              {/* Peak/Trough Arbitrage Analysis */}
-              <div id="sec-arbitrage" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
-                  <PeakAnalysis
-                    year={selectedYear}
-                    region={selectedRegion}
-                    lang={lang}
-                    month={selectedMonth}
-                    quarter={selectedQuarter}
-                    dayType={selectedDayType}
-                    eventOverlay={eventOverlay}
-                    apiBase={API_BASE}
-                    t={{...t.peak_analysis, loadingMsg: t.loading_states.peak}}
-                  />
-                </Suspense>
-              </div>
+              <PageSection
+                id="stage-opportunities"
+                title={t.appShell.stageOpportunities || 'Opportunities'}
+                description={t.appShell.recommendedPathLabel || `${t.header.title1} ${t.header.title2}`}
+              >
+                <div id="sec-forecast" className="col-span-12 scroll-mt-24">
+                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                    <GridForecast
+                      apiBase={API_BASE}
+                      region={selectedRegion}
+                      locale={lang}
+                      t={t.forecast}
+                      regimeCompactCopy={t.regime_compact}
+                    />
+                  </Suspense>
+                </div>
 
-              {/* FCAS Revenue Analysis */}
-              <div id="sec-fcas" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
+                <div id="sec-negative" className="col-span-12 mt-16 pt-12 border-t border-[var(--color-border)] scroll-mt-24">
+                  <div className="flex items-center justify-between mb-8">
+                    <h2 className="text-3xl font-serif">{t.hourly_dist.title}</h2>
+                    <div className="text-[var(--color-muted)] text-sm tracking-widest uppercase font-bold">{t.advanced_metrics.deepDive}</div>
+                  </div>
+
+                  <div className="grid grid-cols-12 gap-12">
+                    <div className="col-span-12 md:col-span-10 md:col-start-2">
+                          <Suspense fallback={<SectionFallback minHeight="360px" label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                        <HourlyDistributionChart data={chartData?.hourly_distribution} t={t.hourly_dist} />
+                      </Suspense>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="sec-arbitrage" className="col-span-12 scroll-mt-24">
+                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                    <PeakAnalysis
+                      year={selectedYear}
+                      region={selectedRegion}
+                      lang={lang}
+                      month={selectedMonth}
+                      quarter={selectedQuarter}
+                      dayType={selectedDayType}
+                      eventOverlay={eventOverlay}
+                      apiBase={API_BASE}
+                      t={{...t.peak_analysis, loadingMsg: t.loading_states.peak}}
+                      regimeCompactCopy={t.regime_compact}
+                    />
+                  </Suspense>
+                </div>
+
+                <div id="sec-fcas" className="col-span-12 scroll-mt-24">
+                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
                   <FcasAnalysis
                     year={selectedYear}
                     region={selectedRegion}
@@ -812,26 +827,27 @@ function App() {
                     eventOverlay={eventOverlay}
                     apiBase={API_BASE}
                     t={{...t.fcas, ...t.peak_analysis, loadingMsg: t.loading_states.fcas}}
+                    regimeCompactCopy={t.regime_compact}
                   />
-                </Suspense>
-              </div>
+                  </Suspense>
+                </div>
 
-              {/* BESS P&L Simulator (Waterfall) */}
-              <div id="sec-simulator" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
+                <div id="sec-simulator" className="col-span-12 scroll-mt-24">
+                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
                   <BessSimulator
                   year={selectedYear}
                   region={selectedRegion}
+                  lang={lang}
                   apiBase={API_BASE}
                   scopeNote={simulatorScopeNote}
                   t={{...t.simulator, loadingMsg: t.loading_states.simulator}}
+                  regimeCompactCopy={t.regime_compact}
                   />
-                </Suspense>
-              </div>
+                  </Suspense>
+                </div>
 
-              {/* Revenue Stacking (Arbitrage + FCAS) */}
-              <div id="sec-stacking" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
+                <div id="sec-stacking" className="col-span-12 scroll-mt-24">
+                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
                   <RevenueStacking
                   year={selectedYear}
                   region={selectedRegion}
@@ -842,13 +858,13 @@ function App() {
                   eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.stacking, ...t.peak_analysis, loadingMsg: t.loading_states.stacking}}
+                  regimeCompactCopy={t.regime_compact}
                   />
-                </Suspense>
-              </div>
+                  </Suspense>
+                </div>
 
-              {/* Charging Window Clock Heatmap */}
-              <div id="sec-charging" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
+                <div id="sec-charging" className="col-span-12 scroll-mt-24">
+                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
                   <ChargingWindow
                   year={selectedYear}
                   region={selectedRegion}
@@ -856,13 +872,13 @@ function App() {
                   eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.charging, ...t.peak_analysis, loadingMsg: t.loading_states.charging}}
+                  regimeCompactCopy={t.regime_compact}
                   />
-                </Suspense>
-              </div>
+                  </Suspense>
+                </div>
 
-              {/* Cycle Cost vs Profitability */}
-              <div id="sec-cycle" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
+                <div id="sec-cycle" className="col-span-12 scroll-mt-24">
+                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
                   <CycleCost
                   year={selectedYear}
                   region={selectedRegion}
@@ -873,22 +889,30 @@ function App() {
                   eventOverlay={eventOverlay}
                   apiBase={API_BASE}
                   t={{...t.cycleCost, ...t.peak_analysis, loadingMsg: t.loading_states.cycleCost}}
+                  regimeCompactCopy={t.regime_compact}
                   />
-                </Suspense>
-              </div>
+                  </Suspense>
+                </div>
+              </PageSection>
 
-              {/* BESS Investment Analysis */}
-              <div id="sec-investment" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback />}>
+              <PageSection
+                id="stage-investment"
+                title={t.appShell.stageInvestment || 'Investment'}
+                description={t.appShell.investmentScopeNote || investmentScopeNote}
+              >
+                <div id="sec-investment" className="col-span-12 scroll-mt-24">
+                <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
                   <InvestmentAnalysis
                   year={selectedYear}
                   region={selectedRegion}
                   lang={lang}
                   scopeNote={investmentScopeNote}
                   t={t}
+                  regimeCompactCopy={t.regime_compact}
                   />
                 </Suspense>
-              </div>
+                </div>
+              </PageSection>
 
             </motion.div>
           )}

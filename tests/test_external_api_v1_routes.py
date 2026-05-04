@@ -89,6 +89,23 @@ class ExternalApiV1RouteTests(unittest.TestCase):
                 "returned_points": 5,
                 "data": [{"ts": 1}, {"ts": 2}, {"ts": 3}, {"ts": 4}, {"ts": 5}],
                 "metadata": {"market": "NEM"},
+                "regime_layer": {
+                    "primary_regime": {"regime": "scarcity", "score": 67.0, "confidence": 0.74},
+                    "active_regimes": [{"regime": "scarcity", "score": 67.0, "confidence": 0.74}],
+                    "regime_score_map": {"scarcity": 67.0},
+                    "drivers": [],
+                    "transition_hints": [],
+                    "metadata": {"dataset_family": "regime_layer"},
+                },
+                "regime_compact": {
+                    "availability_status": "available",
+                    "primary_regime": {"regime": "scarcity", "score": 67.0, "confidence": 0.74},
+                    "active_regimes": [{"regime": "scarcity", "score": 67.0, "confidence": 0.74}],
+                    "regime_score_map": {"scarcity": 67.0},
+                    "top_drivers": [],
+                    "transition_hints": [],
+                    "warnings": [],
+                },
             },
         ):
             payload = server.get_v1_prices(year=2025, region="NSW1", x_api_key="test-key", offset=1, limit=2)
@@ -101,8 +118,99 @@ class ExternalApiV1RouteTests(unittest.TestCase):
         self.assertEqual(payload["meta"]["quota"]["plan"], "internal")
         self.assertEqual(payload["meta"]["lineage"]["methodology_version"], None)
         self.assertEqual(payload["meta"]["workspace_id"], "ws_ext")
+        self.assertEqual(payload["data"]["regime_layer"]["primary_regime"]["regime"], "scarcity")
+        self.assertEqual(payload["data"]["regime_compact"]["primary_regime"]["regime"], "scarcity")
         usage_rows = self.db.fetch_external_api_usage(client_id="client-1")
         self.assertEqual(len(usage_rows), 1)
+
+    def test_v1_events_route_preserves_regime_layer_from_internal_payload(self):
+        with mock.patch(
+            "server.get_event_overlays",
+            return_value={
+                "events": [{"event_id": "evt-1"}, {"event_id": "evt-2"}],
+                "states": [{"state_id": "state-1"}],
+                "metadata": {"market": "NEM", "methodology_version": "event_overlays_v1"},
+                "regime_layer": {
+                    "primary_regime": {"regime": "negative_price", "score": 74.0, "confidence": 0.81},
+                    "active_regimes": [{"regime": "negative_price", "score": 74.0, "confidence": 0.81}],
+                    "regime_score_map": {"negative_price": 74.0, "oversupply": 62.0},
+                    "drivers": [{"headline": "Negative interval ratio elevated"}],
+                    "transition_hints": ["Oversupply can deepen if rooftop PV remains elevated."],
+                    "metadata": {"dataset_family": "regime_layer"},
+                },
+                "regime_compact": {
+                    "availability_status": "available",
+                    "primary_regime": {"regime": "negative_price", "score": 74.0, "confidence": 0.81},
+                    "active_regimes": [{"regime": "negative_price", "score": 74.0, "confidence": 0.81}],
+                    "regime_score_map": {"negative_price": 74.0, "oversupply": 62.0},
+                    "top_drivers": [{"headline": "Negative interval ratio elevated", "driver_type": "price_shape"}],
+                    "transition_hints": ["Oversupply can deepen if rooftop PV remains elevated."],
+                    "warnings": [],
+                },
+            },
+        ):
+            payload = server.get_v1_events(
+                year=2025,
+                region="NSW1",
+                market="NEM",
+                x_api_key="test-key",
+                offset=0,
+                limit=1,
+            )
+
+        self.assertEqual(payload["api_version"], "v1")
+        self.assertEqual(len(payload["data"]["items"]), 1)
+        self.assertEqual(payload["data"]["regime_layer"]["primary_regime"]["regime"], "negative_price")
+        self.assertEqual(payload["data"]["regime_layer"]["metadata"]["dataset_family"], "regime_layer")
+        self.assertEqual(payload["data"]["regime_compact"]["primary_regime"]["regime"], "negative_price")
+        self.assertEqual(payload["meta"]["lineage"]["methodology_version"], "event_overlays_v1")
+
+    def test_v1_fcas_route_preserves_regime_layer_from_internal_payload(self):
+        with mock.patch(
+            "server.get_fcas_analysis",
+            return_value={
+                "region": "NSW1",
+                "year": 2025,
+                "summary": {"total_avg_fcas_price": 21.5},
+                "service_breakdown": [],
+                "hourly": [],
+                "data": [{"period": "2025-01-01", "raise6sec_rrp": 12.0}],
+                "metadata": {"market": "NEM", "methodology_version": "fcas_analysis_v1"},
+                "regime_layer": {
+                    "primary_regime": {"regime": "reserve_stress", "score": 78.0, "confidence": 0.8},
+                    "active_regimes": [{"regime": "reserve_stress", "score": 78.0, "confidence": 0.8}],
+                    "regime_score_map": {"reserve_stress": 78.0},
+                    "drivers": [{"headline": "Reserve shortfall signal elevated"}],
+                    "transition_hints": ["Reserve stress can escalate into broader scarcity if shortfalls persist."],
+                    "metadata": {"dataset_family": "regime_layer"},
+                },
+                "regime_compact": {
+                    "availability_status": "available",
+                    "primary_regime": {"regime": "reserve_stress", "score": 78.0, "confidence": 0.8},
+                    "active_regimes": [{"regime": "reserve_stress", "score": 78.0, "confidence": 0.8}],
+                    "regime_score_map": {"reserve_stress": 78.0},
+                    "top_drivers": [{"headline": "Reserve shortfall signal elevated", "driver_type": "reserve_shortfall"}],
+                    "transition_hints": ["Reserve stress can escalate into broader scarcity if shortfalls persist."],
+                    "warnings": [],
+                },
+            },
+        ):
+            payload = server.get_v1_fcas(
+                year=2025,
+                region="NSW1",
+                aggregation="daily",
+                capacity_mw=100,
+                x_api_key="test-key",
+                offset=0,
+                limit=1,
+            )
+
+        self.assertEqual(payload["api_version"], "v1")
+        self.assertEqual(len(payload["data"]["items"]), 1)
+        self.assertEqual(payload["data"]["summary"]["regime_layer"]["primary_regime"]["regime"], "reserve_stress")
+        self.assertEqual(payload["data"]["summary"]["regime_layer"]["metadata"]["dataset_family"], "regime_layer")
+        self.assertEqual(payload["data"]["summary"]["regime_compact"]["primary_regime"]["regime"], "reserve_stress")
+        self.assertEqual(payload["meta"]["lineage"]["methodology_version"], "fcas_analysis_v1")
 
     def test_v1_prices_route_returns_quota_exceeded_error_when_plan_limit_is_hit(self):
         for _ in range(10):

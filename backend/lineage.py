@@ -1,5 +1,69 @@
 from __future__ import annotations
 
+from connector_framework import list_connector_specs
+
+
+def _infer_source_identity(row: dict) -> tuple[str | None, str | None]:
+    source_id = row.get("source_id")
+    dataset_family = row.get("dataset_family")
+    if source_id:
+        return source_id, dataset_family
+
+    dataset_key = str(row.get("dataset_key") or "")
+    market = row.get("market")
+    if dataset_key.startswith("trading_price_"):
+        return "aemo_nem_trading_price", "settlement"
+    if market == "WEM":
+        return "aemo_wem_ess_market", "settlement"
+    if market == "FINGRID":
+        dataset_id = str((row.get("metadata_json") or {}).get("dataset_id") or dataset_key)
+        return f"fingrid_dataset_{dataset_id}", "reserve_requirement"
+    return None, None
+
+
+def _freshness_status(freshness_minutes) -> str:
+    if freshness_minutes is None:
+        return "unknown"
+    if freshness_minutes <= 240:
+        return "fresh"
+    if freshness_minutes <= 1440:
+        return "delayed"
+    return "stale"
+
+
+def _build_source_rows_from_quality(db) -> list[dict]:
+    try:
+        quality_rows = db.fetch_data_quality_snapshots()
+    except Exception:
+        quality_rows = []
+
+    quality_by_source = {}
+    for row in quality_rows:
+        source_id, dataset_family = _infer_source_identity(row)
+        if source_id and source_id not in quality_by_source:
+            quality_by_source[source_id] = {
+                **row,
+                "source_id": source_id,
+                "dataset_family": dataset_family or row.get("dataset_family"),
+            }
+
+    rows = []
+    for spec in list_connector_specs():
+        quality_row = quality_by_source.get(spec.source_id) or {}
+        freshness_minutes = quality_row.get("freshness_minutes")
+        rows.append(
+            {
+                "source_key": spec.source_id,
+                "source_id": spec.source_id,
+                "market": spec.market,
+                "dataset_family": quality_row.get("dataset_family") or spec.dataset_family,
+                "last_updated_at": quality_row.get("computed_at"),
+                "freshness_minutes": freshness_minutes,
+                "status": _freshness_status(freshness_minutes),
+            }
+        )
+    return rows
+
 
 def build_source_freshness_payload(db) -> dict:
     queued = db.list_jobs(status="queued", limit=500)
@@ -17,6 +81,7 @@ def build_source_freshness_payload(db) -> dict:
                 "running_jobs": len(running),
                 "status": "busy" if running else "idle",
             },
+            *_build_source_rows_from_quality(db),
         ],
         "job_summary": {
             "queued": len(queued),

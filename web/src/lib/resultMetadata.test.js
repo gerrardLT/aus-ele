@@ -72,6 +72,10 @@ test('formatMetadataUnitLabel avoids duplicated currency and unit output', () =>
   assert.equal(formatMetadataUnitLabel({ currency: 'AUD', unit: '' }), 'AUD');
 });
 
+test('formatMetadataUnitLabel tolerates null metadata payloads', () => {
+  assert.equal(formatMetadataUnitLabel(null), '');
+});
+
 test('formatFreshnessLabel returns friendly fallback and timestamp text', () => {
   assert.equal(formatFreshnessLabel({}, 'zh'), '暂无更新时间');
   assert.equal(

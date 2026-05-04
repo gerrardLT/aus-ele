@@ -31,9 +31,9 @@ export default function FingridHeader({
           <h1 className="mt-2 text-3xl font-serif text-[var(--color-text)]">{dataset.name || copy.datasetFallback}</h1>
           <p className="mt-2 max-w-3xl text-sm text-[var(--color-muted)]">{dataset.description}</p>
           <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-widest text-[var(--color-muted)]">
-            <span>{dataset.dataset_id || '317'}</span>
-            <span>{dataset.unit || 'EUR/MW'}</span>
-            <span>{dataset.frequency || '1h'}</span>
+            <span>{dataset.dataset_id || copy.defaultDatasetId}</span>
+            <span>{dataset.unit || copy.defaultUnit}</span>
+            <span>{dataset.frequency || copy.defaultFrequency}</span>
             <span>{status.last_success_at || copy.notSynced}</span>
           </div>
         </div>

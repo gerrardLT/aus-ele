@@ -5,6 +5,8 @@ import {
   CartesianGrid, Tooltip, Cell, ReferenceLine, LabelList,
 } from 'recharts';
 import { fetchJson } from '../lib/apiClient';
+import RegimeCompactInline from './RegimeCompactInline';
+import P3BessDecisionPanel from './P3BessDecisionPanel';
 
 const DEFAULT_PARAMS = {
   capacityMw: 100,
@@ -17,9 +19,10 @@ const DEFAULT_PARAMS = {
   degradationCost: 5,
 };
 
-export default function BessSimulator({ year, region, apiBase, t, networkFeeDefault, scopeNote }) {
+export default function BessSimulator({ year, region, apiBase, t, lang = 'en', networkFeeDefault, scopeNote, regimeCompactCopy }) {
   const [params, setParams] = useState({ ...DEFAULT_PARAMS });
   const [spread, setSpread] = useState(null);
+  const [peakPayload, setPeakPayload] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -28,6 +31,7 @@ export default function BessSimulator({ year, region, apiBase, t, networkFeeDefa
 
     fetchJson(`${apiBase}/peak-analysis?year=${year}&region=${region}&aggregation=yearly`)
       .then((res) => {
+        setPeakPayload(res);
         const summary = res?.summary;
         if (summary) {
           setSpread(summary.avg_spread_4h || 0);
@@ -157,8 +161,18 @@ export default function BessSimulator({ year, region, apiBase, t, networkFeeDefa
           {t.loadingMsg}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-1 space-y-5">
+        <div className="grid grid-cols-1 gap-6">
+          <RegimeCompactInline compact={peakPayload?.regime_compact} copy={regimeCompactCopy} />
+          <P3BessDecisionPanel
+            apiBase={apiBase}
+            year={year}
+            region={region}
+            params={params}
+            locale={lang}
+          />
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 space-y-5">
             <div className="flex flex-col gap-1">
               <label className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
                 {t.pCapacity}
@@ -208,74 +222,75 @@ export default function BessSimulator({ year, region, apiBase, t, networkFeeDefa
                 </div>
               </div>
             ))}
-          </div>
+            </div>
 
-          <div className="lg:col-span-2">
-            {annualEstimate && (
-              <div className="grid grid-cols-3 gap-3 mb-6">
-                <div className={`border p-3 rounded ${annualEstimate.perMwh >= 0 ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
-                  <div className="text-xs tracking-widest uppercase text-[var(--color-muted)] mb-1">{t.netPerMwh}</div>
-                  <div className={`text-2xl font-mono font-bold ${annualEstimate.perMwh >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                    ${annualEstimate.perMwh.toFixed(1)}
+            <div className="lg:col-span-2">
+              {annualEstimate && (
+                <div className="grid grid-cols-3 gap-3 mb-6">
+                  <div className={`border p-3 rounded ${annualEstimate.perMwh >= 0 ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
+                    <div className="text-xs tracking-widest uppercase text-[var(--color-muted)] mb-1">{t.netPerMwh}</div>
+                    <div className={`text-2xl font-mono font-bold ${annualEstimate.perMwh >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      ${annualEstimate.perMwh.toFixed(1)}
+                    </div>
+                  </div>
+                  <div className="border border-[var(--color-border)] p-3 rounded">
+                    <div className="text-xs tracking-widest uppercase text-[var(--color-muted)] mb-1">{t.dailyRev}</div>
+                    <div className="text-2xl font-mono font-bold">${(annualEstimate.daily / 1000).toFixed(1)}k</div>
+                  </div>
+                  <div className="border border-[var(--color-text)] bg-[var(--color-inverted)] p-3 rounded">
+                    <div className="text-xs tracking-widest uppercase text-[var(--color-inverted-text)] opacity-70 mb-1">{t.annualRev}</div>
+                    <div className="text-2xl font-mono font-bold text-[var(--color-inverted-text)]">
+                      ${(annualEstimate.annual / 1000000).toFixed(2)}M
+                    </div>
                   </div>
                 </div>
-                <div className="border border-[var(--color-border)] p-3 rounded">
-                  <div className="text-xs tracking-widest uppercase text-[var(--color-muted)] mb-1">{t.dailyRev}</div>
-                  <div className="text-2xl font-mono font-bold">${(annualEstimate.daily / 1000).toFixed(1)}k</div>
-                </div>
-                <div className="border border-[var(--color-text)] bg-[var(--color-inverted)] p-3 rounded">
-                  <div className="text-xs tracking-widest uppercase text-[var(--color-inverted-text)] opacity-70 mb-1">{t.annualRev}</div>
-                  <div className="text-2xl font-mono font-bold text-[var(--color-inverted-text)]">
-                    ${(annualEstimate.annual / 1000000).toFixed(2)}M
-                  </div>
-                </div>
-              </div>
-            )}
+              )}
 
-            <div className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={waterfallData} margin={{ top: 20, right: 20, left: 10, bottom: 30 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ fontSize: 10, fill: 'var(--color-muted)' }}
-                    tickLine={false}
-                    angle={-25}
-                    textAnchor="end"
-                    height={60}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11, fill: 'var(--color-muted)' }}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `$${value}`}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'var(--color-surface)',
-                      border: '1px solid var(--color-border)',
-                      fontSize: 12,
-                    }}
-                    formatter={(value, name) => {
-                      if (name === 'base') return [null, null];
-                      return [`$${Number(value).toFixed(1)}/MWh`, ''];
-                    }}
-                  />
-                  <ReferenceLine y={0} stroke="var(--color-text)" strokeWidth={1} />
-                  <Bar dataKey="base" stackId="stack" fill="transparent" />
-                  <Bar dataKey="bar" stackId="stack" radius={[3, 3, 0, 0]}>
-                    {waterfallData.map((entry, index) => (
-                      <Cell key={index} fill={barColor(entry.type)} fillOpacity={0.85} />
-                    ))}
-                    <LabelList
-                      dataKey="delta"
-                      position="top"
-                      formatter={(value) => `${value >= 0 ? '+' : ''}$${Number(value).toFixed(1)}`}
-                      style={{ fontSize: 10, fill: 'var(--color-muted)', fontFamily: 'monospace' }}
+              <div className="h-[400px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={waterfallData} margin={{ top: 20, right: 20, left: 10, bottom: 30 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 10, fill: 'var(--color-muted)' }}
+                      tickLine={false}
+                      angle={-25}
+                      textAnchor="end"
+                      height={60}
                     />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                    <YAxis
+                      tick={{ fontSize: 11, fill: 'var(--color-muted)' }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => `$${value}`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'var(--color-surface)',
+                        border: '1px solid var(--color-border)',
+                        fontSize: 12,
+                      }}
+                      formatter={(value, name) => {
+                        if (name === 'base') return [null, null];
+                        return [`$${Number(value).toFixed(1)}/MWh`, ''];
+                      }}
+                    />
+                    <ReferenceLine y={0} stroke="var(--color-text)" strokeWidth={1} />
+                    <Bar dataKey="base" stackId="stack" fill="transparent" />
+                    <Bar dataKey="bar" stackId="stack" radius={[3, 3, 0, 0]}>
+                      {waterfallData.map((entry, index) => (
+                        <Cell key={index} fill={barColor(entry.type)} fillOpacity={0.85} />
+                      ))}
+                      <LabelList
+                        dataKey="delta"
+                        position="top"
+                        formatter={(value) => `${value >= 0 ? '+' : ''}$${Number(value).toFixed(1)}`}
+                        style={{ fontSize: 10, fill: 'var(--color-muted)', fontFamily: 'monospace' }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
         </div>

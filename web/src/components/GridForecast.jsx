@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { fetchJson } from '../lib/apiClient';
 import {
-  buildGridForecastUrl,
+  buildForecastLayerUrl,
   getForecastConfidenceCopy,
   getForecastContextItems,
   getForecastCoverageCopy,
@@ -15,6 +15,8 @@ import {
 import GridForecastSummaryCards from './GridForecastSummaryCards';
 import GridForecastTimeline from './GridForecastTimeline';
 import GridForecastDrivers from './GridForecastDrivers';
+import RegimeCompactInline from './RegimeCompactInline';
+import GridForecastDiagnosticsPanel from './GridForecastDiagnosticsPanel';
 
 const HORIZONS = ['24h', '7d', '30d'];
 
@@ -38,6 +40,15 @@ function DeskMetric({ label, value, emphasis = false }) {
       <div className={`mt-0.5 break-words leading-5 ${emphasis ? 'text-[0.95rem] font-serif text-[var(--color-text)]' : 'text-sm text-[var(--color-text)]'}`}>
         {value}
       </div>
+    </div>
+  );
+}
+
+function GovernanceMetric({ label, value }) {
+  return (
+    <div className="rounded border border-[var(--color-border)] bg-white/60 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-widest text-[var(--color-muted)]">{label}</div>
+      <div className="mt-1 break-words text-sm text-[var(--color-text)]">{value || 'n/a'}</div>
     </div>
   );
 }
@@ -140,7 +151,7 @@ function ForecastDeskPanel({ payload, locale = 'en', sectionCopy, fallbackMarket
   );
 }
 
-export default function GridForecast({ apiBase, region, locale = 'en', t }) {
+export default function GridForecast({ apiBase, region, locale = 'en', t, regimeCompactCopy }) {
   const market = region === 'WEM' ? 'WEM' : 'NEM';
   const [horizon, setHorizon] = useState('24h');
   const [payload, setPayload] = useState(null);
@@ -159,7 +170,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t }) {
     setError(false);
 
     fetchJson(
-      buildGridForecastUrl(apiBase, {
+      buildForecastLayerUrl(apiBase, {
         market,
         region,
         horizon,
@@ -191,6 +202,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t }) {
   const horizonNotes = sectionCopy.horizonNotes || {};
   const coverageLabel = getForecastCoverageCopy(payload?.coverage?.mode || payload?.metadata?.coverage_quality, locale);
   const confidenceLabel = getForecastConfidenceCopy(payload?.metadata?.confidence_band, locale);
+  const governance = payload?.governance || null;
 
   return (
     <motion.section
@@ -262,11 +274,19 @@ export default function GridForecast({ apiBase, region, locale = 'en', t }) {
         <div className="mt-6 text-sm text-[var(--color-muted)]">{sectionCopy.empty || copy.generic.notAvailable}</div>
       ) : (
         <>
-          <div className="mt-6 grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.95fr)]">
-            <div className="grid content-start gap-2">
-              <GridForecastSummaryCards summary={payload.summary} t={sectionCopy} locale={locale} />
-              <GridForecastTimeline windows={payload.windows} t={sectionCopy} locale={locale} />
-            </div>
+        <div className="mt-6 grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.95fr)]">
+          <div className="grid content-start gap-2">
+            <RegimeCompactInline compact={payload.regime_compact} copy={regimeCompactCopy} />
+            <GridForecastSummaryCards summary={payload.summary} t={sectionCopy} locale={locale} />
+            <GridForecastDiagnosticsPanel
+              baselineForecast={{
+                ...(payload.baselineForecast || {}),
+                governance_proxy: governance?.forecast_value_attribution || null,
+              }}
+              locale={locale}
+            />
+            <GridForecastTimeline windows={payload.windows} t={sectionCopy} locale={locale} />
+          </div>
 
             <div className="grid">
               <ForecastDeskPanel payload={payload} locale={locale} sectionCopy={sectionCopy} fallbackMarket={market} fallbackHorizon={horizon} />
@@ -276,6 +296,20 @@ export default function GridForecast({ apiBase, region, locale = 'en', t }) {
           <div className="mt-3">
             <GridForecastDrivers drivers={payload.drivers} metadata={payload.metadata} t={sectionCopy} locale={locale} />
           </div>
+
+          {governance && (
+            <div className="mt-3 rounded border border-[var(--color-border)] bg-white/50 p-3.5">
+              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                {sectionCopy.governanceTitle}
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-4">
+                <GovernanceMetric label={sectionCopy.governanceFreshness} value={governance?.freshness?.status} />
+                <GovernanceMetric label={sectionCopy.governanceDrift} value={governance?.drift?.status} />
+                <GovernanceMetric label={sectionCopy.governanceDisclaimer} value={governance?.disclaimer?.usage_scope} />
+                <GovernanceMetric label={sectionCopy.governanceLineage} value={governance?.lineage?.source_id} />
+              </div>
+            </div>
+          )}
         </>
       )}
     </motion.section>

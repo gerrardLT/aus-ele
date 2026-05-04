@@ -153,3 +153,44 @@ def map_fingrid_timeseries_row(
             "ingested_at": normalized_row["ingested_at"],
         }
     )
+
+
+def build_series_contract(
+    *,
+    dataset_family: str,
+    observation_kind: str,
+    market: str,
+    country: str,
+    region_or_zone: str,
+    interval_minutes: int | None,
+    unit: str | None,
+    points: list[dict],
+    source_name: str,
+    source_version: str,
+    ingested_at: str,
+    coverage: dict | None = None,
+    freshness: dict | None = None,
+    quality: dict | None = None,
+    warnings: list[str] | None = None,
+    lineage: dict | None = None,
+    counterpart_series_id: str | None = None,
+) -> dict:
+    return {
+        "dataset_family": dataset_family,
+        "observation_kind": observation_kind,
+        "market": market,
+        "country": country,
+        "region_or_zone": region_or_zone,
+        "interval_minutes": interval_minutes,
+        "unit": unit,
+        "points": list(points),
+        "coverage": dict(coverage or {}),
+        "freshness": dict(freshness or {}),
+        "quality": dict(quality or {}),
+        "warnings": list(warnings or []),
+        "lineage": dict(lineage or {}),
+        "counterpart_series_id": counterpart_series_id,
+        "source_name": source_name,
+        "source_version": source_version,
+        "ingested_at": ingested_at,
+    }

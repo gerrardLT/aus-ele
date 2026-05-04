@@ -14,11 +14,14 @@ import {
   getFingridCopy,
   localizeFingridDataset,
 } from '../lib/fingridUi';
+import DataQualityBadge from '../components/DataQualityBadge';
 import FingridDistributionPanel from '../components/fingrid/FingridDistributionPanel';
 import FingridHeader from '../components/fingrid/FingridHeader';
 import FingridSeriesChart from '../components/fingrid/FingridSeriesChart';
 import FingridStatusPanel from '../components/fingrid/FingridStatusPanel';
 import FingridSummaryCards from '../components/fingrid/FingridSummaryCards';
+import PageSection from '../components/PageSection';
+import PageWorkspaceNav from '../components/PageWorkspaceNav';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
 const LANG_STORAGE_KEY = 'app_lang';
@@ -76,6 +79,9 @@ export default function FingridPage() {
     ? copy.validation[customDateRangeValidationCode]
     : null;
   const syncInProgress = syncing || statusPayload?.status?.sync_status === 'running';
+  const marketModelCopy = copy.marketModel || {};
+  const statusMetadata = statusPayload?.metadata || statusPayload?.status_metadata || statusPayload?.status?.metadata || null;
+  const statusLoadingLabel = copy.statusValues.loading;
 
   useEffect(() => {
     try {
@@ -237,6 +243,22 @@ export default function FingridPage() {
   return (
     <main className="min-h-screen bg-[var(--color-background)] px-6 py-8 text-[var(--color-text)]">
       <div className="mx-auto grid max-w-7xl gap-6">
+        <PageWorkspaceNav
+          brand={copy.brand}
+          subtitle={copy.marketPulseSubtitle}
+          current="fingrid"
+          links={[
+            { key: 'home', href: '/', label: copy.navToAemo },
+            { key: 'fingrid', href: '/fingrid', label: copy.brand },
+            { key: 'developer', href: '/developer', label: 'Developer Portal' },
+          ]}
+          languageLabel={copy.toggleLanguage}
+          languageAriaLabel={copy.toggleLanguage}
+          onToggleLanguage={() => setLang((current) => (current === 'zh' ? 'en' : 'zh'))}
+          title={copy.marketPulseTitle}
+          meta={<span>{loading ? statusLoadingLabel : copy.marketPulseReady}</span>}
+        />
+
         <FingridHeader
           datasets={localizedDatasets}
           datasetId={datasetId}
@@ -259,18 +281,53 @@ export default function FingridPage() {
           onCustomEndDateChange={setCustomEndDate}
           validationMessage={customDateRangeValidationMessage}
         />
-        <FingridSummaryCards
-          summaryPayload={summaryPayload}
-          seriesPayload={seriesPayload}
-          aggregation={aggregation}
-          loading={loading}
-          lang={lang}
-        />
-        <FingridSeriesChart payload={seriesPayload} loading={loading} error={error} copy={copy} />
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
-          <FingridDistributionPanel payload={summaryPayload} loading={loading} copy={copy} />
-          <FingridStatusPanel payload={statusPayload} loading={loading} error={error} copy={copy} lang={lang} />
-        </div>
+
+        <PageSection
+          id="stage-context"
+          title={copy.stageContext}
+          description={copy.stageContextDesc}
+        >
+          <div className="grid gap-4">
+            <DataQualityBadge metadata={statusMetadata} lang={lang} />
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                {copy.marketPulseTitle}
+              </div>
+              <div className="mt-2 text-sm leading-6 text-[var(--color-text)]">
+                {marketModelCopy.description}
+              </div>
+              <div className="mt-3 text-sm text-[var(--color-muted)]">
+                {marketModelCopy.noSignals}
+              </div>
+            </div>
+          </div>
+        </PageSection>
+
+        <PageSection
+          id="stage-time-series"
+          title={copy.stageTimeSeries}
+          description={copy.stageTimeSeriesDesc}
+        >
+          <FingridSummaryCards
+            summaryPayload={summaryPayload}
+            seriesPayload={seriesPayload}
+            aggregation={aggregation}
+            loading={loading}
+            lang={lang}
+          />
+          <FingridSeriesChart payload={seriesPayload} loading={loading} error={error} copy={copy} />
+        </PageSection>
+
+        <PageSection
+          id="stage-operations"
+          title={copy.stageOperations}
+          description={copy.stageOperationsDesc}
+        >
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
+            <FingridDistributionPanel payload={summaryPayload} loading={loading} copy={copy} />
+            <FingridStatusPanel payload={statusPayload} loading={loading} error={error} copy={copy} lang={lang} />
+          </div>
+        </PageSection>
       </div>
     </main>
   );

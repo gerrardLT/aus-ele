@@ -12,6 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { fetchJson } from '../lib/apiClient';
+import RegimeCompactInline from './RegimeCompactInline';
 
 function buildParams(year, region, month, quarter, dayType) {
   const params = new URLSearchParams({
@@ -42,6 +43,7 @@ export default function CycleCost({
   dayType,
   apiBase,
   t,
+  regimeCompactCopy,
 }) {
   const [dailyData, setDailyData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -162,12 +164,15 @@ export default function CycleCost({
           {t.loadingMsg}
         </div>
       ) : histogram.length > 0 && metrics ? (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          <div className="space-y-6">
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
-                {t.ccDegCost}
-              </label>
+        <div className="grid grid-cols-1 gap-6">
+          <RegimeCompactInline compact={dailyData?.regime_compact} copy={regimeCompactCopy} />
+
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            <div className="space-y-6">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
+                  {t.ccDegCost}
+                </label>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-lg font-bold">${degradationCost}</span>
                 <span className="text-xs text-[var(--color-muted)]">{t.ccUnitPerMwh}</span>
@@ -221,84 +226,85 @@ export default function CycleCost({
                 <span className="font-mono font-bold">{metrics.totalDays}</span>
               </div>
             </div>
-          </div>
-
-          <div className="lg:col-span-3">
-            <div style={{ width: '100%', height: 420 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={histogram} margin={{ top: 10, right: 20, left: 0, bottom: 30 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-                  <XAxis
-                    dataKey="range"
-                    tick={{ fontSize: 10, fill: 'var(--color-muted)' }}
-                    tickLine={false}
-                    interval={1}
-                    angle={-45}
-                    textAnchor="end"
-                    label={{
-                      value: t.ccXAxis,
-                      position: 'bottom',
-                      offset: 15,
-                      style: { fontSize: 11, fill: 'var(--color-muted)' },
-                    }}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11, fill: 'var(--color-muted)' }}
-                    tickLine={false}
-                    axisLine={false}
-                    label={{
-                      value: t.ccYAxis,
-                      angle: -90,
-                      position: 'insideLeft',
-                      style: { fontSize: 11, fill: 'var(--color-muted)' },
-                    }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'var(--color-surface)',
-                      border: '1px solid var(--color-border)',
-                      fontSize: 12,
-                    }}
-                    formatter={(value) => [`${value} ${t.ccTooltipDays}`, t.ccTooltipFrequency]}
-                    labelFormatter={(label) => `${t.ccTooltipSpread}: ${label}/MWh`}
-                  />
-                  <ReferenceLine
-                    x={`$${Math.floor(degradationCost / 25) * 25}`}
-                    stroke="#ef4444"
-                    strokeWidth={2}
-                    strokeDasharray="8 4"
-                    label={{
-                      value: `-> $${degradationCost} ${t.ccThreshold}`,
-                      position: 'top',
-                      style: { fontSize: 10, fill: '#ef4444', fontFamily: 'monospace' },
-                    }}
-                  />
-                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                    {histogram.map((entry, index) => (
-                      <Cell key={index} fill={barColor(entry.rangeNum)} fillOpacity={0.8} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
             </div>
 
-            <div className="flex items-center justify-center gap-6 mt-3 text-xs text-[var(--color-muted)] flex-wrap">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-green-500" />
-                {t.ccGo}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-yellow-500" />
-                {t.ccMarginal}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-red-500" />
-                {t.ccHold}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-px h-3 border-l-2 border-dashed border-red-500" />
-                {t.ccCostLine}
-              </span>
+            <div className="lg:col-span-3">
+              <div style={{ width: '100%', height: 420 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={histogram} margin={{ top: 10, right: 20, left: 0, bottom: 30 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+                    <XAxis
+                      dataKey="range"
+                      tick={{ fontSize: 10, fill: 'var(--color-muted)' }}
+                      tickLine={false}
+                      interval={1}
+                      angle={-45}
+                      textAnchor="end"
+                      label={{
+                        value: t.ccXAxis,
+                        position: 'bottom',
+                        offset: 15,
+                        style: { fontSize: 11, fill: 'var(--color-muted)' },
+                      }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: 'var(--color-muted)' }}
+                      tickLine={false}
+                      axisLine={false}
+                      label={{
+                        value: t.ccYAxis,
+                        angle: -90,
+                        position: 'insideLeft',
+                        style: { fontSize: 11, fill: 'var(--color-muted)' },
+                      }}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'var(--color-surface)',
+                        border: '1px solid var(--color-border)',
+                        fontSize: 12,
+                      }}
+                      formatter={(value) => [`${value} ${t.ccTooltipDays}`, t.ccTooltipFrequency]}
+                      labelFormatter={(label) => `${t.ccTooltipSpread}: ${label}/MWh`}
+                    />
+                    <ReferenceLine
+                      x={`$${Math.floor(degradationCost / 25) * 25}`}
+                      stroke="#ef4444"
+                      strokeWidth={2}
+                      strokeDasharray="8 4"
+                      label={{
+                        value: `-> $${degradationCost} ${t.ccThreshold}`,
+                        position: 'top',
+                        style: { fontSize: 10, fill: '#ef4444', fontFamily: 'monospace' },
+                      }}
+                    />
+                    <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                      {histogram.map((entry, index) => (
+                        <Cell key={index} fill={barColor(entry.rangeNum)} fillOpacity={0.8} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="flex items-center justify-center gap-6 mt-3 text-xs text-[var(--color-muted)] flex-wrap">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-green-500" />
+                  {t.ccGo}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-yellow-500" />
+                  {t.ccMarginal}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-red-500" />
+                  {t.ccHold}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-px h-3 border-l-2 border-dashed border-red-500" />
+                  {t.ccCostLine}
+                </span>
+              </div>
             </div>
           </div>
         </div>

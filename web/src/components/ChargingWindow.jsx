@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
 import EventBadgeList from './EventBadgeList';
+import RegimeCompactInline from './RegimeCompactInline';
 import { fetchJson } from '../lib/apiClient';
 import { buildOverlayNotice, getEventText } from '../lib/eventOverlays';
 
@@ -30,7 +31,7 @@ function interpolateColor(value, min, max) {
   return `rgb(${Math.round(230 + phase * 25)}, ${Math.round(80 - phase * 50)}, ${Math.round(30 - phase * 20)})`;
 }
 
-export default function ChargingWindow({ year, region, lang = 'en', eventOverlay, apiBase, t }) {
+export default function ChargingWindow({ year, region, lang = 'en', eventOverlay, apiBase, t, regimeCompactCopy }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [selectedHour, setSelectedHour] = useState(null);
@@ -108,116 +109,119 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
           {t.loadingMsg}
         </div>
       ) : hourlyData.length > 0 && stats ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          <div className="lg:col-span-2 flex justify-center">
-            <svg ref={svgRef} viewBox={`0 0 ${size} ${size}`} className="w-full max-w-[500px]" aria-label={t.cwChartAria}>
-              {hourlyData.map((hour, index) => {
-                const startAngle = index * 15;
-                const endAngle = (index + 1) * 15;
-                const color = interpolateColor(hour.avg_price, stats.minPrice, stats.maxPrice);
-                const isSelected = selectedHour === index;
+        <div className="grid grid-cols-1 gap-6">
+          <RegimeCompactInline compact={data?.regime_compact} copy={regimeCompactCopy} />
 
-                return (
-                  <g
-                    key={index}
-                    onMouseEnter={() => setSelectedHour(index)}
-                    onMouseLeave={() => setSelectedHour(null)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <path
-                      d={arcPath(startAngle, endAngle, innerR, outerR)}
-                      fill={color}
-                      fillOpacity={isSelected ? 1 : 0.75}
-                      stroke="var(--color-background)"
-                      strokeWidth={1.5}
-                    />
-                    {hour.neg_pct > 20 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+            <div className="lg:col-span-2 flex justify-center">
+              <svg ref={svgRef} viewBox={`0 0 ${size} ${size}`} className="w-full max-w-[500px]" aria-label={t.cwChartAria}>
+                {hourlyData.map((hour, index) => {
+                  const startAngle = index * 15;
+                  const endAngle = (index + 1) * 15;
+                  const color = interpolateColor(hour.avg_price, stats.minPrice, stats.maxPrice);
+                  const isSelected = selectedHour === index;
+
+                  return (
+                    <g
+                      key={index}
+                      onMouseEnter={() => setSelectedHour(index)}
+                      onMouseLeave={() => setSelectedHour(null)}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <path
-                        d={arcPath(startAngle + 1, endAngle - 1, innerR - 8, innerR - 2)}
-                        fill="#10b981"
-                        fillOpacity={Math.min(1, hour.neg_pct / 50)}
+                        d={arcPath(startAngle, endAngle, innerR, outerR)}
+                        fill={color}
+                        fillOpacity={isSelected ? 1 : 0.75}
+                        stroke="var(--color-background)"
+                        strokeWidth={1.5}
                       />
-                    ) : null}
-                  </g>
-                );
-              })}
+                      {hour.neg_pct > 20 ? (
+                        <path
+                          d={arcPath(startAngle + 1, endAngle - 1, innerR - 8, innerR - 2)}
+                          fill="#10b981"
+                          fillOpacity={Math.min(1, hour.neg_pct / 50)}
+                        />
+                      ) : null}
+                    </g>
+                  );
+                })}
 
-              {[0, 3, 6, 9, 12, 15, 18, 21].map((hour) => {
-                const angle = ((hour * 15) - 90) * Math.PI / 180;
-                const x = cx + labelR * Math.cos(angle);
-                const y = cy + labelR * Math.sin(angle);
-                return (
-                  <text
-                    key={hour}
-                    x={x}
-                    y={y}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    fontSize={11}
-                    fill="var(--color-muted)"
-                    fontFamily="monospace"
-                  >
-                    {`${hour.toString().padStart(2, '0')}:00`}
-                  </text>
-                );
-              })}
-
-              <circle cx={cx} cy={cy} r={innerR - 10} fill="var(--color-background)" />
-              {selectedHour !== null ? (
-                <>
-                  <text x={cx} y={cy - 18} textAnchor="middle" fontSize={12} fill="var(--color-muted)" fontFamily="monospace">
-                    {HOUR_LABELS[selectedHour]}
-                  </text>
-                  <text x={cx} y={cy + 4} textAnchor="middle" fontSize={18} fontWeight="bold" fill="var(--color-text)" fontFamily="monospace">
-                    ${hourlyData[selectedHour]?.avg_price}
-                  </text>
-                  <text x={cx} y={cy + 22} textAnchor="middle" fontSize={10} fill="var(--color-muted)">
-                    {t.cwAvgUnit}
-                  </text>
-                  {hourlyData[selectedHour]?.neg_pct > 0 ? (
-                    <text x={cx} y={cy + 36} textAnchor="middle" fontSize={10} fill="#10b981">
-                      {hourlyData[selectedHour].neg_pct}% {t.cwNegativeSuffix}
+                {[0, 3, 6, 9, 12, 15, 18, 21].map((hour) => {
+                  const angle = ((hour * 15) - 90) * Math.PI / 180;
+                  const x = cx + labelR * Math.cos(angle);
+                  const y = cy + labelR * Math.sin(angle);
+                  return (
+                    <text
+                      key={hour}
+                      x={x}
+                      y={y}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={11}
+                      fill="var(--color-muted)"
+                      fontFamily="monospace"
+                    >
+                      {`${hour.toString().padStart(2, '0')}:00`}
                     </text>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <text x={cx} y={cy - 8} textAnchor="middle" fontSize={11} fill="var(--color-muted)">
-                    {t.cwHover}
-                  </text>
-                  <text x={cx} y={cy + 8} textAnchor="middle" fontSize={11} fill="var(--color-muted)">
-                    {t.cwToSee}
-                  </text>
-                </>
-              )}
-            </svg>
-          </div>
+                  );
+                })}
 
-          <div className="lg:col-span-1 space-y-6">
-            <div className={`rounded border p-4 ${
-              overlayNotice.variant === 'warning'
-                ? 'border-amber-500/40 bg-amber-50 text-amber-900'
-                : overlayNotice.variant === 'info'
-                  ? 'border-sky-500/30 bg-sky-50 text-sky-900'
-                  : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]'
-            }`}>
-              <div className="text-xs tracking-widest uppercase font-bold mb-2">
-                {eventText.hintTitle}
-              </div>
-              <div className="text-sm font-medium">
-                {overlayNotice.title}
-              </div>
-              <div className="mt-1 text-xs opacity-80">
-                {overlayNotice.message}
-              </div>
-              {overlayNotice.topStates.length > 0 ? (
-                <div className="mt-3">
-                  <EventBadgeList states={overlayNotice.topStates.slice(0, 2)} size="xs" locale={lang} />
-                </div>
-              ) : null}
+                <circle cx={cx} cy={cy} r={innerR - 10} fill="var(--color-background)" />
+                {selectedHour !== null ? (
+                  <>
+                    <text x={cx} y={cy - 18} textAnchor="middle" fontSize={12} fill="var(--color-muted)" fontFamily="monospace">
+                      {HOUR_LABELS[selectedHour]}
+                    </text>
+                    <text x={cx} y={cy + 4} textAnchor="middle" fontSize={18} fontWeight="bold" fill="var(--color-text)" fontFamily="monospace">
+                      ${hourlyData[selectedHour]?.avg_price}
+                    </text>
+                    <text x={cx} y={cy + 22} textAnchor="middle" fontSize={10} fill="var(--color-muted)">
+                      {t.cwAvgUnit}
+                    </text>
+                    {hourlyData[selectedHour]?.neg_pct > 0 ? (
+                      <text x={cx} y={cy + 36} textAnchor="middle" fontSize={10} fill="#10b981">
+                        {hourlyData[selectedHour].neg_pct}% {t.cwNegativeSuffix}
+                      </text>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <text x={cx} y={cy - 8} textAnchor="middle" fontSize={11} fill="var(--color-muted)">
+                      {t.cwHover}
+                    </text>
+                    <text x={cx} y={cy + 8} textAnchor="middle" fontSize={11} fill="var(--color-muted)">
+                      {t.cwToSee}
+                    </text>
+                  </>
+                )}
+              </svg>
             </div>
 
-            <div className="border border-green-500/30 bg-green-500/5 p-4 rounded">
+            <div className="lg:col-span-1 space-y-6">
+              <div className={`rounded border p-4 ${
+                overlayNotice.variant === 'warning'
+                  ? 'border-amber-500/40 bg-amber-50 text-amber-900'
+                  : overlayNotice.variant === 'info'
+                    ? 'border-sky-500/30 bg-sky-50 text-sky-900'
+                    : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]'
+              }`}>
+                <div className="text-xs tracking-widest uppercase font-bold mb-2">
+                  {eventText.hintTitle}
+                </div>
+                <div className="text-sm font-medium">
+                  {overlayNotice.title}
+                </div>
+                <div className="mt-1 text-xs opacity-80">
+                  {overlayNotice.message}
+                </div>
+                {overlayNotice.topStates.length > 0 ? (
+                  <div className="mt-3">
+                    <EventBadgeList states={overlayNotice.topStates.slice(0, 2)} size="xs" locale={lang} />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="border border-green-500/30 bg-green-500/5 p-4 rounded">
               <div className="text-xs tracking-widest uppercase font-bold text-green-600 mb-3">
                 {t.cwBestCharge}
               </div>
@@ -233,7 +237,7 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
               </div>
             </div>
 
-            <div className="border border-red-500/30 bg-red-500/5 p-4 rounded">
+              <div className="border border-red-500/30 bg-red-500/5 p-4 rounded">
               <div className="text-xs tracking-widest uppercase font-bold text-red-600 mb-3">
                 {t.cwBestDischarge}
               </div>
@@ -249,7 +253,7 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
               </div>
             </div>
 
-            <div className="border border-[var(--color-border)] p-4 rounded">
+              <div className="border border-[var(--color-border)] p-4 rounded">
               <div className="text-xs tracking-widest uppercase font-bold text-[var(--color-muted)] mb-3">
                 {t.cwNegStats}
               </div>
@@ -267,22 +271,23 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-              <div className="flex items-center gap-1">
-                <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: interpolateColor(-50, -100, 200) }} />
-                {t.cwCharge}
-              </div>
-              <span>{'->'}</span>
-              <div
-                className="w-12 h-3 rounded-sm"
-                style={{
-                  background: 'linear-gradient(to right, rgb(10,200,60), rgb(200,200,80), rgb(230,100,20), rgb(255,50,10))',
-                }}
-              />
-              <span>{'->'}</span>
-              <div className="flex items-center gap-1">
-                <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: interpolateColor(200, -100, 200) }} />
-                {t.cwDischarge}
+              <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: interpolateColor(-50, -100, 200) }} />
+                  {t.cwCharge}
+                </div>
+                <span>{'->'}</span>
+                <div
+                  className="w-12 h-3 rounded-sm"
+                  style={{
+                    background: 'linear-gradient(to right, rgb(10,200,60), rgb(200,200,80), rgb(230,100,20), rgb(255,50,10))',
+                  }}
+                />
+                <span>{'->'}</span>
+                <div className="flex items-center gap-1">
+                  <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: interpolateColor(200, -100, 200) }} />
+                  {t.cwDischarge}
+                </div>
               </div>
             </div>
           </div>

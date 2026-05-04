@@ -15,12 +15,31 @@ test('DataQualityBadge renders data grade and metadata helpers', () => {
   assert.match(source, /metadata\?\.interval_minutes/);
 });
 
+test('PageSection spans the full 12-column content grid', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/PageSection.jsx'), 'utf8');
+  assert.match(source, /className="col-span-12 grid gap-4 border-t border-\[var\(--color-border\)\] pt-8 scroll-mt-24"/);
+});
+
 test('App main workbench keeps metadata badge plus loading and retry branches', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
   assert.match(source, /<DataQualityBadge metadata=\{chartMetadata\} lang=\{lang\}/);
   assert.match(source, /t\.status\.loading/);
   assert.match(source, /t\.status\.retry/);
   assert.match(source, /t\.status\.error/);
+});
+
+test('App avoids rendering a duplicate primary market title below workspace nav', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  assert.match(source, /<PageWorkspaceNav/);
+  assert.doesNotMatch(source, /<h1 className="text-2xl font-bold leading-tight md:text-3xl">\s*\{t\.header\.title1\}\s*\{t\.header\.title2\}\s*<\/h1>/);
+});
+
+test('App consolidates top-level sync and language controls into workspace nav', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  assert.match(source, /actions=\{/);
+  assert.match(source, /handleSync/);
+  assert.doesNotMatch(source, /<motion\.header/);
+  assert.doesNotMatch(source, /onClick=\{\(\) => setLang\(lang === 'zh' \? 'en' : 'zh'\)\}/);
 });
 
 test('Fingrid page surfaces metadata badge and Finland empty-state context', () => {
@@ -69,6 +88,7 @@ test('CycleCost centralizes localized copy for legacy fallback, axes, and empty 
   assert.match(source, /t\.ccTooltipFrequency/);
   assert.match(source, /t\.ccTooltipSpread/);
   assert.match(source, /t\.noData/);
+  assert.match(source, /regime_compact/);
   assert.equal(source.includes("lang === 'zh'"), false);
 });
 
@@ -76,6 +96,7 @@ test('ChargingWindow centralizes localized empty-state copy', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/ChargingWindow.jsx'), 'utf8');
 
   assert.match(source, /t\.noData/);
+  assert.match(source, /regime_compact/);
   assert.equal(source.includes("lang === 'zh'"), false);
 });
 
@@ -93,11 +114,25 @@ test('Developer portal centralizes language toggle copy', () => {
   assert.match(source, /copy\.stageAccess/);
   assert.match(source, /copy\.stageEconomics/);
   assert.match(source, /copy\.stageLedger/);
+  assert.match(source, /copy\.stageContracts/);
+  assert.match(source, /copy\.stageGovernance/);
+  assert.match(source, /copy\.governanceFreshness/);
+  assert.match(source, /copy\.governanceDrift/);
+  assert.match(source, /copy\.governanceSourceCatalog/);
+  assert.match(source, /copy\.governanceSourceId/);
+  assert.match(source, /copy\.governanceDatasetFamily/);
+  assert.match(source, /copy\.governanceLineage/);
+  assert.match(source, /copy\.contractCompact/);
+  assert.match(source, /copy\.contractFull/);
   assert.match(source, /PageWorkspaceNav/);
   assert.match(source, /PageSection/);
   assert.match(source, /id="stage-access"/);
   assert.match(source, /id="stage-economics"/);
   assert.match(source, /id="stage-ledger"/);
+  assert.match(source, /id="stage-contracts"/);
+  assert.match(source, /id="stage-governance"/);
+  assert.match(source, /regime_compact/);
+  assert.match(source, /regime_layer/);
   assert.equal(source.includes("lang === 'zh' ? 'EN'"), false);
 });
 
@@ -108,6 +143,40 @@ test('Grid forecast helpers avoid inline localized source-link and band labels',
   assert.equal(driversSource.includes("locale === 'zh' ?"), false);
   assert.equal(driversSource.includes('Source link'), false);
   assert.equal(cardsSource.includes("locale === 'zh'"), false);
+});
+
+test('Grid forecast workbench surfaces p4 governance copy without hardcoded labels', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/GridForecast.jsx'), 'utf8');
+
+  assert.match(source, /governance/);
+  assert.match(source, /sectionCopy\.governanceTitle/);
+  assert.match(source, /sectionCopy\.governanceFreshness/);
+  assert.match(source, /sectionCopy\.governanceDrift/);
+  assert.match(source, /sectionCopy\.governanceDisclaimer/);
+  assert.equal(source.includes("lang === 'zh' ? 'P4"), false);
+});
+
+test('Grid forecast diagnostics panel consumes walk-forward and forecast value proxy fields', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/GridForecastDiagnosticsPanel.jsx'), 'utf8');
+
+  assert.match(source, /backtest_window/);
+  assert.match(source, /walk_forward_mode/);
+  assert.match(source, /sample_points_evaluated/);
+  assert.match(source, /overall_information_value_index/);
+  assert.match(source, /weakest_regime/);
+});
+
+test('P3 decision panel consumes governance and source backtest fields', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/P3BessDecisionPanel.jsx'), 'utf8');
+
+  assert.match(source, /payload\.governance/);
+  assert.match(source, /sourceBacktest/);
+  assert.match(source, /timeline_points/);
+  assert.match(source, /equivalent_cycles/);
+  assert.match(source, /governance\.freshness/);
+  assert.match(source, /governance\.drift/);
+  assert.match(source, /governance\.disclaimer/);
+  assert.match(source, /governance\.lineage/);
 });
 
 test('Fingrid summary cards centralize localized loading copy', () => {
@@ -177,6 +246,7 @@ test('Revenue stacking centralizes preview and summary copy', () => {
   assert.match(source, /t\.stackPreviewDate/);
   assert.match(source, /t\.stackPreviewCombined/);
   assert.match(source, /t\.stackNoOverlap/);
+  assert.match(source, /regime_compact/);
   assert.equal(source.includes('Not investment-grade'), false);
   assert.equal(source.includes('Preview Mode'), false);
   assert.equal(source.includes('Combined Stack'), false);
@@ -190,6 +260,7 @@ test('Peak analysis centralizes eyebrow and event column labels', () => {
 
   assert.match(source, /t\.eyebrow/);
   assert.match(source, /t\.eventsColumn/);
+  assert.match(source, /regime_compact/);
   assert.equal(source.includes('STORAGE ARBITRAGE'), false);
   assert.equal(source.includes('>Events<'), false);
 });
@@ -214,6 +285,7 @@ test('BESS simulator centralizes financial summary copy', () => {
   assert.match(source, /t\.pCycles/);
   assert.match(source, /t\.pDegradation/);
   assert.match(source, /t\.pAemoFee/);
+  assert.match(source, /regime_compact/);
   assert.equal(source.includes('FINANCIAL MODEL'), false);
   assert.equal(source.includes('Net $/MWh'), false);
   assert.equal(source.includes('Daily Revenue'), false);
@@ -232,6 +304,17 @@ test('BESS simulator centralizes financial summary copy', () => {
   assert.equal(source.includes("|| 'Daily Cycles'"), false);
   assert.equal(source.includes("|| 'Degradation Cost'"), false);
   assert.equal(source.includes("|| 'AEMO Participant Fee'"), false);
+});
+
+test('Investment analysis centralizes finance copy and consumes regime compact', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/InvestmentAnalysis.jsx'), 'utf8');
+
+  assert.match(source, /copy\.eyebrow/);
+  assert.match(source, /copy\.runAnalysis/);
+  assert.match(source, /copy\.backtestObservedTitle/);
+  assert.match(source, /copy\.regimeNarrativeTitle/);
+  assert.match(source, /copy\.regimeNarrativeEmpty/);
+  assert.match(source, /regime_compact/);
 });
 
 test('FCAS analysis centralizes preview, summary, and table copy', () => {
@@ -264,6 +347,51 @@ test('FCAS analysis centralizes preview, summary, and table copy', () => {
   assert.equal(source.includes('Loading FCAS data...'), false);
   assert.equal(source.includes('No FCAS Data Available'), false);
   assert.equal(source.includes('Run the relevant sync job to collect FCAS or ESS pricing data.'), false);
+  assert.match(source, /regime_compact/);
+});
+
+test('App passes regime compact translation copy into forecast and FCAS modules', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+
+  assert.match(source, /regimeCompactCopy=\{t\.regime_compact\}/);
+});
+
+test('App passes regime compact translation copy into peak analysis module', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+
+  assert.match(source, /<PeakAnalysis[\s\S]*?t=\{\{\.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.peak\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
+});
+
+test('App passes regime compact translation copy into cycle cost and charging modules', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+
+  assert.match(source, /<ChargingWindow[\s\S]*?t=\{\{\.\.\.t\.charging, \.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.charging\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
+  assert.match(source, /<CycleCost[\s\S]*?t=\{\{\.\.\.t\.cycleCost, \.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.cycleCost\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
+});
+
+test('App passes regime compact translation copy into simulator and stacking modules', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+
+  assert.match(source, /<BessSimulator[\s\S]*?t=\{\{\.\.\.t\.simulator, loadingMsg: t\.loading_states\.simulator\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
+  assert.match(source, /<RevenueStacking[\s\S]*?t=\{\{\.\.\.t\.stacking, \.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.stacking\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
+});
+
+test('App wires regime compact copy through the main AEMO workbench modules', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+
+  for (const componentName of [
+    'GridForecast',
+    'PeakAnalysis',
+    'FcasAnalysis',
+    'BessSimulator',
+    'RevenueStacking',
+    'ChargingWindow',
+    'CycleCost',
+    'InvestmentAnalysis',
+  ]) {
+    const pattern = new RegExp(`<${componentName}[\\s\\S]*?regimeCompactCopy=\\{t\\.regime_compact\\}`);
+    assert.match(source, pattern);
+  }
 });
 
 test('ChargingWindow centralizes radar labels and hints', () => {

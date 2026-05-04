@@ -56,6 +56,19 @@ test('normalizeForecastResponse sorts future windows and preserves coverage meta
   assert.equal(normalized.marketContext.forward_price_max_aud_mwh, 420);
 });
 
+test('normalizeForecastResponse preserves regime compact payload for downstream UI consumers', () => {
+  const normalized = normalizeForecastResponse({
+    metadata: { market: 'NEM' },
+    regime_compact: {
+      availability_status: 'available',
+      primary_regime: { regime: 'scarcity', score: 83.4, confidence: 0.78 },
+    },
+  });
+
+  assert.equal(normalized.regime_compact.availability_status, 'available');
+  assert.equal(normalized.regime_compact.primary_regime.regime, 'scarcity');
+});
+
 test('getForecastCoverageCopy returns Chinese copy for core-only WEM mode', () => {
   const copy = getForecastCoverageCopy('core_only', 'zh');
   assert.match(copy, /\u6838\u5fc3/);
@@ -112,6 +125,7 @@ test('GridForecast component avoids hardcoded desk labels and mojibake copy', ()
   assert.match(source, /sectionCopy\.horizon24h/);
   assert.match(source, /sectionCopy\.horizon7d/);
   assert.match(source, /sectionCopy\.horizon30d/);
+  assert.match(source, /payload\.regime_compact/);
 });
 
 test('app shell and translations avoid known mojibake fragments', () => {

@@ -19,6 +19,10 @@ def build_result_metadata(
     source_version: str,
     methodology_version: str,
     warnings: list[str] | None = None,
+    dataset_family: str | None = None,
+    observation_kind: str | None = None,
+    lineage: dict[str, Any] | None = None,
+    grade: str | None = None,
 ) -> dict[str, Any]:
     return {
         "market": market,
@@ -35,4 +39,8 @@ def build_result_metadata(
         "source_version": source_version,
         "methodology_version": methodology_version,
         "warnings": list(warnings) if warnings else [],
+        "dataset_family": dataset_family,
+        "observation_kind": observation_kind,
+        "lineage": dict(lineage) if lineage else {},
+        "grade": grade or data_grade,
     }

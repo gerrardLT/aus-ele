@@ -19,6 +19,9 @@ import {
   shouldAutoRunInvestment,
 } from '../lib/investmentAnalysis';
 import DataQualityBadge from './DataQualityBadge';
+import RegimeCompactInline from './RegimeCompactInline';
+import P3BessDecisionPanel from './P3BessDecisionPanel';
+import { formatRegimeName, normalizeRegimeCompact } from '../lib/regimeCompact';
 import { getDataGradeCaveat, getResultMetadata } from '../lib/resultMetadata';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
@@ -102,7 +105,42 @@ function getDefaultMode(region) {
   return region === 'WEM' ? 'manual' : 'auto';
 }
 
-export default function InvestmentAnalysis({ region, year, lang = 'en', t, scopeNote }) {
+function getRegimeFinanceNarrative(regime, lang) {
+  const isZh = lang === 'zh';
+
+  switch (regime) {
+    case 'oversupply':
+      return isZh
+        ? '供给宽松更利于低价充电，但项目价值仍取决于后续能否稳定兑现放电价差。'
+        : 'Oversupply improves charging entry conditions, but project value still depends on reliably monetizing the downstream discharge spread.';
+    case 'negative_price':
+      return isZh
+        ? '负价提高了充电机会密度，但要看持续时长、回升速度和可兑现的卖出窗口。'
+        : 'Negative pricing increases charge opportunities, but value depends on duration, rebound speed, and executable sell windows.';
+    case 'scarcity':
+      return isZh
+        ? '紧缺通常抬升放电与辅助服务上行空间，但现金流波动和预测误差也会同步放大。'
+        : 'Scarcity usually lifts discharge and ancillary upside, while increasing cash-flow volatility and forecast error at the same time.';
+    case 'reserve_stress':
+      return isZh
+        ? '备用紧张往往先利好 FCAS 与应急价值，但持续性需要结合短缺链条和恢复速度判断。'
+        : 'Reserve stress often supports FCAS and emergency value first, but durability depends on how persistent the shortfall chain becomes.';
+    case 'congestion':
+      return isZh
+        ? '拥塞意味着区域价差信号更重要，收益判断需要同时看节点位置和约束持续时间。'
+        : 'Congestion makes locational spreads more important, so revenue quality depends on node exposure and constraint duration.';
+    case 'transmission_separation':
+      return isZh
+        ? '区域分离会放大跨区价差与局地风险，模型应谨慎区分结构性机会和一次性异常。'
+        : 'Transmission separation widens inter-regional spreads and local risk, so the model should separate structural opportunity from one-off dislocation.';
+    default:
+      return isZh
+        ? '当前 regime 信号不足，投资判断应更多依赖基础现金流、回测覆盖和参数敏感性。'
+        : 'Regime evidence is limited here, so investment interpretation should lean more on baseline cash flow, backtest coverage, and sensitivity ranges.';
+  }
+}
+
+export default function InvestmentAnalysis({ region, year, lang = 'en', t, scopeNote, regimeCompactCopy }) {
   const sectionRef = useRef(null);
   const requestControllerRef = useRef(null);
   const requestSeqRef = useRef(0);
@@ -254,14 +292,88 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
         cumulative: row.cumulative_cash_flow ?? row.cumulative ?? 0,
       }))
   ), [result]);
+  const decisionAdjustedCashFlows = useMemo(() => (
+    (result?.decision_adjusted_cash_flows || [])
+      .filter((row) => row.year > 0)
+      .map((row) => ({
+        ...row,
+        revenue: row.total_revenue ?? row.revenue ?? 0,
+        cumulative: row.cumulative_cash_flow ?? row.cumulative ?? 0,
+      }))
+  ), [result]);
+  const decisionAdjustedScenarios = useMemo(
+    () => result?.decision_adjusted_scenarios || [],
+    [result],
+  );
+  const scenarioComparisonRows = useMemo(() => {
+    const baselineScenarios = result?.scenarios || [];
+    if (!baselineScenarios.length || !decisionAdjustedScenarios.length) {
+      return [];
+    }
+
+    return baselineScenarios.map((scenario) => {
+      const adjustedScenario = decisionAdjustedScenarios.find(
+        (candidate) => candidate.scenario_name === scenario.scenario_name,
+      );
+      const baseNpv = scenario?.metrics?.npv ?? null;
+      const adjustedNpv = adjustedScenario?.metrics?.npv ?? null;
+      const baseIrr = scenario?.metrics?.irr ?? null;
+      const adjustedIrr = adjustedScenario?.metrics?.irr ?? null;
+      return {
+        scenario_name: scenario.scenario_name,
+        base_npv: baseNpv,
+        adjusted_npv: adjustedNpv,
+        delta_npv: (adjustedNpv !== null && adjustedNpv !== undefined && baseNpv !== null && baseNpv !== undefined)
+          ? adjustedNpv - baseNpv
+          : null,
+        base_irr: baseIrr,
+        adjusted_irr: adjustedIrr,
+      };
+    });
+  }, [decisionAdjustedScenarios, result]);
+  const chartData = useMemo(() => cashFlows.map((row) => {
+    const adjustedRow = decisionAdjustedCashFlows.find((candidate) => candidate.year === row.year);
+    return {
+      ...row,
+      adjusted_cumulative: adjustedRow?.cumulative ?? null,
+      adjusted_revenue: adjustedRow?.revenue ?? null,
+    };
+  }), [cashFlows, decisionAdjustedCashFlows]);
   const metrics = result?.base_metrics || {};
+  const decisionAdjustedMetrics = result?.decision_adjusted_metrics || null;
   const mc = result?.monte_carlo;
+  const decisionAdjustedMonteCarlo = result?.decision_adjusted_monte_carlo || null;
+  const p3Governance = result?.p3_decision?.governance || null;
   const backtest_observed = result?.backtest_observed || null;
   const backtest_reference = result?.backtest_reference || null;
   const backtest_fallback_used = Boolean(result?.backtest_fallback_used);
   const noStandardizedBacktestCoverage = result?.arbitrage_baseline_source === 'no_standardized_backtest_data';
   const primaryBacktestDriver = backtest_reference?.drivers?.[0] || null;
   const backtestSourceYears = backtest_reference?.inputs?.map((item) => item.year).filter(Boolean).join(', ') || '-';
+  const normalizedRegimeCompact = useMemo(
+    () => normalizeRegimeCompact(result?.regime_compact),
+    [result?.regime_compact],
+  );
+  const primaryRegime = normalizedRegimeCompact.primary_regime;
+  const primaryRegimeName = formatRegimeName(primaryRegime?.regime, regimeCompactCopy);
+  const regimeNarrativeDriver = normalizedRegimeCompact.top_drivers[0]?.headline || copy.regimeNarrativeEmpty;
+  const regimeNarrativeTransition = normalizedRegimeCompact.transition_hints[0] || copy.regimeNarrativeEmpty;
+  const regimeNarrativeFinance = getRegimeFinanceNarrative(primaryRegime?.regime, lang);
+  const p3DecisionRequest = useMemo(() => ({
+    market: region === 'WEM' ? 'WEM' : 'NEM',
+    region,
+    year: year || (Array.isArray(params.backtest_years) ? params.backtest_years[0] : null),
+    power_mw: params.power_mw,
+    energy_mwh: params.power_mw * params.duration_hours,
+    duration_hours: params.duration_hours,
+    round_trip_efficiency: params.round_trip_efficiency,
+    degradation_cost_per_mwh: 0,
+    variable_om_per_mwh: params.variable_om_per_mwh,
+    network_fee_per_mwh: 0,
+    forecast_horizon: '24h',
+    reserve_soc_pct: 15,
+    risk_mode: 'balanced',
+  }), [region, year, params]);
 
   const capexPreview = useMemo(() => (
     (params.capex_per_kwh * params.power_mw * params.duration_hours * 1000) + params.grid_connection_cost
@@ -297,6 +409,10 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
 
       <div className="mb-6">
         <DataQualityBadge metadata={sectionMetadata} lang={lang} />
+      </div>
+
+      <div className="mb-6">
+        <RegimeCompactInline compact={result?.regime_compact} copy={regimeCompactCopy} />
       </div>
 
       {scopeNote && (
@@ -419,6 +535,116 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                 <KpiCard label={copy.kpis.roi} value={formatPercentageValue(metrics.roi_pct)} tone="brand" sub={copy.kpiSubs.totalReturn} />
               </div>
 
+              {decisionAdjustedMetrics && (
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">
+                    {lang === 'zh' ? 'P3 决策调整后指标' : 'P3 Decision-Adjusted Metrics'}
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    <KpiCard label={lang === 'zh' ? '调整后 NPV' : 'Adj. NPV'} value={fmt(decisionAdjustedMetrics.npv)} tone={decisionAdjustedMetrics.npv > metrics.npv ? 'good' : 'warn'} sub={lang === 'zh' ? 'P3 调整' : 'P3 adjusted'} />
+                    <KpiCard label={lang === 'zh' ? '调整后 IRR' : 'Adj. IRR'} value={formatPercentageValue(decisionAdjustedMetrics.irr)} tone="good" sub={lang === 'zh' ? 'P3 调整' : 'P3 adjusted'} />
+                    <KpiCard label={lang === 'zh' ? '调整后 ROI' : 'Adj. ROI'} value={formatPercentageValue(decisionAdjustedMetrics.roi_pct)} tone="brand" sub={lang === 'zh' ? 'P3 调整' : 'P3 adjusted'} />
+                    <KpiCard label={lang === 'zh' ? '调整后回本期' : 'Adj. Payback'} value={decisionAdjustedMetrics.payback_years ? `${decisionAdjustedMetrics.payback_years} ${copy.kpiSubs.years}` : copy.kpis.overLife} tone="good" sub={lang === 'zh' ? 'P3 调整' : 'P3 adjusted'} />
+                  </div>
+                </div>
+              )}
+
+              {decisionAdjustedCashFlows.length > 0 && (
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">
+                    {lang === 'zh' ? 'P3 调整后现金流' : 'P3 Decision-Adjusted Cash Flow'}
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <SummaryBlock
+                      label={lang === 'zh' ? '首年净现金流' : 'Year 1 Net Cash Flow'}
+                      value={fmt(decisionAdjustedCashFlows[0]?.net_cash_flow)}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '末年累计现金流' : 'Final Cumulative Cash Flow'}
+                      value={fmt(decisionAdjustedCashFlows[decisionAdjustedCashFlows.length - 1]?.cumulative)}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '首年总收入' : 'Year 1 Revenue'}
+                      value={fmt(decisionAdjustedCashFlows[0]?.revenue)}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '首年 SOH' : 'Year 1 SoH'}
+                      value={decisionAdjustedCashFlows[0]?.state_of_health ? `${(decisionAdjustedCashFlows[0].state_of_health * 100).toFixed(1)}%` : '-'}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {scenarioComparisonRows.length > 0 && (
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">
+                    {lang === 'zh' ? 'P3 情景重估' : 'P3 Scenario Repricing'}
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[var(--color-border)] text-left text-[11px] uppercase tracking-widest text-[var(--color-muted)]">
+                          <th className="py-2 pr-3">{lang === 'zh' ? '情景' : 'Scenario'}</th>
+                          <th className="py-2 pr-3 text-right">{lang === 'zh' ? '基线 NPV' : 'Base NPV'}</th>
+                          <th className="py-2 pr-3 text-right">{lang === 'zh' ? 'P3 后 NPV' : 'P3 NPV'}</th>
+                          <th className="py-2 pr-3 text-right">{lang === 'zh' ? 'NPV 变化' : 'NPV Delta'}</th>
+                          <th className="py-2 text-right">{lang === 'zh' ? 'P3 后 IRR' : 'P3 IRR'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scenarioComparisonRows.map((row) => (
+                          <tr key={row.scenario_name} className="border-b border-[var(--color-border)]/70">
+                            <td className="py-3 pr-3 font-semibold">{row.scenario_name}</td>
+                            <td className="py-3 pr-3 text-right font-mono">{fmt(row.base_npv)}</td>
+                            <td className="py-3 pr-3 text-right font-mono">{fmt(row.adjusted_npv)}</td>
+                            <td
+                              className="py-3 pr-3 text-right font-mono"
+                              style={{ color: (row.delta_npv ?? 0) >= 0 ? '#22c55e' : '#ef4444' }}
+                            >
+                              {fmt(row.delta_npv)}
+                            </td>
+                            <td className="py-3 text-right font-mono">{formatPercentageValue(row.adjusted_irr)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {p3Governance && (
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">
+                    {lang === 'zh' ? 'P4 治理概览' : 'P4 Governance Snapshot'}
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <SummaryBlock
+                      label={lang === 'zh' ? '使用范围' : 'Usage Scope'}
+                      value={p3Governance?.disclaimer?.usage_scope || '-'}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '数据新鲜度' : 'Freshness'}
+                      value={p3Governance?.freshness?.status || '-'}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '漂移状态' : 'Drift'}
+                      value={p3Governance?.drift?.status || '-'}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '预测增益' : 'Forecast Uplift'}
+                      value={fmt(p3Governance?.forecast_value_attribution?.net_uplift)}
+                    />
+                  </div>
+                  <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    {p3Governance?.disclaimer?.investment_grade === false
+                      ? (lang === 'zh'
+                        ? '当前输出为研究与运营辅助口径，不应直接视为投资级结论。'
+                        : 'Current output is for research and operational support only and should not be treated as an investment-grade conclusion.')
+                      : '-'}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
                 {assumptionChips.map((chip) => (
                   <div key={chip.label} className="rounded border border-[var(--color-border)] p-3">
@@ -427,6 +653,50 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                   </div>
                 ))}
               </div>
+
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                <h4 className="mb-3 text-sm font-bold uppercase tracking-wider">{copy.regimeNarrativeTitle}</h4>
+                {normalizedRegimeCompact.availability_status !== 'available' ? (
+                  <div className="text-sm text-[var(--color-muted)]">{copy.regimeNarrativeEmpty}</div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+                    <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      <div className="mb-1 text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
+                        {copy.regimeNarrativePrimary}
+                      </div>
+                      <div className="font-semibold">{primaryRegimeName}</div>
+                      <div className="mt-1 text-xs text-[var(--color-muted)]">
+                        Score {primaryRegime?.score?.toFixed?.(0) ?? '--'}
+                      </div>
+                    </div>
+                    <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      <div className="mb-1 text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
+                        {copy.regimeNarrativeDriver}
+                      </div>
+                      <div className="leading-6 text-[var(--color-text)]">{regimeNarrativeDriver}</div>
+                    </div>
+                    <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      <div className="mb-1 text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
+                        {copy.regimeNarrativeFinance}
+                      </div>
+                      <div className="leading-6 text-[var(--color-text)]">{regimeNarrativeFinance}</div>
+                      <div className="mt-2 border-t border-[var(--color-border)] pt-2 text-xs text-[var(--color-muted)]">
+                        <span className="font-semibold">{copy.regimeNarrativeTransition}: </span>
+                        {regimeNarrativeTransition}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <P3BessDecisionPanel
+                apiBase={API_BASE}
+                year={p3DecisionRequest.year}
+                region={region}
+                requestPayload={p3DecisionRequest}
+                initialPayload={result?.p3_decision || null}
+                locale={lang}
+              />
 
               {backtest_observed && (
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -509,19 +779,38 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
               {mc && (
                 <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
                   <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">{copy.monteCarloToggle}</h4>
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <SummaryBlock label={copy.monteCarloLabels.p90} value={fmt(mc.npv_p90)} />
-                    <SummaryBlock label={copy.monteCarloLabels.p50} value={fmt(mc.npv_p50)} />
-                    <SummaryBlock label={copy.monteCarloLabels.p10} value={fmt(mc.npv_p10)} />
+                  <div className={`grid grid-cols-1 gap-4 ${decisionAdjustedMonteCarlo ? 'xl:grid-cols-2' : ''}`}>
+                    <div>
+                      <div className="mb-3 text-[11px] font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                        {lang === 'zh' ? '基线分布' : 'Baseline Distribution'}
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <SummaryBlock label={copy.monteCarloLabels.p90} value={fmt(mc.npv_p90)} />
+                        <SummaryBlock label={copy.monteCarloLabels.p50} value={fmt(mc.npv_p50)} />
+                        <SummaryBlock label={copy.monteCarloLabels.p10} value={fmt(mc.npv_p10)} />
+                      </div>
+                    </div>
+                    {decisionAdjustedMonteCarlo && (
+                      <div>
+                        <div className="mb-3 text-[11px] font-bold uppercase tracking-widest text-[var(--color-primary)]">
+                          {lang === 'zh' ? 'P3 调整后分布' : 'P3-Adjusted Distribution'}
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                          <SummaryBlock label={copy.monteCarloLabels.p90} value={fmt(decisionAdjustedMonteCarlo.npv_p90)} />
+                          <SummaryBlock label={copy.monteCarloLabels.p50} value={fmt(decisionAdjustedMonteCarlo.npv_p50)} />
+                          <SummaryBlock label={copy.monteCarloLabels.p10} value={fmt(decisionAdjustedMonteCarlo.npv_p10)} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
-              {cashFlows.length > 0 && (
+              {chartData.length > 0 && (
                 <div className="rounded-lg border border-[var(--color-border)] p-4">
                   <h4 className="mb-4 text-sm font-bold uppercase tracking-wider">{copy.cashFlowProjection}</h4>
                   <ResponsiveContainer width="100%" height={400}>
-                    <ComposedChart data={cashFlows}>
+                    <ComposedChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                       <XAxis dataKey="year" tick={{ fontSize: 12 }} />
                       <YAxis tickFormatter={(value) => fmt(value)} tick={{ fontSize: 11 }} />
@@ -537,6 +826,17 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                       <Bar dataKey="revenue" name={copy.revenue} fill="var(--color-primary)" opacity={0.7} />
                       <Bar dataKey="opex" name={copy.opex} fill="#ef4444" opacity={0.5} />
                       <Line type="monotone" dataKey="cumulative" name={copy.cumulative} stroke="#22c55e" strokeWidth={2.5} dot={false} />
+                      {decisionAdjustedCashFlows.length > 0 && (
+                        <Line
+                          type="monotone"
+                          dataKey="adjusted_cumulative"
+                          name={lang === 'zh' ? 'P3 累计现金流' : 'P3 Cumulative'}
+                          stroke="#f59e0b"
+                          strokeWidth={2.5}
+                          strokeDasharray="6 4"
+                          dot={false}
+                        />
+                      )}
                       <ReferenceLine y={0} stroke="var(--color-muted)" strokeDasharray="4 4" />
                     </ComposedChart>
                   </ResponsiveContainer>

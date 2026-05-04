@@ -37,6 +37,36 @@ class LineageTests(unittest.TestCase):
         self.assertIn("job_summary", payload)
         self.assertEqual(payload["sources"][0]["source_key"], "market_core")
 
+    def test_build_source_freshness_payload_expands_source_level_freshness_rows(self):
+        self.db.upsert_data_quality_snapshot(
+            {
+                "scope": "market",
+                "market": "NEM",
+                "dataset_key": "trading_price_2026:NSW1",
+                "source_id": "aemo_nem_trading_price",
+                "dataset_family": "settlement",
+                "data_grade": "analytical",
+                "quality_score": 0.98,
+                "coverage_ratio": 1.0,
+                "freshness_minutes": 12,
+                "issues_json": [],
+                "metadata_json": {"region_id": "NSW1"},
+                "computed_at": "2026-04-27T12:00:00Z",
+            }
+        )
+
+        payload = build_source_freshness_payload(self.db)
+
+        expanded_sources = [
+            row for row in payload["sources"]
+            if row.get("source_id") == "aemo_nem_trading_price"
+        ]
+        self.assertEqual(len(expanded_sources), 1)
+        self.assertEqual(expanded_sources[0]["dataset_family"], "settlement")
+        self.assertEqual(expanded_sources[0]["market"], "NEM")
+        self.assertEqual(expanded_sources[0]["freshness_minutes"], 12)
+        self.assertEqual(expanded_sources[0]["status"], "fresh")
+
     def test_build_job_lineage_payload_exposes_job_trace_artifact_and_events(self):
         registry = JobRegistry()
         registry.register("report_generate", lambda job, context: {"status": "ok", "report_type": "monthly_market_report"})

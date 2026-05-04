@@ -444,6 +444,21 @@ def sync_wem_ess_range(start_dt: datetime, end_dt: datetime, db_path: str, *, pr
             "capability_rows": capability_rows,
         }
     )
+    sync_completed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    db.upsert_aemo_source_sync_state(
+        source_id="aemo_wem_ess_market",
+        last_success_at=sync_completed_at,
+        last_attempt_at=sync_completed_at,
+        sync_status="ok",
+        last_error=None,
+        detail={
+            "inserted_market_rows": total_market,
+            "inserted_constraint_rows": total_constraints,
+            "capability_rows": capability_rows,
+            "coverage_start": stats.get("min_interval"),
+            "coverage_end": stats.get("max_interval"),
+        },
+    )
     return stats
 
 

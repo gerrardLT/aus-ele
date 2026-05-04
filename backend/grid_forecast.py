@@ -3,6 +3,7 @@ import datetime as dt
 import io
 import json
 import logging
+import math
 import re
 import zipfile
 from typing import Optional
@@ -412,9 +413,629 @@ def _is_current_forecast_payload(payload: dict | None) -> bool:
         return False
     coverage = payload.get("coverage")
     market_context = payload.get("market_context")
-    if not isinstance(coverage, dict) or not isinstance(market_context, dict):
+    baseline_forecast = payload.get("baseline_forecast")
+    if not isinstance(coverage, dict) or not isinstance(market_context, dict) or not isinstance(baseline_forecast, dict):
         return False
     return True
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _fetch_forward_actual_price_rows(db, market: str, region: str, start_time: str | None, end_time: str | None) -> list[dict]:
+    start_dt = parse_timestamp(start_time)
+    end_dt = parse_timestamp(end_time)
+    if not start_dt or not end_dt or end_dt < start_dt:
+        return []
+
+    if market == "WEM":
+        with db.get_connection() as conn:
+            db.ensure_wem_ess_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT dispatch_interval, energy_price
+                FROM {db.WEM_ESS_MARKET_TABLE}
+                WHERE dispatch_interval >= ? AND dispatch_interval <= ?
+                ORDER BY dispatch_interval ASC
+                """,
+                (format_timestamp(start_dt), format_timestamp(end_dt)),
+            ).fetchall()
+        return [
+            {"time": row[0], "price_aud_mwh": float(row[1] or 0.0)}
+            for row in rows
+        ]
+
+    with db.get_connection() as conn:
+        table_name = f"trading_price_{start_dt.year}"
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (table_name,))
+        if not cursor.fetchone():
+            tables = _available_year_tables(conn, market, region)
+            if not tables:
+                return []
+            table_name = tables[-1]
+        rows = conn.execute(
+            f"""
+            SELECT settlement_date, rrp_aud_mwh
+            FROM {table_name}
+            WHERE region_id = ?
+              AND settlement_date >= ?
+              AND settlement_date <= ?
+            ORDER BY settlement_date ASC
+            """,
+            (region, format_timestamp(start_dt), format_timestamp(end_dt)),
+        ).fetchall()
+    return [
+        {"time": row[0], "price_aud_mwh": float(row[1] or 0.0)}
+        for row in rows
+    ]
+
+
+def _pinball_loss(actual: float, forecast: float, quantile: float) -> float:
+    error = actual - forecast
+    return quantile * error if error >= 0 else (quantile - 1.0) * error
+
+
+def _mean(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _merge_missing_dict(target: dict, defaults: dict) -> dict:
+    merged = dict(defaults)
+    for key, value in (target or {}).items():
+        default_value = merged.get(key)
+        if isinstance(value, dict) and isinstance(default_value, dict):
+            merged[key] = _merge_missing_dict(value, default_value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _classify_signed_gap(value: float | None, *, tolerance: float = 0.05, low_label: str, mid_label: str, high_label: str) -> str | None:
+    if value is None:
+        return None
+    if value < -tolerance:
+        return low_label
+    if value > tolerance:
+        return high_label
+    return mid_label
+
+
+def _classify_price_state(actual_price: float) -> str:
+    if actual_price < 0.0:
+        return "negative_price"
+    if actual_price > 300.0:
+        return "price_spike"
+    if actual_price > 150.0:
+        return "elevated_price"
+    return "normal_price"
+
+
+def _build_heuristic_quantile_scaffold(
+    *,
+    low_value: float,
+    high_value: float,
+    mid_value: float,
+    band_width: float,
+    horizon: str | None,
+    driver_tags: list[str],
+    spike_probability: float,
+    negative_probability: float,
+    confidence_band: str | None,
+) -> dict:
+    horizon_multiplier = {"24h": 1.0, "7d": 1.3, "30d": 1.6}.get(horizon or "", 1.15)
+    regime_multiplier = 1.0
+    if any(tag in driver_tags for tag in ("reserve_tightness", "network_stress", "market_regime_shift", "wem_constraint_tightness")):
+        regime_multiplier += 0.18
+    if any(tag in driver_tags for tag in ("negative_price_regime", "predispatch_negative_price")):
+        regime_multiplier += 0.12
+    if any(tag in driver_tags for tag in ("fcas_pressure_regime", "wem_shortfall_signal")):
+        regime_multiplier += 0.08
+
+    probability_multiplier = 1.0 + max(spike_probability, negative_probability) * 0.35
+    effective_width = max(band_width, max(abs(mid_value) * 0.2, 25.0)) * horizon_multiplier * regime_multiplier * probability_multiplier
+    lower_tail = effective_width * (0.55 + min(negative_probability, 0.8) * 0.35)
+    upper_tail = effective_width * (0.55 + min(spike_probability, 0.8) * 0.35)
+    p10_value = round(mid_value - lower_tail, 2)
+    p90_value = round(mid_value + upper_tail, 2)
+
+    return {
+        "method": "heuristic_regime_quantiles_v1",
+        "confidence_band": confidence_band or "unknown",
+        "volatility_anchor": "forward_range" if band_width > 0 else "recent_range",
+        "regime_adjustment_factor": round(regime_multiplier * probability_multiplier, 4),
+        "p10_price_aud_mwh": p10_value,
+        "p50_price_aud_mwh": round(mid_value, 2),
+        "p90_price_aud_mwh": p90_value,
+        "band_width_aud_mwh": round(max(p90_value - p10_value, 0.0), 2),
+    }
+
+
+def _build_regime_error_attribution(actual_prices: list[float], point_forecast: float, driver_tags: list[str]) -> dict:
+    if not actual_prices:
+        return {
+            "status": "not_attributed",
+            "primary_regime": None,
+            "regime_buckets": [],
+        }
+
+    bucket_map: dict[str, list[float]] = {}
+    for actual in actual_prices:
+        regime = _classify_price_state(actual)
+        bucket_map.setdefault(regime, []).append(actual)
+
+    regime_buckets = []
+    ordered_states = ["negative_price", "normal_price", "elevated_price", "price_spike"]
+    for regime in ordered_states:
+        values = bucket_map.get(regime)
+        if not values:
+            continue
+        errors = [actual - point_forecast for actual in values]
+        abs_errors = [abs(error) for error in errors]
+        regime_buckets.append(
+            {
+                "regime": regime,
+                "bucket_type": "observed_price_state",
+                "sample_count": len(values),
+                "mae_aud_mwh": round(_mean(abs_errors) or 0.0, 4),
+                "mean_error_aud_mwh": round(_mean(errors) or 0.0, 4),
+            }
+        )
+
+    for tag in driver_tags:
+        errors = [actual - point_forecast for actual in actual_prices]
+        abs_errors = [abs(error) for error in errors]
+        regime_buckets.append(
+            {
+                "regime": tag,
+                "bucket_type": "driver_tag",
+                "sample_count": len(actual_prices),
+                "mae_aud_mwh": round(_mean(abs_errors) or 0.0, 4),
+                "mean_error_aud_mwh": round(_mean(errors) or 0.0, 4),
+            }
+        )
+
+    primary_regime = regime_buckets[0]["regime"] if regime_buckets else (driver_tags[0] if driver_tags else None)
+    return {
+        "status": "attributed",
+        "primary_regime": primary_regime,
+        "regime_buckets": regime_buckets,
+    }
+
+
+def _build_walk_forward_samples(
+    actual_rows: list[dict],
+    *,
+    p10_value: float,
+    p50_value: float,
+    p90_value: float,
+) -> list[dict]:
+    samples = []
+    running_actuals: list[float] = []
+    for index, row in enumerate(actual_rows, start=1):
+        actual_price = float(row.get("price_aud_mwh") or 0.0)
+        running_actuals.append(actual_price)
+        abs_error = abs(actual_price - p50_value)
+        signed_error = actual_price - p50_value
+        samples.append(
+            {
+                "sample_index": index,
+                "timestamp": row.get("time"),
+                "point_forecast_aud_mwh": round(p50_value, 2),
+                "p10_price_aud_mwh": round(p10_value, 2),
+                "p90_price_aud_mwh": round(p90_value, 2),
+                "actual_price_aud_mwh": round(actual_price, 2),
+                "absolute_error_aud_mwh": round(abs_error, 4),
+                "signed_error_aud_mwh": round(signed_error, 4),
+                "observed_price_state": _classify_price_state(actual_price),
+                "running_mae_aud_mwh": round(_mean([abs(value - p50_value) for value in running_actuals]) or 0.0, 4),
+            }
+        )
+    return samples
+
+
+def _infer_interval_minutes(horizon: str | None, market: str | None) -> int:
+    if market == "WEM":
+        return 5
+    if horizon == "24h":
+        return 30
+    return 24 * 60
+
+
+def _estimate_negative_duration(windows: list[dict], *, horizon: str | None, market: str | None, negative_probability: float) -> tuple[int, float]:
+    negative_windows = []
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        probabilities = window.get("probabilities") or {}
+        window_type = window.get("window_type")
+        probability = _safe_float(probabilities.get("negative_price_probability"))
+        if window_type == "charge" or probability > 0.0:
+            negative_windows.append(probability)
+
+    interval_minutes = _infer_interval_minutes(horizon, market)
+    if negative_windows:
+        expected_intervals = int(round(sum(1.0 if probability >= 0.5 else probability for probability in negative_windows)))
+    else:
+        expected_intervals = 1 if negative_probability >= 0.5 else int(round(max(negative_probability, 0.0)))
+
+    expected_intervals = max(expected_intervals, 1 if negative_probability > 0 else 0)
+    duration_hours = round((expected_intervals * interval_minutes) / 60.0, 4)
+    return expected_intervals, duration_hours
+
+
+def _build_calibration_summary(calibration: dict) -> dict:
+    coverage_gap_80 = calibration.get("coverage_gap_80")
+    coverage_gap_90 = calibration.get("coverage_gap_90")
+    spike_gap = calibration.get("spike_probability_gap")
+    negative_gap = calibration.get("negative_price_probability_gap")
+    sample_count = int(calibration.get("sample_count") or 0)
+
+    penalties = 0
+    for gap, tol in ((coverage_gap_80, 0.15), (coverage_gap_90, 0.15), (spike_gap, 0.2), (negative_gap, 0.2)):
+        if gap is None:
+            penalties += 1
+            continue
+        if abs(gap) > tol:
+            penalties += 1
+
+    if sample_count <= 1 or penalties >= 3:
+        summary_grade = "poor"
+    elif penalties >= 1:
+        summary_grade = "mixed"
+    else:
+        summary_grade = "good"
+
+    return {
+        "summary_grade": summary_grade,
+        "signal_count": 4,
+        "signals_with_material_gap": penalties,
+        "sample_size_tier": "thin" if sample_count <= 2 else "usable" if sample_count <= 8 else "broad",
+    }
+
+
+def _build_evaluation_diagnostics(metrics: dict, calibration: dict) -> dict:
+    mae = metrics.get("mae_aud_mwh")
+    if mae is None:
+        return {
+            "status": "unavailable",
+            "error_grade": None,
+            "primary_gap_domain": None,
+            "summary_note": "diagnostics unavailable",
+        }
+
+    if mae >= 80:
+        error_grade = "high_error"
+    elif mae >= 35:
+        error_grade = "moderate_error"
+    else:
+        error_grade = "low_error"
+
+    gap_candidates = {
+        "coverage": max(
+            abs(calibration.get("coverage_gap_80") or 0.0),
+            abs(calibration.get("coverage_gap_90") or 0.0),
+        ),
+        "probability": max(
+            abs(calibration.get("spike_probability_gap") or 0.0),
+            abs(calibration.get("negative_price_probability_gap") or 0.0),
+        ),
+        "bias": abs(calibration.get("mean_error_aud_mwh") or 0.0) / 100.0,
+    }
+    primary_gap_domain = max(gap_candidates, key=gap_candidates.get)
+    if gap_candidates[primary_gap_domain] < 0.05:
+        primary_gap_domain = "balanced"
+
+    summary_note = (
+        f"{error_grade}; calibration {calibration.get('summary_grade') or 'unknown'}; "
+        f"primary gap {primary_gap_domain}"
+    )
+    return {
+        "status": "available",
+        "error_grade": error_grade,
+        "primary_gap_domain": primary_gap_domain,
+        "summary_note": summary_note,
+    }
+
+
+def _build_baseline_forecast_contract(payload: dict, *, db=None) -> dict:
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    market_context = payload.get("market_context") if isinstance(payload.get("market_context"), dict) else {}
+    coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    windows = payload.get("windows") if isinstance(payload.get("windows"), list) else []
+
+    spike_probability = 0.0
+    negative_probability = 0.0
+    for window in windows:
+        probabilities = window.get("probabilities") if isinstance(window, dict) else {}
+        if not isinstance(probabilities, dict):
+            continue
+        spike_probability = max(spike_probability, _safe_float(probabilities.get("price_spike_probability")))
+        negative_probability = max(negative_probability, _safe_float(probabilities.get("negative_price_probability")))
+
+    price_low = market_context.get("forward_price_min_aud_mwh")
+    price_high = market_context.get("forward_price_max_aud_mwh")
+    if price_low is None and price_high is None:
+        price_low = market_context.get("recent_price_min_aud_mwh")
+        price_high = market_context.get("recent_price_max_aud_mwh")
+    low_value = _safe_float(price_low, 0.0)
+    high_value = _safe_float(price_high, low_value)
+    mid_value = round((low_value + high_value) / 2.0, 2)
+    band_width = max(high_value - low_value, 0.0)
+    driver_tags = list(summary.get("driver_tags") or [])
+    confidence_band = metadata.get("confidence_band", "unknown")
+
+    warnings = list(metadata.get("warnings") or [])
+    for warning in ("not_backtested", "not_calibrated"):
+        if warning not in warnings:
+            warnings.append(warning)
+
+    forecast_window_start = coverage.get("forward_window_start") or metadata.get("issued_at")
+    forecast_window_end = coverage.get("forward_window_end") or metadata.get("issued_at")
+
+    evaluation = {
+        "backtest_status": "not_backtested",
+        "calibration_status": "not_calibrated",
+        "regime_attribution_status": "not_attributed",
+        "backtest_window": {
+            "policy": "walk_forward_required",
+            "walk_forward_mode": "rolling_origin",
+            "actuals_dataset_family": "settlement",
+            "target_metric": "price_aud_mwh",
+            "evaluation_window_start": forecast_window_start,
+            "evaluation_window_end": forecast_window_end,
+            "sample_points_evaluated": 0,
+            "window_count": 0,
+            "window_unit": "interval",
+            "samples": [],
+        },
+        "metrics": {
+            "mae_aud_mwh": None,
+            "rmse_aud_mwh": None,
+            "mape_pct": None,
+            "pinball_loss_p10": None,
+            "pinball_loss_p50": None,
+            "pinball_loss_p90": None,
+            "coverage_80": None,
+            "coverage_90": None,
+            "brier_score_spike": None,
+            "brier_score_negative_price": None,
+        },
+        "calibration": {
+            "status": "not_calibrated",
+            "sample_count": 0,
+            "mean_error_aud_mwh": None,
+            "coverage_gap_80": None,
+            "coverage_gap_90": None,
+            "spike_probability_gap": None,
+            "negative_price_probability_gap": None,
+            "bias_direction": None,
+            "coverage_assessment_80": None,
+            "coverage_assessment_90": None,
+            "spike_probability_assessment": None,
+            "negative_price_probability_assessment": None,
+            "summary_grade": None,
+            "signal_count": 0,
+            "signals_with_material_gap": 0,
+            "sample_size_tier": "none",
+        },
+        "regime_error_attribution": {
+            "status": "not_attributed",
+            "primary_regime": None,
+            "regime_buckets": [],
+        },
+        "diagnostics": {
+            "status": "unavailable",
+            "error_grade": None,
+            "primary_gap_domain": None,
+            "summary_note": "diagnostics unavailable",
+        },
+    }
+
+    if db is not None:
+        actual_rows = _fetch_forward_actual_price_rows(
+            db,
+            metadata.get("market") or "",
+            metadata.get("region") or "",
+            forecast_window_start,
+            forecast_window_end,
+        )
+        if actual_rows:
+            actual_prices = [float(row["price_aud_mwh"]) for row in actual_rows]
+            p10_value = round(low_value, 2)
+            p50_value = mid_value
+            p90_value = round(high_value, 2)
+            p20_value = round(p50_value - (p50_value - p10_value) * 0.75, 2)
+            p80_value = round(p50_value + (p90_value - p50_value) * 0.75, 2)
+            walk_forward_samples = _build_walk_forward_samples(
+                actual_rows,
+                p10_value=p10_value,
+                p50_value=p50_value,
+                p90_value=p90_value,
+            )
+            abs_errors = [abs(actual - p50_value) for actual in actual_prices]
+            sq_errors = [(actual - p50_value) ** 2 for actual in actual_prices]
+            pct_errors = [
+                abs((actual - p50_value) / actual) * 100.0
+                for actual in actual_prices
+                if actual != 0
+            ]
+            spike_probability = round(spike_probability, 2)
+            negative_probability = round(negative_probability, 2)
+            spike_actuals = [1.0 if actual > 300.0 else 0.0 for actual in actual_prices]
+            negative_actuals = [1.0 if actual < 0.0 else 0.0 for actual in actual_prices]
+            coverage_80 = round(_mean([1.0 if p20_value <= actual <= p80_value else 0.0 for actual in actual_prices]) or 0.0, 4)
+            coverage_90 = round(_mean([1.0 if p10_value <= actual <= p90_value else 0.0 for actual in actual_prices]) or 0.0, 4)
+            mean_error = round(_mean([actual - p50_value for actual in actual_prices]) or 0.0, 4)
+            spike_base_rate = round(_mean(spike_actuals) or 0.0, 4)
+            negative_base_rate = round(_mean(negative_actuals) or 0.0, 4)
+            evaluation["backtest_status"] = "evaluated"
+            evaluation["calibration_status"] = "baseline_only"
+            evaluation["backtest_window"].update(
+                {
+                    "sample_points_evaluated": len(actual_prices),
+                    "window_count": len(actual_prices),
+                    "samples": walk_forward_samples,
+                }
+            )
+            evaluation["metrics"] = {
+                "mae_aud_mwh": round(_mean(abs_errors) or 0.0, 4),
+                "rmse_aud_mwh": round(math.sqrt(_mean(sq_errors) or 0.0), 4),
+                "mape_pct": round(_mean(pct_errors), 4) if pct_errors else None,
+                "pinball_loss_p10": round(_mean([_pinball_loss(actual, p10_value, 0.1) for actual in actual_prices]) or 0.0, 4),
+                "pinball_loss_p50": round(_mean([_pinball_loss(actual, p50_value, 0.5) for actual in actual_prices]) or 0.0, 4),
+                "pinball_loss_p90": round(_mean([_pinball_loss(actual, p90_value, 0.9) for actual in actual_prices]) or 0.0, 4),
+                "coverage_80": coverage_80,
+                "coverage_90": coverage_90,
+                "brier_score_spike": round(_mean([(actual - spike_probability) ** 2 for actual in spike_actuals]) or 0.0, 4),
+                "brier_score_negative_price": round(_mean([(actual - negative_probability) ** 2 for actual in negative_actuals]) or 0.0, 4),
+            }
+            evaluation["calibration"] = {
+                "status": "baseline_only",
+                "sample_count": len(actual_prices),
+                "mean_error_aud_mwh": mean_error,
+                "coverage_gap_80": round(coverage_80 - 0.8, 4),
+                "coverage_gap_90": round(coverage_90 - 0.9, 4),
+                "spike_probability_gap": round(spike_probability - spike_base_rate, 4),
+                "negative_price_probability_gap": round(negative_probability - negative_base_rate, 4),
+                "bias_direction": _classify_signed_gap(
+                    mean_error,
+                    tolerance=10.0,
+                    low_label="overforecast",
+                    mid_label="neutral",
+                    high_label="underforecast",
+                ),
+                "coverage_assessment_80": _classify_signed_gap(
+                    round(coverage_80 - 0.8, 4),
+                    tolerance=0.05,
+                    low_label="under_covered",
+                    mid_label="well_calibrated",
+                    high_label="over_covered",
+                ),
+                "coverage_assessment_90": _classify_signed_gap(
+                    round(coverage_90 - 0.9, 4),
+                    tolerance=0.05,
+                    low_label="under_covered",
+                    mid_label="well_calibrated",
+                    high_label="over_covered",
+                ),
+                "spike_probability_assessment": _classify_signed_gap(
+                    round(spike_probability - spike_base_rate, 4),
+                    tolerance=0.1,
+                    low_label="understated",
+                    mid_label="well_calibrated",
+                    high_label="overstated",
+                ),
+                "negative_price_probability_assessment": _classify_signed_gap(
+                    round(negative_probability - negative_base_rate, 4),
+                    tolerance=0.1,
+                    low_label="understated",
+                    mid_label="well_calibrated",
+                    high_label="overstated",
+                ),
+            }
+            evaluation["calibration"].update(_build_calibration_summary(evaluation["calibration"]))
+            evaluation["regime_error_attribution"] = _build_regime_error_attribution(actual_prices, p50_value, driver_tags)
+            evaluation["diagnostics"] = _build_evaluation_diagnostics(
+                evaluation["metrics"],
+                evaluation["calibration"],
+            )
+            warnings = [warning for warning in warnings if warning not in {"not_backtested", "not_calibrated"}]
+
+    negative_duration_intervals, negative_duration_hours = _estimate_negative_duration(
+        windows,
+        horizon=metadata.get("horizon"),
+        market=metadata.get("market"),
+        negative_probability=round(negative_probability, 2),
+    )
+
+    return {
+        "availability_status": "available",
+        "forecast_class": "baseline_point_forecast",
+        "market": metadata.get("market"),
+        "region": metadata.get("region"),
+        "horizon": metadata.get("horizon"),
+        "issued_at": metadata.get("issued_at"),
+        "coverage_mode": coverage.get("mode", metadata.get("coverage_quality", "none")),
+        "regime_context": {
+            "driver_tags": driver_tags,
+            "primary_regime": None,
+            "availability_status": "not_attached",
+        },
+        "forecast_horizon_summary": {
+            "horizon": metadata.get("horizon"),
+            "issued_at": metadata.get("issued_at"),
+            "forecast_window_start": forecast_window_start,
+            "forecast_window_end": forecast_window_end,
+            "forward_points": int(coverage.get("forward_points") or 0),
+            "event_count": int(coverage.get("event_count") or 0),
+            "confidence_band": confidence_band,
+        },
+        "point_forecast": {
+            "price_band_low_aud_mwh": round(low_value, 2),
+            "price_band_mid_aud_mwh": mid_value,
+            "price_band_high_aud_mwh": round(high_value, 2),
+            "grid_stress_score": _safe_float(summary.get("grid_stress_score")),
+        },
+        "quantile_scaffold": _build_heuristic_quantile_scaffold(
+            low_value=low_value,
+            high_value=high_value,
+            mid_value=mid_value,
+            band_width=band_width,
+            horizon=metadata.get("horizon"),
+            driver_tags=driver_tags,
+            spike_probability=round(spike_probability, 2),
+            negative_probability=round(negative_probability, 2),
+            confidence_band=confidence_band,
+        ),
+        "probabilities": {
+            "price_spike": round(spike_probability, 2),
+            "negative_price": round(negative_probability, 2),
+            "negative_price_duration_intervals": negative_duration_intervals,
+            "negative_price_duration_hours": negative_duration_hours,
+            "duration_method": "window_probability_scan_v1",
+        },
+        "evaluation": evaluation,
+        "warnings": warnings,
+    }
+
+
+def ensure_baseline_forecast_contract(payload: dict, *, db=None) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+    default_contract = _build_baseline_forecast_contract(payload, db=db)
+    baseline = payload.get("baseline_forecast")
+    if isinstance(baseline, dict):
+        merged = _merge_missing_dict(baseline, default_contract)
+        evaluation = merged.get("evaluation")
+        if isinstance(evaluation, dict):
+            calibration = evaluation.get("calibration")
+            calibration_status = evaluation.get("calibration_status")
+            inferred_status = calibration_status
+            if inferred_status not in {"baseline_only", "calibrated"} and evaluation.get("backtest_status") == "evaluated":
+                inferred_status = "baseline_only"
+            if isinstance(calibration, dict) and calibration.get("status") == "not_calibrated" and inferred_status in {"baseline_only", "calibrated"}:
+                calibration["status"] = inferred_status
+                evaluation["calibration"] = calibration
+            metrics = evaluation.get("metrics")
+            diagnostics = evaluation.get("diagnostics")
+            if isinstance(metrics, dict) and isinstance(calibration, dict) and (
+                not isinstance(diagnostics, dict)
+                or diagnostics.get("status") == "unavailable" and evaluation.get("backtest_status") == "evaluated"
+            ):
+                evaluation["diagnostics"] = _build_evaluation_diagnostics(metrics, calibration)
+            merged["evaluation"] = evaluation
+        payload["baseline_forecast"] = merged
+        return payload
+    payload["baseline_forecast"] = default_contract
+    return payload
 
 
 def build_nem_24h_forecast(db, region: str, horizon: str, as_of: str) -> dict:
@@ -544,7 +1165,7 @@ def build_nem_24h_forecast(db, region: str, horizon: str, as_of: str) -> dict:
         "forward_price_max_aud_mwh": round(max_future_price, 2),
         "forward_demand_peak_mw": round(max_future_demand, 2),
     }
-    return {
+    payload = {
         "metadata": {
             "market": "NEM",
             "region": region,
@@ -577,6 +1198,7 @@ def build_nem_24h_forecast(db, region: str, horizon: str, as_of: str) -> dict:
             "message_key": "not_investment_grade",
         },
     }
+    return ensure_baseline_forecast_contract(payload, db=db)
 
 
 def build_nem_long_horizon_forecast(db, region: str, horizon: str, as_of: str) -> dict:
@@ -703,7 +1325,7 @@ def build_nem_long_horizon_forecast(db, region: str, horizon: str, as_of: str) -
         "forward_demand_peak_mw": None,
     }
 
-    return {
+    payload = {
         "metadata": {
             "market": "NEM",
             "region": region,
@@ -754,6 +1376,7 @@ def build_nem_long_horizon_forecast(db, region: str, horizon: str, as_of: str) -
             "message_key": "not_investment_grade",
         },
     }
+    return ensure_baseline_forecast_contract(payload, db=db)
 
 
 def build_nem_forecast(db, region: str, horizon: str, as_of: str) -> dict:
@@ -843,7 +1466,7 @@ def build_wem_core_forecast(db, region: str, horizon: str, as_of: str) -> dict:
         "constraint_pressure_index": round(recent["binding_count_avg"] * 10.0 + recent["shortfall_total"], 2),
     }
 
-    return {
+    payload = {
         "metadata": {
             "market": "WEM",
             "region": region,
@@ -876,6 +1499,7 @@ def build_wem_core_forecast(db, region: str, horizon: str, as_of: str) -> dict:
             "message_key": "not_investment_grade",
         },
     }
+    return ensure_baseline_forecast_contract(payload, db=db)
 
 
 def get_grid_forecast_response(db, market: str, region: str, horizon: str, as_of: str | None = None) -> dict:

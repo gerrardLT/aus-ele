@@ -58,6 +58,7 @@ def compute_quality_snapshots(db) -> list[dict[str, Any]]:
     collectors = (
         _compute_nem_snapshots,
         _compute_wem_snapshots,
+        _compute_aemo_source_snapshots,
         _compute_fingrid_snapshots,
     )
     rows: list[dict[str, Any]] = []
@@ -103,6 +104,8 @@ def _compute_nem_snapshots(db) -> list[dict[str, Any]] | None:
                         "scope": "market",
                         "market": "NEM",
                         "dataset_key": f"{table_name}:{region_id}",
+                        "source_id": "aemo_nem_trading_price",
+                        "dataset_family": "settlement",
                         "data_grade": "analytical",
                         "quality_score": 1.0 if row_count else 0.0,
                         "coverage_ratio": 1.0 if row_count else 0.0,
@@ -151,6 +154,8 @@ def _compute_wem_snapshots(db) -> list[dict[str, Any]] | None:
             "scope": "market",
             "market": "WEM",
             "dataset_key": db.WEM_ESS_MARKET_TABLE,
+            "source_id": "aemo_wem_ess_market",
+            "dataset_family": "settlement",
             "data_grade": "preview",
             "quality_score": 0.75,
             "coverage_ratio": 1.0,
@@ -220,6 +225,8 @@ def _compute_fingrid_snapshots(db) -> list[dict[str, Any]] | None:
                 "scope": "dataset",
                 "market": "FINGRID",
                 "dataset_key": dataset_id,
+                "source_id": f"fingrid_dataset_{dataset_id}",
+                "dataset_family": "reserve_requirement",
                 "data_grade": "analytical-preview" if record_count else "preview",
                 "quality_score": 0.82 if record_count else 0.5,
                 "coverage_ratio": 1.0 if record_count else 0.0,
@@ -236,6 +243,152 @@ def _compute_fingrid_snapshots(db) -> list[dict[str, Any]] | None:
                 "computed_at": computed_at,
             }
         )
+
+    return snapshots
+
+
+def _compute_aemo_source_snapshots(db) -> list[dict[str, Any]] | None:
+    try:
+        states = db.fetch_aemo_source_sync_states()
+    except Exception:
+        return []
+
+    if not states:
+        return []
+
+    with db.get_connection() as conn:
+        snapshot_specs = {
+            "aemo_nem_load_actual": {
+                "market": "NEM",
+                "dataset_key": "operational_demand_actual_hh",
+                "dataset_family": "load_actual",
+                "coverage_sql": "SELECT COUNT(*), MIN(interval_datetime), MAX(interval_datetime) FROM operational_demand_actual_hh",
+            },
+            "aemo_nem_load_forecast": {
+                "market": "NEM",
+                "dataset_key": "operational_demand_forecast_hh",
+                "dataset_family": "load_forecast",
+                "coverage_sql": "SELECT COUNT(*), MIN(interval_datetime), MAX(interval_datetime) FROM operational_demand_forecast_hh",
+            },
+            "aemo_nem_wind_forecast": {
+                "market": "NEM",
+                "dataset_key": "predispatch_region_solution:ss_wind_uigf",
+                "dataset_family": "wind_forecast",
+                "coverage_sql": "SELECT COUNT(*), MIN(interval_datetime), MAX(interval_datetime) FROM predispatch_region_solution",
+            },
+            "aemo_nem_wind_actual": {
+                "market": "NEM",
+                "dataset_key": "dispatch_region_summary:ss_wind_clearedmw",
+                "dataset_family": "wind_actual",
+                "coverage_sql": "SELECT COUNT(*), MIN(settlement_date), MAX(settlement_date) FROM dispatch_region_summary",
+            },
+            "aemo_nem_solar_forecast": {
+                "market": "NEM",
+                "dataset_key": "predispatch_region_solution:ss_solar_uigf",
+                "dataset_family": "solar_forecast",
+                "coverage_sql": "SELECT COUNT(*), MIN(interval_datetime), MAX(interval_datetime) FROM predispatch_region_solution",
+            },
+            "aemo_nem_solar_actual": {
+                "market": "NEM",
+                "dataset_key": "dispatch_region_summary:ss_solar_clearedmw",
+                "dataset_family": "solar_actual",
+                "coverage_sql": "SELECT COUNT(*), MIN(settlement_date), MAX(settlement_date) FROM dispatch_region_summary",
+            },
+            "aemo_nem_rooftop_pv": {
+                "market": "NEM",
+                "dataset_key": "rooftop_pv_actual_measurement",
+                "dataset_family": "rooftop_pv",
+                "coverage_sql": "SELECT COUNT(*), MIN(interval_datetime), MAX(interval_datetime) FROM rooftop_pv_actual_measurement",
+            },
+            "aemo_nem_interconnector_flow": {
+                "market": "NEM",
+                "dataset_key": "dispatch_interconnector_flow",
+                "dataset_family": "interconnector_flow",
+                "coverage_sql": "SELECT COUNT(*), MIN(settlement_date), MAX(settlement_date) FROM dispatch_interconnector_flow",
+            },
+            "aemo_nem_weather": {
+                "market": "NEM",
+                "dataset_key": "bom_weather_observation",
+                "dataset_family": "weather",
+                "coverage_sql": "SELECT COUNT(*), MIN(observation_time_utc), MAX(observation_time_utc) FROM bom_weather_observation",
+            },
+            "aemo_nem_unit_availability": {
+                "market": "NEM",
+                "dataset_key": "pdpasa_duid_availability",
+                "dataset_family": "unit_availability",
+                "coverage_sql": "SELECT COUNT(*), MIN(interval_datetime), MAX(interval_datetime) FROM pdpasa_duid_availability",
+            },
+            "aemo_wem_reserve_shortfall": {
+                "market": "WEM",
+                "dataset_key": "wem_reserve_shortfall_snapshot",
+                "dataset_family": "reserve_shortfall",
+                "coverage_sql": "SELECT COUNT(*), MIN(interval_start_utc), MAX(interval_end_utc) FROM wem_reserve_shortfall_snapshot",
+            },
+        }
+
+        snapshots: list[dict[str, Any]] = []
+        for state in states:
+            spec = snapshot_specs.get(state["source_id"])
+            if not spec:
+                continue
+
+            try:
+                row_count, coverage_start, coverage_end = conn.execute(spec["coverage_sql"]).fetchone()
+            except Exception:
+                row_count, coverage_start, coverage_end = 0, None, None
+
+            computed_at = state.get("last_success_at") or state.get("last_attempt_at") or _utc_now_iso()
+            issues = []
+            if state.get("sync_status") and state["sync_status"] != "ok":
+                issues.append(
+                    {
+                        "issue_code": "sync_not_ok",
+                        "severity": "warning",
+                        "detail_json": {"sync_status": state["sync_status"]},
+                        "detected_at": computed_at,
+                    }
+                )
+            if state.get("last_error"):
+                issues.append(
+                    {
+                        "issue_code": "last_error",
+                        "severity": "warning",
+                        "detail_json": {"message": state["last_error"]},
+                        "detected_at": computed_at,
+                    }
+                )
+            if state["source_id"] in {"aemo_nem_wind_actual", "aemo_nem_solar_actual"}:
+                issues.append(
+                    {
+                        "issue_code": "actual_proxy_source",
+                        "severity": "info",
+                        "detail_json": {"measurement_basis": "dispatch_clearedmw_proxy"},
+                        "detected_at": computed_at,
+                    }
+                )
+
+            snapshots.append(
+                {
+                    "scope": "dataset",
+                    "market": spec["market"],
+                    "dataset_key": spec["dataset_key"],
+                    "source_id": state["source_id"],
+                    "dataset_family": spec["dataset_family"],
+                    "data_grade": "analytical-preview" if row_count else "preview",
+                    "quality_score": 0.85 if row_count else 0.4,
+                    "coverage_ratio": 1.0 if row_count else 0.0,
+                    "freshness_minutes": _compute_freshness_minutes(state.get("last_success_at")),
+                    "issues_json": issues,
+                    "metadata_json": {
+                        "row_count": row_count or 0,
+                        "coverage_start": coverage_start,
+                        "coverage_end": coverage_end,
+                        "sync_status": state.get("sync_status"),
+                        **(state.get("detail_json") or {}),
+                    },
+                    "computed_at": computed_at,
+                }
+            )
 
     return snapshots
 

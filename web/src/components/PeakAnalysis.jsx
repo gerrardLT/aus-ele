@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts';
 import EventBadgeList from './EventBadgeList';
+import RegimeCompactInline from './RegimeCompactInline';
 import { fetchJson } from '../lib/apiClient';
 import { buildPeriodOverlayMap, getEventText } from '../lib/eventOverlays';
 
@@ -49,6 +50,7 @@ export default function PeakAnalysis({
   eventOverlay,
   apiBase,
   t,
+  regimeCompactCopy,
 }) {
   const eventText = getEventText(lang);
   const [aggregation, setAggregation] = useState('monthly');
@@ -181,6 +183,10 @@ export default function PeakAnalysis({
         </div>
       ) : data?.data?.length > 0 ? (
         <>
+          <div className="mb-6">
+            <RegimeCompactInline compact={data.regime_compact} copy={regimeCompactCopy} />
+          </div>
+
           {data.summary && (
             <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-10">
               <SummaryCard label={`${t.avgSpread} 2h`} value={fmt(data.summary.avg_spread_2h)} />

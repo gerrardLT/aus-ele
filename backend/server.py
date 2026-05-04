@@ -34,10 +34,13 @@ from collections import defaultdict
 from result_metadata import build_result_metadata
 from response_cache import RedisResponseCache
 from models.bess_backtest_params import BessBacktestParams
+from models.p3_bess_decision_params import P3BessDecisionParams
 from models.financial_params import InvestmentParams
 from engines.bess_backtest_v1 import run_bess_backtest_v1
+from engines.p3_dispatch_optimizer import build_p3_strategy_bundle
 from finland_market_model import build_finland_market_model_payload
 from lineage import build_job_lineage_payload, build_source_freshness_payload
+from model_governance import build_governance_summary_payload, build_p2_governance_payload, build_p3_governance_payload
 from logging_support import (
     install_json_log_formatter_if_enabled,
     install_structured_log_sink_if_configured,
@@ -97,6 +100,23 @@ from market_screening import build_market_screening_payload
 from oidc_client import build_authorization_redirect, parse_discovery_document
 from reports import generate_report_payload
 from storage_lake import LocalArtifactLake
+from aemo_p0_datasets import (
+    build_aemo_constraint_series,
+    build_aemo_interconnector_flow_series,
+    build_aemo_load_actual_series,
+    build_aemo_load_forecast_series,
+    build_aemo_outage_series,
+    build_aemo_reserve_requirement_series,
+    build_aemo_reserve_shortfall_series,
+    build_aemo_rooftop_pv_series,
+    build_aemo_settlement_series,
+    build_aemo_solar_actual_series,
+    build_aemo_solar_forecast_series,
+    build_aemo_unit_availability_series,
+    build_aemo_weather_series,
+    build_aemo_wind_actual_series,
+    build_aemo_wind_forecast_series,
+)
 from telemetry import (
     build_collector_governance_status,
     configure_telemetry,
@@ -169,6 +189,159 @@ class LooseObjectPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class P0DatasetPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    dataset_family: str
+    observation_kind: str
+    market: str | None = None
+    region_or_zone: str | None = None
+    unit: str | None = None
+    interval_minutes: int | None = None
+    points: list[dict[str, Any]] = Field(default_factory=list)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    freshness: dict[str, Any] = Field(default_factory=dict)
+    lineage: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class P1RegimeLayerPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    market: str
+    region: str
+    active_regimes: list[dict[str, Any]] = Field(default_factory=list)
+    primary_regime: dict[str, Any] = Field(default_factory=dict)
+    regime_score_map: dict[str, Any] = Field(default_factory=dict)
+    drivers: list[dict[str, Any]] = Field(default_factory=list)
+    transition_hints: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    compact: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelGovernanceSummaryPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    freshness: dict[str, Any] = Field(default_factory=dict)
+    quality: dict[str, Any] = Field(default_factory=dict)
+    source_rows: list[dict[str, Any]] = Field(default_factory=list)
+    drift: dict[str, Any] = Field(default_factory=dict)
+    disclaimer: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class P2ForecastLayerPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    market_context: dict[str, Any] = Field(default_factory=dict)
+    drivers: list[dict[str, Any]] = Field(default_factory=list)
+    windows: list[dict[str, Any]] = Field(default_factory=list)
+    baseline_forecast: dict[str, Any] = Field(default_factory=dict)
+    governance: dict[str, Any] = Field(default_factory=dict)
+    regime_compact: dict[str, Any] | None = None
+
+
+class P3BessDecisionLayerPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    decision_summary: dict[str, Any] = Field(default_factory=dict)
+    forecast_context: dict[str, Any] = Field(default_factory=dict)
+    strategy_bundle: dict[str, Any] = Field(default_factory=dict)
+    revenue_attribution: dict[str, Any] = Field(default_factory=dict)
+    governance: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MarketScreeningPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    year: int
+    asset_profile: str | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobDetailPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    job_id: str
+    job_type: str
+    queue_name: str
+    source_key: str
+    status: str
+    organization_id: str | None = None
+    workspace_id: str | None = None
+    priority: int | None = None
+    attempt_count: int | None = None
+    max_attempts: int | None = None
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    result_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    artifact_path: str | None = None
+
+
+class JobLineagePayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    job: dict[str, Any] = Field(default_factory=dict)
+    trace: dict[str, Any] = Field(default_factory=dict)
+    openlineage: dict[str, Any] = Field(default_factory=dict)
+    artifacts: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalApiBillingSummaryPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    window: dict[str, Any] = Field(default_factory=dict)
+    totals: dict[str, Any] = Field(default_factory=dict)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    ledger: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeveloperPortalPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    api_version: str
+    endpoint: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    pagination: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class AlertRuleRecordPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    rule_id: str
+    name: str
+    rule_type: str
+    market: str
+    region_or_zone: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+    channel_type: str
+    channel_target: str
+    enabled: bool = True
+    organization_id: str | None = None
+    workspace_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class AlertEvaluationPayload(BaseModel):
+    evaluated_rule_count: int = 0
+    triggered_rule_count: int = 0
+    sent_delivery_count: int = 0
+
+
+class GeneratedReportPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    report_type: str
+    title: str
+    report_context: dict[str, Any] = Field(default_factory=dict)
+    sections: list[dict[str, Any]] = Field(default_factory=list)
+    reproducibility: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class AlertRuleListPayload(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -214,6 +387,36 @@ class AvailableYearsPayload(BaseModel):
 
 class NetworkFeesPayload(BaseModel):
     fees: dict[str, Any] = Field(default_factory=dict)
+
+
+class GridForecastCoveragePayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    market: str | None = None
+    region: str | None = None
+    horizon: str | None = None
+    coverage_quality: str | None = None
+    sources_used: list[Any] = Field(default_factory=list)
+    source_status: dict[str, Any] = Field(default_factory=dict)
+    recent_history_points: int = 0
+    forward_points: int = 0
+    event_count: int = 0
+    investment_grade: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FinlandMarketModelPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    country: str
+    market: str
+    model_status: str
+    summary: dict[str, Any] = Field(default_factory=dict)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    live_signals: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def _utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parent
@@ -457,6 +660,344 @@ def _attach_bess_backtest_coverage_metadata(payload: dict, params: BessBacktestP
     return payload
 
 
+def _build_p3_bess_decision_payload(
+    params: P3BessDecisionParams,
+    *,
+    backtest_payload: dict,
+    forecast_payload: dict,
+) -> dict:
+    revenue = backtest_payload.get("revenue_breakdown") or {}
+    costs = backtest_payload.get("cost_breakdown") or {}
+    cycles = backtest_payload.get("cycle_summary") or {}
+    forecast_summary = forecast_payload.get("summary") or {}
+    baseline_forecast = forecast_payload.get("baseline_forecast") or {}
+    probabilities = baseline_forecast.get("probabilities") or {}
+    evaluation = baseline_forecast.get("evaluation") or {}
+    diagnostics = evaluation.get("diagnostics") or {}
+    calibration = evaluation.get("calibration") or {}
+    regime_compact = forecast_payload.get("regime_compact") or {}
+    primary_regime = ((regime_compact.get("primary_regime") or {}).get("regime")) or "unknown"
+    timeline = backtest_payload.get("timeline") or []
+
+    base_net = float(revenue.get("net_revenue") or 0.0)
+    gross_energy = float(revenue.get("gross_energy_revenue") or 0.0)
+    degradation_cost = float(costs.get("degradation") or 0.0)
+    network_fees = float(costs.get("network_fees") or 0.0)
+    variable_om = float(costs.get("variable_om") or 0.0)
+    fcas_score = float(forecast_summary.get("fcas_opportunity_score") or 0.0)
+    charge_window_score = float(forecast_summary.get("charge_window_score") or 0.0)
+    discharge_window_score = float(forecast_summary.get("discharge_window_score") or 0.0)
+    spike_probability = float(probabilities.get("price_spike") or 0.0)
+    negative_probability = float(probabilities.get("negative_price") or 0.0)
+
+    risk_multiplier = {
+        "conservative": 0.75,
+        "balanced": 1.0,
+        "aggressive": 1.25,
+    }.get(params.risk_mode, 1.0)
+    strategy_bundle = build_p3_strategy_bundle(
+        timeline=timeline,
+        power_mw=params.power_mw,
+        energy_mwh=params.energy_mwh,
+        round_trip_efficiency=params.round_trip_efficiency,
+        reserve_soc_pct=params.reserve_soc_pct,
+        min_soc_pct=params.min_soc_pct,
+        max_soc_pct=params.max_soc_pct,
+        initial_soc_mwh=params.initial_soc_mwh,
+        degradation_cost_per_mwh=params.degradation_cost_per_mwh,
+        variable_om_per_mwh=params.variable_om_per_mwh,
+        network_fee_per_mwh=params.network_fee_per_mwh,
+        risk_mode=params.risk_mode,
+        fcas_score=fcas_score,
+        charge_window_score=charge_window_score,
+        discharge_window_score=discharge_window_score,
+        spike_probability=spike_probability,
+        negative_probability=negative_probability,
+        primary_regime=primary_regime,
+    )
+    forecast_dispatch = strategy_bundle["forecast_driven_dispatch"]
+    stochastic_dispatch = strategy_bundle["stochastic_dispatch"]
+    reserve_soc_mwh = strategy_bundle["reserve_soc_mwh"]
+
+    forecast_driven_net = round(float(forecast_dispatch.get("net_revenue") or 0.0), 4)
+    reserve_value_revenue = round(float(forecast_dispatch.get("reserve_value_revenue") or 0.0), 4)
+    optimizer_gross_energy = round(float(forecast_dispatch.get("gross_energy_revenue") or 0.0), 4)
+    optimization_degradation_cost = round(float(forecast_dispatch.get("degradation_cost") or 0.0), 4)
+    optimization_network_fee_cost = round(float(forecast_dispatch.get("network_fee_cost") or 0.0), 4)
+    optimization_variable_om_cost = round(float(forecast_dispatch.get("variable_om_cost") or 0.0), 4)
+    reserve_penalty_cost = round(float(forecast_dispatch.get("reserve_penalty_cost") or 0.0), 4)
+    timing_alpha = round(max(forecast_driven_net - base_net, 0.0) * min(1.0, 0.45 + spike_probability * 0.4), 4)
+    regime_capture_alpha = round(max(forecast_driven_net - base_net - timing_alpha, 0.0) * min(1.0, 0.35 + negative_probability * 0.25), 4)
+    fcas_stack_proxy = reserve_value_revenue
+    degradation_reserve_penalty = reserve_penalty_cost
+
+    bear_net = round(float(stochastic_dispatch.get("bear_case_net_revenue") or 0.0), 4)
+    bull_net = round(float(stochastic_dispatch.get("bull_case_net_revenue") or 0.0), 4)
+    stochastic_spread = round(float(stochastic_dispatch.get("scenario_spread") or 0.0), 4)
+
+    recommended_strategy = "forecast_driven_dispatch" if diagnostics.get("status") == "available" else "rule_based_dispatch"
+
+    warnings = list(backtest_payload.get("warnings") or [])
+    if calibration.get("summary_grade") in {"poor", None}:
+        warnings.append("forecast_calibration_weak")
+    if regime_compact.get("availability_status") != "available":
+        warnings.append("regime_compact_unavailable")
+    if not timeline:
+        warnings.append("dispatch_timeline_unavailable")
+    warnings = sorted(set(warnings))
+
+    payload = {
+        "market": params.market,
+        "region": params.region,
+        "year": params.year,
+        "forecast_context": {
+            "horizon": params.forecast_horizon,
+            "as_of": params.as_of,
+            "primary_regime": primary_regime,
+            "forecast_error_grade": diagnostics.get("error_grade"),
+            "calibration_grade": calibration.get("summary_grade"),
+        },
+        "decision_summary": {
+            "recommended_strategy": recommended_strategy,
+            "risk_mode": params.risk_mode,
+            "reserve_soc_mwh": reserve_soc_mwh,
+            "rolling_horizon_mode": "forecast_window_aware_v1",
+            "co_optimization_mode": "energy_fcas_headroom_optimizer_v2",
+            "degradation_mode": "throughput_penalty_with_reserve_buffer_v2",
+        },
+        "strategy_bundle": {
+            "rule_based_dispatch": {
+                "net_revenue": base_net,
+                "gross_energy_revenue": gross_energy,
+                "equivalent_cycles": float(cycles.get("equivalent_cycles") or 0.0),
+            },
+            "forecast_driven_dispatch": {
+                "net_revenue": forecast_driven_net,
+                "timing_alpha": timing_alpha,
+                "regime_capture_alpha": regime_capture_alpha,
+                "fcas_stack_proxy": fcas_stack_proxy,
+                "degradation_reserve_penalty": degradation_reserve_penalty,
+                "gross_energy_revenue": optimizer_gross_energy,
+                "reserve_value_revenue": reserve_value_revenue,
+                "dispatch_summary": forecast_dispatch.get("dispatch_summary") or {},
+                "optimization_costs": {
+                    "network_fees": optimization_network_fee_cost,
+                    "variable_om": optimization_variable_om_cost,
+                    "degradation": optimization_degradation_cost,
+                    "reserve_penalty": reserve_penalty_cost,
+                },
+            },
+            "stochastic_dispatch": stochastic_dispatch,
+        },
+        "revenue_attribution": {
+            "gross_energy_revenue": optimizer_gross_energy,
+            "network_fees": optimization_network_fee_cost or network_fees,
+            "variable_om": optimization_variable_om_cost or variable_om,
+            "degradation_cost": optimization_degradation_cost or degradation_cost,
+            "timing_alpha": timing_alpha,
+            "regime_capture_alpha": regime_capture_alpha,
+            "fcas_stack_proxy": fcas_stack_proxy,
+            "net_revenue_after_decision_adjustments": forecast_driven_net,
+            "scenario_spread": stochastic_spread,
+            "bear_case_net_revenue": bear_net,
+            "bull_case_net_revenue": bull_net,
+        },
+        "source_backtest": {
+            "timeline_points": backtest_payload.get("timeline_points"),
+            "cycle_summary": cycles,
+            "soc_summary": backtest_payload.get("soc_summary") or {},
+        },
+        "warnings": warnings,
+    }
+    payload["metadata"] = build_result_metadata(
+        market=params.market,
+        region_or_zone=params.region,
+        timezone=_region_timezone(params.region),
+        currency="AUD",
+        unit="AUD",
+        interval_minutes=get_settlement_interval(params.region) if params.market != "WEM" else 5,
+        data_grade="analytical-preview",
+        data_quality_score=None,
+        coverage={"status": "decision_preview"},
+        freshness={"last_updated_at": _analysis_data_version()},
+        source_name="AEMO",
+        source_version=_analysis_data_version(),
+        methodology_version="p3_bess_decision_layer_v1",
+        warnings=warnings,
+        dataset_family="bess_decision_layer",
+        observation_kind="decision",
+        lineage={
+            "source_id": "p3_bess_decision_layer",
+            "backtest_dataset_family": (backtest_payload.get("metadata") or {}).get("dataset_family"),
+            "forecast_dataset_family": (forecast_payload.get("metadata") or {}).get("dataset_family"),
+        },
+        grade="analytical-preview",
+    )
+    payload["governance"] = build_p3_governance_payload(
+        metadata=payload["metadata"],
+        diagnostics=diagnostics,
+        calibration=calibration,
+        regime_error_attribution=((baseline_forecast.get("evaluation") or {}).get("regime_error_attribution") or {}),
+        decision_payload=payload,
+    )
+    return payload
+
+
+def _build_investment_p3_decision(params: InvestmentParams) -> dict | None:
+    try:
+        selected_year = params.backtest_years[0] if params.backtest_years else datetime.datetime.now().year
+        p3_params = P3BessDecisionParams(
+            market="WEM" if params.region == "WEM" else "NEM",
+            region=params.region,
+            year=selected_year,
+            power_mw=params.battery.power_mw,
+            energy_mwh=params.battery.capacity_mwh,
+            duration_hours=params.battery.duration_hours,
+            round_trip_efficiency=params.battery.round_trip_efficiency,
+            degradation_cost_per_mwh=0.0,
+            variable_om_per_mwh=params.financial.variable_om_per_mwh,
+            forecast_horizon="24h",
+            reserve_soc_pct=15.0,
+            risk_mode="balanced",
+        )
+        return run_p3_bess_decision_layer(p3_params)
+    except Exception as exc:
+        logger.warning("Investment analysis P3 decision unavailable for region=%s: %s", params.region, exc)
+        return None
+
+
+def _derive_decision_adjusted_revenue_inputs(
+    baseline_arbitrage: float,
+    baseline_fcas: float,
+    p3_decision: dict | None,
+) -> tuple[float, float]:
+    if not p3_decision:
+        return baseline_arbitrage, baseline_fcas
+
+    attribution = p3_decision.get("revenue_attribution") or {}
+    adjusted_arbitrage = float(baseline_arbitrage or 0.0)
+    adjusted_fcas = float(baseline_fcas or 0.0)
+
+    adjusted_arbitrage += float(attribution.get("timing_alpha") or 0.0)
+    adjusted_arbitrage += float(attribution.get("regime_capture_alpha") or 0.0)
+    adjusted_fcas += float(attribution.get("fcas_stack_proxy") or 0.0)
+    return adjusted_arbitrage, adjusted_fcas
+
+
+def _build_decision_adjusted_metrics(
+    base_metrics: dict,
+    p3_decision: dict | None,
+    baseline_arbitrage: float,
+    baseline_fcas: float,
+    decision_adjusted_result=None,
+) -> dict | None:
+    if decision_adjusted_result is not None:
+        return decision_adjusted_result.metrics.model_dump()
+
+    if not p3_decision:
+        return None
+
+    decision_revenue = ((p3_decision.get("revenue_attribution") or {}).get("net_revenue_after_decision_adjustments"))
+    if decision_revenue is None:
+        decision_revenue = (((p3_decision.get("strategy_bundle") or {}).get("forecast_driven_dispatch") or {}).get("net_revenue"))
+    if decision_revenue is None:
+        return None
+
+    baseline_total = max(float(baseline_arbitrage or 0.0) + float(baseline_fcas or 0.0), 1.0)
+    uplift_ratio = max(float(decision_revenue) / baseline_total, 0.0)
+
+    adjusted = dict(base_metrics or {})
+    adjusted["npv"] = round(float(adjusted.get("npv") or 0.0) * uplift_ratio, 4)
+    if adjusted.get("irr") is not None:
+        adjusted["irr"] = round(float(adjusted["irr"]) * uplift_ratio, 6)
+    adjusted["roi_pct"] = round(float(adjusted.get("roi_pct") or 0.0) * uplift_ratio, 4)
+    if adjusted.get("levered_irr") is not None:
+        adjusted["levered_irr"] = round(float(adjusted["levered_irr"]) * uplift_ratio, 6)
+    if adjusted.get("payback_years"):
+        adjusted["payback_years"] = max(1, round(float(adjusted["payback_years"]) / max(uplift_ratio, 0.25)))
+    return adjusted
+
+
+def _build_decision_adjusted_result(
+    params: InvestmentParams,
+    annual_cycles_history: list[float],
+    base_scenario_config,
+    baseline_arbitrage: float,
+    baseline_fcas: float,
+    p3_decision: dict | None,
+):
+    if not p3_decision:
+        return None
+    adjusted_arbitrage, adjusted_fcas = _derive_decision_adjusted_revenue_inputs(
+        baseline_arbitrage,
+        baseline_fcas,
+        p3_decision,
+    )
+    return FinancialModel.run_scenario(
+        params,
+        base_scenario_config,
+        adjusted_arbitrage,
+        adjusted_fcas,
+        annual_cycles_history,
+    )
+
+
+def _build_decision_adjusted_scenarios(
+    params: InvestmentParams,
+    annual_cycles_history: list[float],
+    baseline_arbitrage: float,
+    baseline_fcas: float,
+    p3_decision: dict | None,
+):
+    if not p3_decision:
+        return None
+
+    adjusted_arbitrage, adjusted_fcas = _derive_decision_adjusted_revenue_inputs(
+        baseline_arbitrage,
+        baseline_fcas,
+        p3_decision,
+    )
+
+    scenario_configs = list(params.scenarios or [])
+    if not scenario_configs:
+        from models.financial_params import ScenarioConfig
+        scenario_configs = [ScenarioConfig(name="Base")]
+
+    return [
+        FinancialModel.run_scenario(
+            params,
+            config,
+            adjusted_arbitrage,
+            adjusted_fcas,
+            annual_cycles_history,
+        )
+        for config in scenario_configs
+    ]
+
+
+def _build_decision_adjusted_monte_carlo(
+    params: InvestmentParams,
+    annual_cycles_history: list[float],
+    baseline_arbitrage: float,
+    baseline_fcas: float,
+    p3_decision: dict | None,
+):
+    if not p3_decision or not params.monte_carlo.enabled:
+        return None
+
+    adjusted_arbitrage, adjusted_fcas = _derive_decision_adjusted_revenue_inputs(
+        baseline_arbitrage,
+        baseline_fcas,
+        p3_decision,
+    )
+    return FinancialModel.run_monte_carlo(
+        params,
+        adjusted_arbitrage,
+        adjusted_fcas,
+        annual_cycles_history,
+    )
+
+
 def _attach_peak_analysis_metadata(payload: dict, *, region: str) -> dict:
     market = "WEM" if region == "WEM" else "NEM"
     data_version = _market_data_version()
@@ -565,6 +1106,87 @@ def _attach_grid_forecast_metadata(payload: dict, *, region: str, data_version: 
     return payload
 
 
+def _build_p2_forecast_layer_payload(payload: dict, *, market: str, region: str) -> dict:
+    payload = grid_forecast.ensure_baseline_forecast_contract(payload, db=db)
+    baseline_forecast = dict(payload.get("baseline_forecast") or {})
+    regime_compact = payload.get("regime_compact") or {}
+    metadata = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="AUD/MWh",
+        interval_minutes=5 if market == "WEM" else get_settlement_interval(region),
+        data_grade="preview" if market == "WEM" else "analytical-preview",
+        data_quality_score=None,
+        coverage=dict(payload.get("coverage") or {}),
+        freshness={"last_updated_at": _market_data_version()},
+        source_name="AEMO",
+        source_version=_grid_forecast_data_version(),
+        methodology_version="p2_forecast_layer_v1",
+        warnings=list((baseline_forecast.get("warnings") or [])),
+        dataset_family="forecast_layer",
+        observation_kind="forecast",
+        lineage={"source_id": "p2_forecast_layer"},
+        grade="preview" if market == "WEM" else "analytical-preview",
+    )
+    return {
+        "market": market,
+        "region": region,
+        "horizon": (payload.get("metadata") or {}).get("horizon"),
+        "summary": payload.get("summary") or {},
+        "baseline_forecast": baseline_forecast,
+        "regime_compact": regime_compact,
+        "coverage": payload.get("coverage") or {},
+        "market_context": payload.get("market_context") or {},
+        "windows": payload.get("windows") or [],
+        "drivers": payload.get("drivers") or [],
+        "governance": build_p2_governance_payload(
+            metadata=metadata,
+            evaluation=(baseline_forecast.get("evaluation") or {}),
+        ),
+        "metadata": metadata,
+    }
+
+
+def _attach_regime_layer(payload: dict, *, market: str, region: str) -> dict:
+    def _sync_baseline_forecast_regime_context() -> None:
+        baseline = payload.get("baseline_forecast")
+        compact = payload.get("regime_compact")
+        if not isinstance(baseline, dict):
+            return
+        regime_context = dict(baseline.get("regime_context") or {})
+        primary_regime = None
+        availability_status = "not_attached"
+        if isinstance(compact, dict):
+            primary = compact.get("primary_regime")
+            if isinstance(primary, dict):
+                primary_regime = primary.get("regime")
+            availability_status = compact.get("availability_status") or "not_attached"
+        regime_context["primary_regime"] = primary_regime
+        regime_context["availability_status"] = availability_status
+        baseline["regime_context"] = regime_context
+        payload["baseline_forecast"] = baseline
+
+    existing = payload.get("regime_layer")
+    if isinstance(existing, dict) and existing:
+        if "compact" not in existing:
+            existing["compact"] = _build_compact_regime_contract(existing)
+        payload["regime_compact"] = existing.get("compact")
+        _sync_baseline_forecast_regime_context()
+        return payload
+    try:
+        payload["regime_layer"] = _build_regime_layer_payload(market=market, region=region)
+    except Exception as exc:
+        logger.warning("Regime layer unavailable for market=%s region=%s: %s", market, region, exc)
+        payload["regime_layer"] = _build_unavailable_regime_layer_payload(market=market, region=region)
+    if "compact" not in payload["regime_layer"]:
+        payload["regime_layer"]["compact"] = _build_compact_regime_contract(payload["regime_layer"])
+    payload["regime_compact"] = payload["regime_layer"].get("compact")
+    _sync_baseline_forecast_regime_context()
+    return payload
+
+
 def _attach_fcas_analysis_metadata(payload: dict, *, region: str) -> dict:
     market = "WEM" if region == "WEM" else "NEM"
     data_version = _market_data_version()
@@ -607,7 +1229,7 @@ def _attach_investment_metadata(payload: dict, *, region: str) -> dict:
         methodology_version="investment_analysis_v1",
         warnings=[] if market != "WEM" else ["preview_only"],
     )
-    return payload
+    return _attach_regime_layer(payload, market=market, region=region)
 
 
 def _run_standardized_bess_backtest(backtest_params: BessBacktestParams) -> dict | None:
@@ -1267,6 +1889,1310 @@ app.add_middleware(TraceHeaderMiddleware)
 configure_telemetry(app)
 
 
+@app.get("/api/p0/datasets/load-actual", response_model=P0DatasetPayload)
+def get_p0_load_actual_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_operational_demand_actual_rows(region)
+    payload = _build_p0_dataset_payload(
+        builder=build_aemo_load_actual_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_nem_load_actual",
+    )
+    return payload
+
+
+def _latest_trading_price_table() -> str | None:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%' ORDER BY name DESC")
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+
+def _fetch_settlement_rows(region: str, *, limit: int = 288) -> list[dict]:
+    table_name = _latest_trading_price_table()
+    if not table_name:
+        return []
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT settlement_date, rrp_aud_mwh
+            FROM {table_name}
+            WHERE region_id = ?
+            ORDER BY settlement_date DESC
+            LIMIT ?
+            """,
+            (region, limit),
+        )
+        rows = cursor.fetchall()
+    interval_minutes = get_settlement_interval(region)
+    normalized = []
+    for settlement_date, value in reversed(rows):
+        start_dt = datetime.datetime.strptime(settlement_date, "%Y-%m-%d %H:%M:%S")
+        end_dt = start_dt + datetime.timedelta(minutes=interval_minutes)
+        normalized.append(
+            {
+                "interval_start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "interval_end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "value": float(value or 0.0),
+                "component": "energy",
+                "finality": "final",
+                "settlement_run": "market_table",
+                "counterparty_type": "market_pool",
+            }
+        )
+    return normalized
+
+
+def _local_interval_to_utc_bounds(raw_value: str, region: str, minutes: int) -> tuple[str, str]:
+    timezone_name = _region_timezone(region)
+    start_local = datetime.datetime.strptime(raw_value, "%Y/%m/%d %H:%M:%S").replace(tzinfo=ZoneInfo(timezone_name))
+    end_local = start_local + datetime.timedelta(minutes=minutes)
+    start_utc = start_local.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_utc = end_local.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return start_utc, end_utc
+
+
+def _fetch_operational_demand_actual_rows(region: str, *, limit: int = 288) -> list[dict]:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT interval_datetime, operational_demand
+            FROM operational_demand_actual_hh
+            WHERE region_id = ?
+            ORDER BY interval_datetime DESC
+            LIMIT ?
+            """,
+            (region, limit),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for interval_datetime, value in reversed(rows):
+        start_utc, end_utc = _local_interval_to_utc_bounds(interval_datetime, region, 30)
+        normalized.append(
+            {
+                "interval_start": start_utc,
+                "interval_end": end_utc,
+                "value": float(value or 0.0),
+            }
+        )
+    return normalized
+
+
+def _fetch_operational_demand_forecast_rows(region: str, *, limit: int = 96) -> list[dict]:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT interval_datetime, operational_demand_poe50, load_date
+            FROM operational_demand_forecast_hh
+            WHERE region_id = ?
+              AND load_date = (
+                SELECT MAX(load_date) FROM operational_demand_forecast_hh WHERE region_id = ?
+              )
+            ORDER BY interval_datetime ASC
+            LIMIT ?
+            """,
+            (region, region, limit),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for interval_datetime, value, load_date in rows:
+        start_utc, end_utc = _local_interval_to_utc_bounds(interval_datetime, region, 30)
+        run_at, _ = _local_interval_to_utc_bounds(load_date, region, 0)
+        normalized.append(
+            {
+                "interval_start": start_utc,
+                "interval_end": end_utc,
+                "value": float(value or 0.0),
+                "run_at": run_at,
+            }
+        )
+    return normalized
+
+
+def _fetch_rooftop_pv_actual_rows(region: str, *, limit: int = 288) -> list[dict]:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT interval_datetime, power
+            FROM rooftop_pv_actual_measurement
+            WHERE region_id = ?
+            ORDER BY interval_datetime DESC
+            LIMIT ?
+            """,
+            (region, limit),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for interval_datetime, value in reversed(rows):
+        start_utc, end_utc = _local_interval_to_utc_bounds(interval_datetime, region, 30)
+        normalized.append(
+            {
+                "interval_start": start_utc,
+                "interval_end": end_utc,
+                "value": float(value or 0.0),
+            }
+        )
+    return normalized
+
+
+def _fetch_dispatch_region_metric_rows(region: str, value_column: str, *, limit: int = 288) -> list[dict]:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT settlement_date, {value_column}
+            FROM dispatch_region_summary
+            WHERE region_id = ?
+            ORDER BY settlement_date DESC
+            LIMIT ?
+            """,
+            (region, limit),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for settlement_date, value in reversed(rows):
+        start_utc, end_utc = _local_interval_to_utc_bounds(settlement_date, region, 5)
+        normalized.append(
+            {
+                "interval_start": start_utc,
+                "interval_end": end_utc,
+                "value": float(value or 0.0),
+            }
+        )
+    return normalized
+
+
+def _fetch_predispatch_region_metric_rows(region: str, value_column: str, *, limit: int = 96) -> list[dict]:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT interval_datetime, {value_column}, run_datetime
+            FROM predispatch_region_solution
+            WHERE region_id = ?
+              AND run_datetime = (
+                SELECT MAX(run_datetime) FROM predispatch_region_solution WHERE region_id = ?
+              )
+            ORDER BY interval_datetime ASC
+            LIMIT ?
+            """,
+            (region, region, limit),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for interval_datetime, value, run_datetime in rows:
+        start_utc, end_utc = _local_interval_to_utc_bounds(interval_datetime, region, 30)
+        run_at, _ = _local_interval_to_utc_bounds(run_datetime, region, 0)
+        normalized.append(
+            {
+                "interval_start": start_utc,
+                "interval_end": end_utc,
+                "value": float(value or 0.0),
+                "run_at": run_at,
+            }
+        )
+    return normalized
+
+
+def _fetch_interconnector_flow_rows(interconnector_id: str, *, limit: int = 288) -> list[dict]:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT settlement_date, mwflow, from_regionid, to_regionid
+            FROM dispatch_interconnector_flow
+            WHERE interconnector_id = ?
+            ORDER BY settlement_date DESC
+            LIMIT ?
+            """,
+            (interconnector_id, limit),
+        )
+        rows = cursor.fetchall()
+    region_hint = interconnector_id.split("-")[0] if "-" in interconnector_id else "NSW1"
+    normalized = []
+    for settlement_date, mwflow, from_regionid, to_regionid in reversed(rows):
+        start_utc, end_utc = _local_interval_to_utc_bounds(settlement_date, region_hint, 5)
+        normalized.append(
+            {
+                "interval_start": start_utc,
+                "interval_end": end_utc,
+                "value": float(mwflow or 0.0),
+                "from_region": from_regionid,
+                "to_region": to_regionid,
+            }
+        )
+    return normalized
+
+
+def _fetch_region_interconnector_flow_rows(region: str, *, limit: int = 288) -> list[dict]:
+    with db.get_connection() as conn:
+        try:
+            rows = conn.execute(
+                """
+                SELECT settlement_date, mwflow, from_regionid, to_regionid
+                FROM dispatch_interconnector_flow
+                WHERE from_regionid = ? OR to_regionid = ?
+                ORDER BY settlement_date DESC
+                LIMIT ?
+                """,
+                (region, region, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+    normalized = []
+    for settlement_date, mwflow, from_regionid, to_regionid in reversed(rows):
+        region_hint = from_regionid or to_regionid or region
+        start_utc, end_utc = _local_interval_to_utc_bounds(settlement_date, region_hint, 5)
+        normalized.append(
+            {
+                "interval_start": start_utc,
+                "interval_end": end_utc,
+                "value": float(mwflow or 0.0),
+                "from_region": from_regionid,
+                "to_region": to_regionid,
+            }
+        )
+    return normalized
+
+
+def _fetch_wem_constraint_rows(*, limit: int = 288) -> list[dict]:
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT dispatch_interval, binding_count, binding_max_shadow_price
+            FROM {db.WEM_ESS_CONSTRAINT_TABLE}
+            ORDER BY dispatch_interval DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for dispatch_interval, binding_count, shadow_price in reversed(rows):
+        start_dt = datetime.datetime.strptime(dispatch_interval, "%Y-%m-%d %H:%M:%S")
+        end_dt = start_dt + datetime.timedelta(minutes=5)
+        normalized.append(
+            {
+                "constraint_id": "WEM_BINDING_SUMMARY",
+                "effective_start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "effective_end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "binding_flag": int(binding_count or 0) > 0,
+                "shadow_price": float(shadow_price or 0.0),
+            }
+        )
+    return normalized
+
+
+def _fetch_wem_reserve_requirement_rows(*, limit: int = 96) -> list[dict]:
+    service_columns = [
+        ("requirement_regulation_raise", "REGULATION_RAISE"),
+        ("requirement_regulation_lower", "REGULATION_LOWER"),
+        ("requirement_contingency_raise", "CONTINGENCY_RAISE"),
+        ("requirement_contingency_lower", "CONTINGENCY_LOWER"),
+        ("requirement_rocof", "ROCOF"),
+    ]
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT dispatch_interval, {", ".join(column for column, _ in service_columns)}
+            FROM {db.WEM_ESS_MARKET_TABLE}
+            ORDER BY dispatch_interval DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for row in reversed(rows):
+        dispatch_interval = row[0]
+        start_dt = datetime.datetime.strptime(dispatch_interval, "%Y-%m-%d %H:%M:%S")
+        end_dt = start_dt + datetime.timedelta(minutes=5)
+        for idx, (_, service_name) in enumerate(service_columns, start=1):
+            value = row[idx]
+            normalized.append(
+                {
+                    "interval_start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "interval_end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "value": float(value or 0.0),
+                    "reserve_service": service_name,
+                }
+            )
+    return normalized
+
+
+def _fetch_wem_reserve_shortfall_rows(*, limit: int = 96) -> list[dict]:
+    service_columns = [
+        ("shortfall_regulation_raise", "REGULATION_RAISE"),
+        ("shortfall_regulation_lower", "REGULATION_LOWER"),
+        ("shortfall_contingency_raise", "CONTINGENCY_RAISE"),
+        ("shortfall_contingency_lower", "CONTINGENCY_LOWER"),
+        ("shortfall_rocof", "ROCOF"),
+    ]
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT dispatch_interval, {", ".join(column for column, _ in service_columns)}
+            FROM {db.WEM_ESS_MARKET_TABLE}
+            ORDER BY dispatch_interval DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for row in reversed(rows):
+        dispatch_interval = row[0]
+        start_dt = datetime.datetime.strptime(dispatch_interval, "%Y-%m-%d %H:%M:%S")
+        end_dt = start_dt + datetime.timedelta(minutes=5)
+        for idx, (_, service_name) in enumerate(service_columns, start=1):
+            value = float(row[idx] or 0.0)
+            if value <= 0:
+                continue
+            normalized.append(
+                {
+                    "interval_start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "interval_end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "value": value,
+                    "reserve_service": service_name,
+                    "severity": "dispatch_shortfall",
+                }
+            )
+    return normalized
+
+
+def _fetch_outage_rows(region: str, *, market: str, limit: int = 50) -> list[dict]:
+    sources = ["nem_high_impact_outage"] if market == "NEM" else ["wem_realtime_outage"]
+    placeholders = ", ".join("?" for _ in sources)
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT source_event_id, title, effective_start, effective_end, region_scope_json
+            FROM {db.GRID_EVENT_RAW_TABLE}
+            WHERE source IN ({placeholders})
+            ORDER BY effective_start DESC
+            LIMIT ?
+            """,
+            (*sources, limit * 5),
+        )
+        rows = cursor.fetchall()
+    normalized = []
+    for source_event_id, title, effective_start, effective_end, region_scope_json in rows:
+        scopes = json.loads(region_scope_json or "[]")
+        if region not in scopes:
+            continue
+        normalized.append(
+            {
+                "unit_id": source_event_id or title,
+                "event_start": (effective_start or "").replace(" ", "T") + ("Z" if effective_start else ""),
+                "event_end": (effective_end or effective_start or "").replace(" ", "T") + ("Z" if (effective_end or effective_start) else ""),
+                "available_capacity_mw": None,
+                "outage_capacity_mw": None,
+                "outage_type": "planned",
+            }
+        )
+        if len(normalized) >= limit:
+            break
+    return list(reversed(normalized))
+
+
+def _fetch_wem_reserve_shortfall_snapshot_rows(*, limit: int = 96) -> list[dict]:
+    with db.get_connection() as conn:
+        try:
+            rows = conn.execute(
+                """
+                SELECT interval_start_utc, interval_end_utc, reserve_service, shortfall_mw, severity
+                FROM wem_reserve_shortfall_snapshot
+                ORDER BY interval_start_utc DESC, reserve_service
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+    return [
+        {
+            "interval_start": row[0],
+            "interval_end": row[1],
+            "value": float(row[3] or 0.0),
+            "reserve_service": row[2],
+            "severity": row[4] or "market_shortfall",
+        }
+        for row in reversed(rows)
+    ]
+
+
+def _fetch_weather_rows(region: str, *, limit: int = 96) -> list[dict]:
+    with db.get_connection() as conn:
+        try:
+            rows = conn.execute(
+                """
+                SELECT observation_time_utc,
+                       air_temperature_c,
+                       wind_speed_mps,
+                       cloud_cover_pct,
+                       source_file
+                FROM bom_weather_observation
+                WHERE region_id = ?
+                ORDER BY observation_time_utc DESC
+                LIMIT ?
+                """,
+                (region, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+    normalized = []
+    for observation_time_utc, temperature_c, wind_speed_mps, cloud_cover_pct, source_file in reversed(rows):
+        try:
+            start_dt = datetime.datetime.fromisoformat(observation_time_utc.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        end_dt = start_dt + datetime.timedelta(minutes=30)
+        normalized.append(
+            {
+                "interval_start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "interval_end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "temperature_c": float(temperature_c or 0.0),
+                "wind_speed_mps": float(wind_speed_mps or 0.0),
+                "cloud_cover_pct": float(cloud_cover_pct) if cloud_cover_pct is not None else None,
+                "source_file": source_file,
+            }
+        )
+    return normalized
+
+
+def _build_weather_warnings(rows: list[dict]) -> list[str]:
+    if not rows:
+        return ["source_unavailable"]
+    warnings: list[str] = []
+    latest_source = rows[-1].get("source_file", "")
+    if latest_source == "open_meteo_api":
+        warnings.append("fallback_weather_provider")
+    latest_end = rows[-1].get("interval_end")
+    if not latest_end:
+        return warnings
+    try:
+        latest_dt = datetime.datetime.fromisoformat(str(latest_end).replace("Z", "+00:00"))
+    except ValueError:
+        return warnings
+    age_hours = (datetime.datetime.now(datetime.UTC) - latest_dt).total_seconds() / 3600.0
+    if age_hours > 6:
+        warnings.append("source_stale")
+    return warnings
+
+
+def _fetch_recent_grid_state_rows(market: str, region: str, *, limit: int = 12) -> list[dict]:
+    with db.get_connection() as conn:
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT state_type, severity, confidence, headline, start_time, end_time
+                FROM {db.GRID_EVENT_STATE_TABLE}
+                WHERE market = ? AND region = ?
+                ORDER BY end_time DESC, start_time DESC
+                LIMIT ?
+                """,
+                (market, region, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+    return [
+        {
+            "state_type": row[0],
+            "severity": row[1],
+            "confidence": float(row[2] or 0.0),
+            "headline": row[3],
+            "start_time": row[4],
+            "end_time": row[5],
+        }
+        for row in rows
+    ]
+
+
+def _fetch_latest_nem_region_prices() -> dict[str, float]:
+    latest_prices: dict[str, float] = {}
+    for candidate_region in ("NSW1", "QLD1", "SA1", "TAS1", "VIC1"):
+        rows = _fetch_settlement_rows(candidate_region, limit=1)
+        if rows:
+            latest_prices[candidate_region] = float(rows[-1]["value"] or 0.0)
+    return latest_prices
+
+
+def _clamp_regime_score(value: float) -> float:
+    return round(max(0.0, min(value, 100.0)), 1)
+
+
+def _build_compact_regime_contract(regime_payload: dict) -> dict:
+    metadata = regime_payload.get("metadata") if isinstance(regime_payload.get("metadata"), dict) else {}
+    warnings = list(metadata.get("warnings") or [])
+    primary_regime = regime_payload.get("primary_regime")
+    active_regimes = regime_payload.get("active_regimes") if isinstance(regime_payload.get("active_regimes"), list) else []
+    drivers = regime_payload.get("drivers") if isinstance(regime_payload.get("drivers"), list) else []
+    transition_hints = regime_payload.get("transition_hints") if isinstance(regime_payload.get("transition_hints"), list) else []
+
+    availability_status = "unavailable" if "regime_layer_unavailable" in warnings else "available"
+    top_drivers = []
+    seen_driver_keys: set[tuple[str | None, str | None]] = set()
+    for item in drivers[:3]:
+        if not isinstance(item, dict):
+            continue
+        driver_key = (item.get("driver_type"), item.get("headline"))
+        if driver_key in seen_driver_keys:
+            continue
+        seen_driver_keys.add(driver_key)
+        top_drivers.append(
+            {
+                "headline": item.get("headline"),
+                "driver_type": item.get("driver_type"),
+            }
+        )
+    if len(top_drivers) < 3 and len(drivers) > 3:
+        for item in drivers[3:]:
+            if not isinstance(item, dict):
+                continue
+            driver_key = (item.get("driver_type"), item.get("headline"))
+            if driver_key in seen_driver_keys:
+                continue
+            seen_driver_keys.add(driver_key)
+            top_drivers.append(
+                {
+                    "headline": item.get("headline"),
+                    "driver_type": item.get("driver_type"),
+                }
+            )
+            if len(top_drivers) >= 3:
+                break
+
+    compact_active_regimes = []
+    for item in active_regimes[:3]:
+        if not isinstance(item, dict):
+            continue
+        compact_active_regimes.append(
+            {
+                "regime": item.get("regime"),
+                "score": item.get("score"),
+                "confidence": item.get("confidence"),
+            }
+        )
+
+    compact_transition_hints = []
+    seen_transition_hints: set[str] = set()
+    for hint in transition_hints:
+        if not isinstance(hint, str):
+            continue
+        normalized_hint = hint.strip()
+        if not normalized_hint or normalized_hint in seen_transition_hints:
+            continue
+        seen_transition_hints.add(normalized_hint)
+        compact_transition_hints.append(normalized_hint)
+        if len(compact_transition_hints) >= 3:
+            break
+
+    return {
+        "availability_status": availability_status,
+        "primary_regime": primary_regime,
+        "active_regimes": compact_active_regimes,
+        "regime_score_map": dict(regime_payload.get("regime_score_map") or {}),
+        "top_drivers": top_drivers,
+        "transition_hints": compact_transition_hints,
+        "warnings": warnings,
+    }
+
+
+def _build_unavailable_regime_layer_payload(*, market: str, region: str) -> dict:
+    payload = {
+        "market": market,
+        "region": region,
+        "primary_regime": None,
+        "active_regimes": [],
+        "regime_score_map": {},
+        "drivers": [],
+        "transition_hints": [],
+    }
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="regime-score",
+        interval_minutes=5 if market == "WEM" else get_settlement_interval(region),
+        data_grade="preview",
+        data_quality_score=None,
+        coverage={"status": "unavailable", "active_regime_count": 0},
+        freshness={"last_updated_at": _market_data_version()},
+        source_name="AEMO",
+        source_version=_market_data_version(),
+        methodology_version="p1_regime_layer_v1",
+        warnings=["regime_layer_unavailable"],
+        dataset_family="regime_layer",
+        observation_kind="state",
+        lineage={"source_id": "p1_regime_layer"},
+        grade="preview",
+    )
+    payload["compact"] = _build_compact_regime_contract(payload)
+    return payload
+
+
+def _build_regime_layer_payload(*, market: str, region: str) -> dict:
+    settlement_rows = _fetch_settlement_rows(region, limit=96)
+    load_rows = _fetch_operational_demand_actual_rows(region, limit=96) if market == "NEM" else []
+    wind_rows = _fetch_dispatch_region_metric_rows(region, "ss_wind_clearedmw", limit=96) if market == "NEM" and region != "WEM" else []
+    solar_rows = _fetch_dispatch_region_metric_rows(region, "ss_solar_clearedmw", limit=96) if market == "NEM" and region != "WEM" else []
+    rooftop_rows = _fetch_rooftop_pv_actual_rows(region, limit=96) if market == "NEM" and region != "WEM" else []
+    interconnector_rows = _fetch_region_interconnector_flow_rows(region, limit=96) if market == "NEM" and region != "WEM" else []
+    reserve_shortfall_rows = _fetch_wem_reserve_shortfall_snapshot_rows(limit=96) if market == "WEM" and region == "WEM" else []
+    constraint_rows = _fetch_wem_constraint_rows(limit=96) if market == "WEM" and region == "WEM" else []
+    state_rows = _fetch_recent_grid_state_rows(market, region, limit=12)
+    latest_nem_prices = _fetch_latest_nem_region_prices() if market == "NEM" and region != "WEM" else {}
+
+    if not any((settlement_rows, load_rows, wind_rows, solar_rows, rooftop_rows, interconnector_rows, reserve_shortfall_rows, constraint_rows, state_rows)):
+        return _build_unavailable_regime_layer_payload(market=market, region=region)
+
+    price_values = [float(row.get("value") or 0.0) for row in settlement_rows]
+    latest_price = price_values[-1] if price_values else 0.0
+    negative_ratio = (sum(1 for value in price_values if value < 0) / len(price_values)) if price_values else 0.0
+    spike_ratio = (sum(1 for value in price_values if value >= 300) / len(price_values)) if price_values else 0.0
+
+    latest_load = float(load_rows[-1]["value"] or 0.0) if load_rows else 0.0
+    avg_load = (sum(float(row.get("value") or 0.0) for row in load_rows) / len(load_rows)) if load_rows else 0.0
+    load_tightness_signal = ((latest_load / avg_load) - 1.0) * 100.0 if avg_load > 0 else 0.0
+
+    renewable_latest = 0.0
+    for rows in (wind_rows, solar_rows, rooftop_rows):
+        if rows:
+            renewable_latest += float(rows[-1]["value"] or 0.0)
+    renewable_ratio = (renewable_latest / latest_load) if latest_load > 0 else 0.0
+
+    reserve_shortfall_signal = min(sum(float(row.get("value") or 0.0) for row in reserve_shortfall_rows), 500.0) / 5.0
+    constraint_signal = min(sum(1 for row in constraint_rows if row.get("binding_flag")), 20) * 5.0
+
+    reserve_state_signal = max(
+        (
+            (100.0 if row.get("severity") == "high" else 70.0 if row.get("severity") == "medium" else 45.0)
+            * float(row.get("confidence") or 0.0)
+        )
+        for row in state_rows
+        if row.get("state_type") == "reserve_tightness"
+    ) if any(row.get("state_type") == "reserve_tightness" for row in state_rows) else 0.0
+    network_state_signal = max(
+        (
+            (100.0 if row.get("severity") == "high" else 70.0 if row.get("severity") == "medium" else 45.0)
+            * float(row.get("confidence") or 0.0)
+        )
+        for row in state_rows
+        if row.get("state_type") == "network_stress"
+    ) if any(row.get("state_type") == "network_stress" for row in state_rows) else 0.0
+
+    price_separation_signal = 0.0
+    if latest_nem_prices and region in latest_nem_prices:
+        regional_price = latest_nem_prices[region]
+        max_spread = max(abs(regional_price - value) for key, value in latest_nem_prices.items() if key != region) if len(latest_nem_prices) > 1 else 0.0
+        price_separation_signal = min(max_spread / 5.0, 100.0)
+
+    interconnector_flow_signal = 0.0
+    if interconnector_rows:
+        avg_abs_flow = sum(abs(float(row.get("value") or 0.0)) for row in interconnector_rows) / len(interconnector_rows)
+        interconnector_flow_signal = min(avg_abs_flow / 8.0, 100.0)
+
+    oversupply_score = _clamp_regime_score((negative_ratio * 100.0 * 0.45) + (min(renewable_ratio, 1.5) / 1.5 * 100.0 * 0.40) + ((100.0 if latest_price < 0 else 0.0) * 0.15))
+    scarcity_score = _clamp_regime_score((spike_ratio * 100.0 * 0.55) + (min(max(load_tightness_signal, 0.0), 100.0) * 0.30) + (max(reserve_shortfall_signal, reserve_state_signal) * 0.15))
+    negative_price_score = _clamp_regime_score((negative_ratio * 100.0 * 0.70) + ((100.0 if latest_price < 0 else 0.0) * 0.30))
+    reserve_stress_score = _clamp_regime_score((reserve_shortfall_signal * 0.55) + (reserve_state_signal * 0.45) + (20.0 if reserve_shortfall_rows else 0.0))
+    congestion_score = _clamp_regime_score(
+        (constraint_signal * 0.40)
+        + (network_state_signal * 0.60)
+        + (12.0 if network_state_signal >= 60.0 else 0.0)
+    )
+    transmission_separation_score = _clamp_regime_score((price_separation_signal * 0.45) + (interconnector_flow_signal * 0.35) + (network_state_signal * 0.20))
+
+    regime_score_map = {
+        "oversupply": oversupply_score,
+        "scarcity": scarcity_score,
+        "negative_price": negative_price_score,
+        "reserve_stress": reserve_stress_score,
+        "congestion": congestion_score,
+        "transmission_separation": transmission_separation_score,
+    }
+
+    regime_driver_map = {
+        "oversupply": [
+            {"headline": f"Renewable/load ratio {renewable_ratio:.2f}", "driver_type": "renewables_balance"},
+            {"headline": f"Negative-price interval ratio {negative_ratio:.2%}", "driver_type": "price_shape"},
+        ],
+        "scarcity": [
+            {"headline": f"Spike interval ratio {spike_ratio:.2%}", "driver_type": "price_shape"},
+            {"headline": f"Load tightness signal {max(load_tightness_signal, 0.0):.1f}", "driver_type": "load_tightness"},
+        ],
+        "negative_price": [
+            {"headline": f"Latest price {latest_price:.1f} AUD/MWh", "driver_type": "price_level"},
+            {"headline": f"Negative-price interval ratio {negative_ratio:.2%}", "driver_type": "price_shape"},
+        ],
+        "reserve_stress": [
+            {"headline": f"Reserve shortfall signal {reserve_shortfall_signal:.1f}", "driver_type": "reserve_shortfall"},
+            *[
+                {"headline": row.get("headline", "Reserve state"), "driver_type": row.get("state_type", "reserve_tightness")}
+                for row in state_rows
+                if row.get("state_type") == "reserve_tightness"
+            ],
+        ],
+        "congestion": [
+            {"headline": f"Constraint signal {constraint_signal:.1f}", "driver_type": "constraint_binding"},
+            *[
+                {"headline": row.get("headline", "Network state"), "driver_type": row.get("state_type", "network_stress")}
+                for row in state_rows
+                if row.get("state_type") == "network_stress"
+            ],
+        ],
+        "transmission_separation": [
+            {"headline": f"Regional spread signal {price_separation_signal:.1f}", "driver_type": "regional_price_spread"},
+            {"headline": f"Interconnector flow signal {interconnector_flow_signal:.1f}", "driver_type": "interconnector_flow"},
+            *[
+                {"headline": row.get("headline", "Network state"), "driver_type": row.get("state_type", "network_stress")}
+                for row in state_rows
+                if row.get("state_type") == "network_stress"
+            ],
+        ],
+    }
+
+    active_regimes = []
+    for regime, score in regime_score_map.items():
+        if score < 55.0:
+            continue
+        confidence = round(min(0.98, 0.35 + (score / 100.0) * 0.6), 2)
+        transition_hints = []
+        if regime == "oversupply" and negative_price_score >= 45.0:
+            transition_hints.append("Negative-price regime can intensify if renewable output stays elevated.")
+        if regime == "scarcity" and reserve_stress_score >= 45.0:
+            transition_hints.append("Reserve stress can escalate into broader scarcity if shortfalls persist.")
+        if regime == "congestion" and transmission_separation_score >= 45.0:
+            transition_hints.append("Persistent network stress can widen into inter-regional separation.")
+        active_regimes.append(
+            {
+                "regime": regime,
+                "score": score,
+                "confidence": confidence,
+                "drivers": regime_driver_map.get(regime, []),
+                "transition_hints": transition_hints,
+            }
+        )
+
+    active_regimes = sorted(active_regimes, key=lambda item: float(item.get("score") or 0.0), reverse=True)
+
+    sorted_regimes = sorted(regime_score_map.items(), key=lambda item: item[1], reverse=True)
+    primary_regime_name, primary_score = sorted_regimes[0]
+    primary_confidence = round(min(0.98, 0.35 + (primary_score / 100.0) * 0.6), 2)
+
+    all_drivers = []
+    for regime in active_regimes[:3]:
+        all_drivers.extend(regime.get("drivers", [])[:2])
+
+    transition_hints = []
+    if negative_price_score >= 45.0 and oversupply_score >= 45.0:
+        transition_hints.append("Oversupply and negative pricing are jointly elevated.")
+    if reserve_stress_score >= 45.0 and scarcity_score >= 45.0:
+        transition_hints.append("Reserve tightness is supporting broader scarcity conditions.")
+    if transmission_separation_score >= 45.0 and congestion_score >= 45.0:
+        transition_hints.append("Regional spread and network constraints are moving together.")
+
+    payload = {
+        "market": market,
+        "region": region,
+        "active_regimes": active_regimes,
+        "primary_regime": {
+            "regime": primary_regime_name,
+            "score": primary_score,
+            "confidence": primary_confidence,
+        },
+        "regime_score_map": regime_score_map,
+        "drivers": all_drivers,
+        "transition_hints": transition_hints,
+    }
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=region,
+        timezone=_region_timezone(region),
+        currency="AUD",
+        unit="regime-score",
+        interval_minutes=5 if market == "WEM" else get_settlement_interval(region),
+        data_grade="analytical-preview",
+        data_quality_score=None,
+        coverage={"active_regime_count": len(active_regimes)},
+        freshness={"last_updated_at": _market_data_version()},
+        source_name="AEMO",
+        source_version=_market_data_version(),
+        methodology_version="p1_regime_layer_v1",
+        warnings=[],
+        dataset_family="regime_layer",
+        observation_kind="state",
+        lineage={"source_id": "p1_regime_layer"},
+        grade="analytical-preview",
+    )
+    payload["compact"] = _build_compact_regime_contract(payload)
+    return payload
+
+
+def _fetch_unit_availability_rows(region: str, *, limit: int = 240) -> list[dict]:
+    with db.get_connection() as conn:
+        try:
+            latest_run_row = conn.execute("SELECT MAX(run_datetime) FROM pdpasa_duid_availability").fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+        latest_run = latest_run_row[0] if latest_run_row else None
+        if not latest_run:
+            return []
+        try:
+            rows = conn.execute(
+                """
+                SELECT p.interval_datetime,
+                       p.duid,
+                       p.generation_pasa_availability,
+                       p.generation_max_availability
+                FROM pdpasa_duid_availability p
+                JOIN du_detail_summary d
+                  ON d.duid = p.duid
+                 AND p.interval_datetime >= d.start_date
+                 AND p.interval_datetime < d.end_date
+                WHERE p.run_datetime = ?
+                  AND d.region_id = ?
+                ORDER BY p.interval_datetime ASC, p.duid ASC
+                LIMIT ?
+                """,
+                (latest_run, region, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+    normalized = []
+    for interval_datetime, duid, available_capacity_mw, max_capacity_mw in rows:
+        try:
+            start_dt = datetime.datetime.strptime(interval_datetime, "%Y/%m/%d %H:%M:%S").replace(tzinfo=datetime.UTC)
+        except ValueError:
+            continue
+        end_dt = start_dt + datetime.timedelta(minutes=30)
+        normalized.append(
+            {
+                "interval_start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "interval_end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "unit_id": duid,
+                "available_capacity_mw": float(available_capacity_mw or 0.0),
+                "max_capacity_mw": float(max_capacity_mw or 0.0),
+            }
+        )
+    return normalized
+
+
+def _build_unit_availability_source_sync_state() -> dict | None:
+    availability_state = db.fetch_aemo_source_sync_state("aemo_nem_unit_availability")
+    mapping_state = db.fetch_aemo_source_sync_state("aemo_nem_du_detail_summary")
+    if not availability_state and not mapping_state:
+        return None
+
+    def _best_timestamp(*values: str | None) -> str | None:
+        normalized = [value for value in values if value]
+        if not normalized:
+            return None
+        return max(normalized)
+
+    sync_statuses = [state.get("sync_status") for state in (availability_state, mapping_state) if state]
+    combined_status = "ok"
+    if "error" in sync_statuses:
+        combined_status = "error"
+    elif "degraded" in sync_statuses:
+        combined_status = "degraded"
+
+    detail_json = {
+        "availability_sync_status": (availability_state or {}).get("sync_status"),
+        "mapping_sync_status": (mapping_state or {}).get("sync_status"),
+        "availability_detail": (availability_state or {}).get("detail_json"),
+        "mapping_detail": (mapping_state or {}).get("detail_json"),
+    }
+    last_error = (availability_state or {}).get("last_error") or (mapping_state or {}).get("last_error")
+    return {
+        "source_id": "aemo_nem_unit_availability_bundle",
+        "last_success_at": _best_timestamp(
+            (availability_state or {}).get("last_success_at"),
+            (mapping_state or {}).get("last_success_at"),
+        ),
+        "last_attempt_at": _best_timestamp(
+            (availability_state or {}).get("last_attempt_at"),
+            (mapping_state or {}).get("last_attempt_at"),
+        ),
+        "sync_status": combined_status,
+        "last_error": last_error,
+        "detail_json": detail_json,
+    }
+
+
+def _build_p0_dataset_payload(
+    *,
+    builder,
+    market: str,
+    region: str | None = None,
+    scope: str | None = None,
+    rows: list[dict] | None = None,
+    warnings: list[str] | None = None,
+    source_id: str | None = None,
+    source_sync_state: dict | None = None,
+) -> dict:
+    effective_scope = scope or region or ""
+    if region is not None:
+        payload = builder(rows=list(rows or []), region=region, ingested_at=_utc_now_iso())
+    else:
+        payload = builder(rows=list(rows or []), interconnector_id=effective_scope, ingested_at=_utc_now_iso())
+    source_sync_state = source_sync_state or (db.fetch_aemo_source_sync_state(source_id) if source_id else None)
+    source_governance_warnings: list[str] = []
+    if source_sync_state:
+        last_success_at = source_sync_state.get("last_success_at")
+        if last_success_at:
+            payload["freshness"] = {"last_updated_at": last_success_at}
+        sync_status = source_sync_state.get("sync_status")
+        if sync_status == "degraded":
+            source_governance_warnings.append("source_degraded")
+        elif sync_status == "error":
+            source_governance_warnings.append("source_error")
+    payload["warnings"] = (
+        list(payload.get("warnings", []))
+        + source_governance_warnings
+        + list(warnings or [])
+    )
+    grade = "analytical-preview" if payload.get("points") else "preview"
+    payload["metadata"] = build_result_metadata(
+        market=market,
+        region_or_zone=effective_scope,
+        timezone=_region_timezone(region) if region else "UTC",
+        currency="AUD",
+        unit=payload.get("unit") or "",
+        interval_minutes=payload.get("interval_minutes"),
+        data_grade=grade,
+        data_quality_score=None,
+        coverage=payload.get("coverage"),
+        freshness=payload.get("freshness"),
+        source_name=payload["source_name"],
+        source_version=payload["source_version"],
+        methodology_version="p0_dataset_contract_v1",
+        warnings=payload.get("warnings", []),
+        dataset_family=payload["dataset_family"],
+        observation_kind=payload["observation_kind"],
+        lineage=payload.get("lineage", {}),
+        grade=grade,
+    )
+    return payload
+
+
+def _build_outage_source_sync_state(market: str) -> dict | None:
+    if market != "NEM":
+        return None
+    rows = db.fetch_grid_event_sync_states()
+    relevant = [
+        row for row in rows
+        if row.get("source") in {"nem_market_notice", "bom_warnings"}
+    ]
+    if not relevant:
+        return None
+
+    success_values = [str(row.get("last_success_at")).strip() for row in relevant if row.get("last_success_at")]
+    normalized_success = []
+    for value in success_values:
+        try:
+            dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00").replace(" ", "T"))
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.UTC)
+        normalized_success.append(dt.astimezone(datetime.UTC))
+    last_success_at = max(normalized_success).strftime("%Y-%m-%dT%H:%M:%SZ") if normalized_success else None
+
+    statuses = [str(row.get("sync_status") or "") for row in relevant]
+    if any(status.startswith("error") for status in statuses):
+        sync_status = "error"
+    elif all(status == "ok" for status in statuses):
+        sync_status = "ok"
+    else:
+        sync_status = "degraded"
+
+    return {
+        "source_id": "aemo_nem_outage",
+        "last_success_at": last_success_at,
+        "sync_status": sync_status,
+        "last_error": None,
+        "detail_json": {"sources": [row.get("source") for row in relevant]},
+    }
+
+
+@app.get("/api/p0/datasets/load-forecast", response_model=P0DatasetPayload)
+def get_p0_load_forecast_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_operational_demand_forecast_rows(region)
+    return _build_p0_dataset_payload(
+        builder=build_aemo_load_forecast_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_nem_load_forecast",
+    )
+
+
+@app.get("/api/p0/datasets/wind-forecast", response_model=P0DatasetPayload)
+def get_p0_wind_forecast_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_predispatch_region_metric_rows(region, "ss_wind_uigf")
+    return _build_p0_dataset_payload(
+        builder=build_aemo_wind_forecast_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_nem_wind_forecast",
+    )
+
+
+@app.get("/api/p0/datasets/wind-actual", response_model=P0DatasetPayload)
+def get_p0_wind_actual_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_dispatch_region_metric_rows(region, "ss_wind_clearedmw")
+    return _build_p0_dataset_payload(
+        builder=build_aemo_wind_actual_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=["actual_proxy_from_dispatch_clearedmw"] if rows else ["source_unavailable"],
+        source_id="aemo_nem_wind_actual",
+    )
+
+
+@app.get("/api/p0/datasets/solar-forecast", response_model=P0DatasetPayload)
+def get_p0_solar_forecast_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_predispatch_region_metric_rows(region, "ss_solar_uigf")
+    return _build_p0_dataset_payload(
+        builder=build_aemo_solar_forecast_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_nem_solar_forecast",
+    )
+
+
+@app.get("/api/p0/datasets/solar-actual", response_model=P0DatasetPayload)
+def get_p0_solar_actual_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_dispatch_region_metric_rows(region, "ss_solar_clearedmw")
+    return _build_p0_dataset_payload(
+        builder=build_aemo_solar_actual_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=["actual_proxy_from_dispatch_clearedmw"] if rows else ["source_unavailable"],
+        source_id="aemo_nem_solar_actual",
+    )
+
+
+@app.get("/api/p0/datasets/rooftop-pv", response_model=P0DatasetPayload)
+def get_p0_rooftop_pv_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_rooftop_pv_actual_rows(region)
+    return _build_p0_dataset_payload(
+        builder=build_aemo_rooftop_pv_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_nem_rooftop_pv",
+    )
+
+
+@app.get("/api/p0/datasets/outage", response_model=P0DatasetPayload)
+def get_p0_outage_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    return _build_p0_dataset_payload(
+        builder=build_aemo_outage_series,
+        market=market,
+        region=region,
+        rows=_fetch_outage_rows(region, market=market),
+        warnings=[],
+        source_id="aemo_nem_outage" if market == "NEM" else None,
+        source_sync_state=_build_outage_source_sync_state(market),
+    )
+
+
+@app.get("/api/p0/datasets/interconnector-flow", response_model=P0DatasetPayload)
+def get_p0_interconnector_flow_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    interconnector_id: str = Query(..., description="Interconnector scope such as NSW1-QLD1"),
+):
+    rows = _fetch_interconnector_flow_rows(interconnector_id)
+    return _build_p0_dataset_payload(
+        builder=build_aemo_interconnector_flow_series,
+        market=market,
+        scope=interconnector_id,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_nem_interconnector_flow",
+    )
+
+
+@app.get("/api/p0/datasets/reserve-requirement", response_model=P0DatasetPayload)
+def get_p0_reserve_requirement_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_wem_reserve_requirement_rows() if market == "WEM" and region == "WEM" else []
+    return _build_p0_dataset_payload(
+        builder=build_aemo_reserve_requirement_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_wem_ess_market" if market == "WEM" else "aemo_nem_reserve_requirement",
+    )
+
+
+@app.get("/api/p0/datasets/reserve-shortfall", response_model=P0DatasetPayload)
+def get_p0_reserve_shortfall_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_wem_reserve_shortfall_snapshot_rows() if market == "WEM" and region == "WEM" else []
+    warnings = [] if rows else ["source_unavailable"]
+    if market != "WEM" or region != "WEM":
+        warnings = ["market_scope_wem_only", *warnings]
+    return _build_p0_dataset_payload(
+        builder=build_aemo_reserve_shortfall_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=warnings,
+        source_id="aemo_wem_reserve_shortfall",
+    )
+
+
+@app.get("/api/p0/datasets/weather", response_model=P0DatasetPayload)
+def get_p0_weather_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_weather_rows(region) if market == "NEM" else []
+    return _build_p0_dataset_payload(
+        builder=build_aemo_weather_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=_build_weather_warnings(rows),
+        source_id="aemo_nem_weather",
+    )
+
+
+@app.get("/api/p0/datasets/unit-availability", response_model=P0DatasetPayload)
+def get_p0_unit_availability_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_unit_availability_rows(region) if market == "NEM" else []
+    return _build_p0_dataset_payload(
+        builder=build_aemo_unit_availability_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_nem_unit_availability",
+        source_sync_state=_build_unit_availability_source_sync_state() if market == "NEM" else None,
+    )
+
+
+@app.get("/api/p0/datasets/settlement", response_model=P0DatasetPayload)
+def get_p0_settlement_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_settlement_rows(region)
+    return _build_p0_dataset_payload(
+        builder=build_aemo_settlement_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_wem_ess_market" if market == "WEM" else None,
+    )
+
+
+@app.get("/api/p0/datasets/constraint", response_model=P0DatasetPayload)
+def get_p0_constraint_dataset(
+    market: str = Query(..., description="Market code, currently NEM for the AEMO-first rollout"),
+    region: str = Query(..., description="Region code such as NSW1"),
+):
+    rows = _fetch_wem_constraint_rows() if market == "WEM" and region == "WEM" else []
+    return _build_p0_dataset_payload(
+        builder=build_aemo_constraint_series,
+        market=market,
+        region=region,
+        rows=rows,
+        warnings=[] if rows else ["source_unavailable"],
+        source_id="aemo_wem_ess_market" if market == "WEM" else None,
+    )
+
+
+@app.get("/api/p1/regime-layer", response_model=P1RegimeLayerPayload)
+def get_p1_regime_layer(
+    market: str = Query(..., description="Market code such as NEM or WEM"),
+    region: str = Query(..., description="Region code such as NSW1 or WEM"),
+):
+    payload = _build_regime_layer_payload(market=market, region=region)
+    if "compact" not in payload:
+        payload["compact"] = _build_compact_regime_contract(payload)
+    return payload
+
+
+@app.get("/api/p2/forecast-layer", response_model=P2ForecastLayerPayload)
+def get_p2_forecast_layer(
+    market: str = Query(..., description="Market code such as NEM or WEM"),
+    region: str = Query(..., description="Region code such as NSW1 or WEM"),
+    horizon: str = Query(..., pattern="^(24h|7d|30d)$", description="Forecast horizon"),
+    as_of: Optional[str] = Query(None, description="Optional forecast issue timestamp"),
+):
+    forecast_payload = get_grid_forecast(market=market, region=region, horizon=horizon, as_of=as_of)
+    return _build_p2_forecast_layer_payload(forecast_payload, market=market, region=region)
+
+
 @app.get("/api/summary")
 def get_summary():
     """Returns database summary statistics (tables, time ranges, record counts) and last update time"""
@@ -1339,7 +3265,7 @@ def get_data_quality_issues(
     summary="Get cross-market screening ranking",
     description="Returns ranked screening candidates for NEM regions, WEM, and Finland using heuristic spread, volatility, opportunity, and data-quality dimensions.",
     responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-    response_model=LooseObjectPayload,
+    response_model=MarketScreeningPayload,
 )
 def get_market_screening(
     year: int = Query(..., description="Year to evaluate"),
@@ -1427,7 +3353,7 @@ def generate_report(
     )
 
 
-@app.post("/api/alerts/rules", response_model=LooseObjectPayload)
+@app.post("/api/alerts/rules", response_model=AlertRuleRecordPayload)
 def create_alert_rule_route(payload: AlertRuleUpsert):
     try:
         return create_alert_rule(payload)
@@ -1472,7 +3398,7 @@ def list_alert_delivery_logs_route(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/alerts/evaluate", response_model=LooseObjectPayload)
+@app.post("/api/alerts/evaluate", response_model=AlertEvaluationPayload)
 def evaluate_alert_rules_route(workspace_id: Optional[str] = Query(None)):
     try:
         return evaluate_alert_rules(workspace_id=workspace_id)
@@ -1483,7 +3409,7 @@ def evaluate_alert_rules_route(workspace_id: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/reports/generate", response_model=LooseObjectPayload)
+@app.get("/api/reports/generate", response_model=GeneratedReportPayload)
 def generate_report_route(
     report_type: str = Query(..., pattern="^(monthly_market_report|investment_memo_draft)$"),
     year: int = Query(...),
@@ -1553,7 +3479,7 @@ def list_jobs_route(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/jobs/{job_id}", response_model=LooseObjectPayload)
+@app.get("/api/jobs/{job_id}", response_model=JobDetailPayload)
 def get_job_route(job_id: str, access_scope: dict | None = None):
     try:
         job = db.fetch_job(job_id)
@@ -1585,7 +3511,7 @@ def get_job_events_route(job_id: str, access_scope: dict | None = None):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/jobs/{job_id}/lineage", response_model=LooseObjectPayload)
+@app.get("/api/jobs/{job_id}/lineage", response_model=JobLineagePayload)
 def get_job_lineage_route(job_id: str, access_scope: dict | None = None):
     try:
         payload = build_job_lineage_payload(db, job_id)
@@ -1690,6 +3616,22 @@ def get_observability_status(access_scope: dict | None = None):
         }
     except Exception as exc:
         logger.error("Observability status route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/model-governance/summary", response_model=ModelGovernanceSummaryPayload)
+def get_model_governance_summary():
+    try:
+        freshness_payload = build_source_freshness_payload(db)
+        quality_rows = compute_quality_snapshots(db)
+        quality_summary = summarize_quality_snapshots(quality_rows)
+        return build_governance_summary_payload(
+            source_freshness=freshness_payload,
+            quality_summary=quality_summary,
+            quality_rows=quality_rows,
+        )
+    except Exception as exc:
+        logger.error("Model governance summary route error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -2378,7 +4320,7 @@ def list_audit_logs_route(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/admin/external-api/billing-summary", response_model=LooseObjectPayload)
+@app.get("/api/admin/external-api/billing-summary", response_model=ExternalApiBillingSummaryPayload)
 def get_external_api_billing_summary_route(
     client_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
@@ -2442,6 +4384,8 @@ def get_v1_prices(
                     "metadata": payload.get("metadata", {}),
                 },
                 "items": paged["items"],
+                "regime_layer": payload.get("regime_layer"),
+                "regime_compact": payload.get("regime_compact"),
             },
             api_version="v1",
             pagination=paged["pagination"],
@@ -2491,6 +4435,8 @@ def get_v1_events(
                 "items": paged["items"],
                 "states": payload.get("states", []),
                 "metadata": payload.get("metadata", {}),
+                "regime_layer": payload.get("regime_layer"),
+                "regime_compact": payload.get("regime_compact"),
             },
             api_version="v1",
             pagination=paged["pagination"],
@@ -2598,7 +4544,7 @@ def run_v1_investment_scenarios(params: InvestmentParams, x_api_key: Optional[st
     )
 
 
-@app.get("/api/v1/developer/portal", response_model=LooseObjectPayload, responses=EXTERNAL_API_ERROR_RESPONSES)
+@app.get("/api/v1/developer/portal", response_model=DeveloperPortalPayload, responses=EXTERNAL_API_ERROR_RESPONSES)
 def get_v1_developer_portal(
     ledger_limit: int = Query(20, ge=1, le=200),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
@@ -2838,7 +4784,8 @@ def get_event_overlays(
         }
         cached = _fetch_response_cache(EVENT_OVERLAY_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return _attach_event_overlay_metadata(cached, region=region, data_version=cache_payload["data_version"])
+            cached = _attach_event_overlay_metadata(cached, region=region, data_version=cache_payload["data_version"])
+            return _attach_regime_layer(cached, market=market or grid_events.infer_market(region, market), region=region)
 
         response = grid_events.get_event_overlay_response(
             db,
@@ -2850,6 +4797,7 @@ def get_event_overlays(
             day_type=day_type,
         )
         response = _attach_event_overlay_metadata(response, region=region, data_version=cache_payload["data_version"])
+        response = _attach_regime_layer(response, market=market or grid_events.infer_market(region, market), region=region)
         return _store_response_cache(
             EVENT_OVERLAY_RESPONSE_CACHE_SCOPE,
             cache_payload,
@@ -2892,7 +4840,9 @@ def get_grid_forecast(
         }
         cached = _fetch_response_cache(GRID_FORECAST_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return _attach_grid_forecast_metadata(cached, region=region, data_version=cache_payload["data_version"])
+            cached = grid_forecast.ensure_baseline_forecast_contract(cached, db=db)
+            cached = _attach_grid_forecast_metadata(cached, region=region, data_version=cache_payload["data_version"])
+            return _attach_regime_layer(cached, market=market, region=region)
 
         response = grid_forecast.get_grid_forecast_response(
             db,
@@ -2901,7 +4851,9 @@ def get_grid_forecast(
             horizon=horizon,
             as_of=as_of,
         )
+        response = grid_forecast.ensure_baseline_forecast_contract(response, db=db)
         response = _attach_grid_forecast_metadata(response, region=region, data_version=cache_payload["data_version"])
+        response = _attach_regime_layer(response, market=market, region=region)
         return _store_response_cache(
             GRID_FORECAST_RESPONSE_CACHE_SCOPE,
             cache_payload,
@@ -2915,7 +4867,7 @@ def get_grid_forecast(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/grid-forecast/coverage", response_model=LooseObjectPayload)
+@app.get("/api/grid-forecast/coverage", response_model=GridForecastCoveragePayload)
 def get_grid_forecast_coverage(
     market: str = Query(..., description="Market code: NEM or WEM"),
     region: str = Query(..., description="Region code such as NSW1 or WEM"),
@@ -3083,7 +5035,7 @@ def get_fingrid_datasets():
     summary="Get Finland market model context",
     description="Returns the current Finland market model source composition. The payload makes Finland explicit as a multi-source market model rather than a single Fingrid dataset view.",
     responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-    response_model=LooseObjectPayload,
+    response_model=FinlandMarketModelPayload,
 )
 def get_finland_market_model():
     fingrid_service.seed_dataset_catalog(db)
@@ -3319,7 +5271,8 @@ def get_price_trend(
         }
         cached = _fetch_response_cache(PRICE_TREND_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return _attach_price_trend_metadata(cached, region=region)
+            cached = _attach_price_trend_metadata(cached, region=region)
+            return _attach_regime_layer(cached, market="WEM" if region == "WEM" else "NEM", region=region)
 
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -3350,6 +5303,7 @@ def get_price_trend(
                     "hourly_distribution": [], "data": []
                 }
                 response = _attach_price_trend_metadata(response, region=region)
+                response = _attach_regime_layer(response, market="WEM" if region == "WEM" else "NEM", region=region)
                 return _store_response_cache(
                     PRICE_TREND_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -3448,6 +5402,7 @@ def get_price_trend(
                 "data": data
             }
             response = _attach_price_trend_metadata(response, region=region)
+            response = _attach_regime_layer(response, market="WEM" if region == "WEM" else "NEM", region=region)
             return _store_response_cache(
                 PRICE_TREND_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -3519,7 +5474,8 @@ def get_peak_analysis(
         }
         cached = _fetch_response_cache(PEAK_ANALYSIS_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return _attach_peak_analysis_metadata(cached, region=region)
+            cached = _attach_peak_analysis_metadata(cached, region=region)
+            return _attach_regime_layer(cached, market="WEM" if region == "WEM" else "NEM", region=region)
 
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -3552,6 +5508,7 @@ def get_peak_analysis(
                     "network_fee": fee, "data": [], "summary": {}
                 }
                 response = _attach_peak_analysis_metadata(response, region=region)
+                response = _attach_regime_layer(response, market="WEM" if region == "WEM" else "NEM", region=region)
                 return _store_response_cache(
                     PEAK_ANALYSIS_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -3630,6 +5587,7 @@ def get_peak_analysis(
                 "summary": summary
             }
             response = _attach_peak_analysis_metadata(response, region=region)
+            response = _attach_regime_layer(response, market="WEM" if region == "WEM" else "NEM", region=region)
             return _store_response_cache(
                 PEAK_ANALYSIS_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -3732,7 +5690,8 @@ def get_hourly_price_profile(
         }
         cached = _fetch_response_cache(HOURLY_PROFILE_RESPONSE_CACHE_SCOPE, cache_payload)
         if cached is not None:
-            return _attach_hourly_price_profile_metadata(cached, region=region)
+            cached = _attach_hourly_price_profile_metadata(cached, region=region)
+            return _attach_regime_layer(cached, market="WEM" if region == "WEM" else "NEM", region=region)
 
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -3791,6 +5750,7 @@ def get_hourly_price_profile(
 
             response = {"region": region, "year": year, "month": month, "hourly": result}
             response = _attach_hourly_price_profile_metadata(response, region=region)
+            response = _attach_regime_layer(response, market="WEM" if region == "WEM" else "NEM", region=region)
             return _store_response_cache(
                 HOURLY_PROFILE_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -4198,12 +6158,14 @@ def get_fcas_analysis(
     }
     cached = _fetch_response_cache(FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE, cache_payload)
     if cached is not None:
-        return _attach_fcas_analysis_metadata(cached, region=region)
+        cached = _attach_fcas_analysis_metadata(cached, region=region)
+        return _attach_regime_layer(cached, market="WEM" if region == "WEM" else "NEM", region=region)
 
     if region == "WEM":
         try:
             response = _get_wem_ess_analysis(year, aggregation, capacity_mw, month, quarter, day_type)
             response = _attach_fcas_analysis_metadata(response, region=region)
+            response = _attach_regime_layer(response, market="WEM", region=region)
             return _store_response_cache(
                 FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -4236,6 +6198,7 @@ def get_fcas_analysis(
                     "data": [], "summary": {}, "hourly": [], "service_breakdown": []
                 }
                 response = _attach_fcas_analysis_metadata(response, region=region)
+                response = _attach_regime_layer(response, market="NEM", region=region)
                 return _store_response_cache(
                     FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -4266,6 +6229,7 @@ def get_fcas_analysis(
                     "data": [], "summary": {}, "hourly": [], "service_breakdown": []
                 }
                 response = _attach_fcas_analysis_metadata(response, region=region)
+                response = _attach_regime_layer(response, market="NEM", region=region)
                 return _store_response_cache(
                     FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                     cache_payload,
@@ -4420,6 +6384,7 @@ def get_fcas_analysis(
                 "data": ts_data,
             }
             response = _attach_fcas_analysis_metadata(response, region=region)
+            response = _attach_regime_layer(response, market="NEM", region=region)
             return _store_response_cache(
                 FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
                 cache_payload,
@@ -4683,6 +6648,10 @@ def _build_investment_response(
     arbitrage_baseline_source: str,
     baseline_fcas: float,
     fcas_baseline_source: str,
+    p3_decision: dict | None,
+    decision_adjusted_result=None,
+    decision_adjusted_scenarios=None,
+    decision_adjusted_monte_carlo=None,
     backtest_summary: dict,
 ) -> dict:
     base_metrics = base_result.metrics.model_dump()
@@ -4712,10 +6681,17 @@ def _build_investment_response(
         assumptions.append("WEM auto FCAS falls back to manual input because only slim preview data is available.")
     if backtest_summary.get("valid_years", 0) == 0:
         assumptions.append("No standardized BESS backtest coverage was available for the requested years.")
+    if p3_decision:
+        assumptions.append(
+            f"P3 decision strategy: {(p3_decision.get('decision_summary') or {}).get('recommended_strategy', 'unavailable')}."
+        )
 
     observed_net_arbitrage = backtest_summary.get("avg_annual_arbitrage_net", baseline_arbitrage)
     backtest_drivers = backtest_summary.get("backtest_reference", {}).get("drivers", [])
     primary_driver = backtest_drivers[0] if backtest_drivers else {}
+    decision_bundle = (p3_decision or {}).get("strategy_bundle") or {}
+    forecast_strategy = decision_bundle.get("forecast_driven_dispatch") or {}
+    stochastic_strategy = decision_bundle.get("stochastic_dispatch") or {}
 
     response = {
         "region": params.region,
@@ -4752,7 +6728,31 @@ def _build_investment_response(
         "arbitrage_baseline_source": arbitrage_baseline_source,
         "effective_degradation_rate": _effective_degradation_rate(params),
         "fcas_baseline_source": fcas_baseline_source,
+        "p3_decision": p3_decision,
+        "decision_adjusted_revenue": {
+            "recommended_strategy": ((p3_decision or {}).get("decision_summary") or {}).get("recommended_strategy"),
+            "net_revenue": forecast_strategy.get("net_revenue"),
+            "scenario_spread": stochastic_strategy.get("scenario_spread"),
+            "timing_alpha": ((p3_decision or {}).get("revenue_attribution") or {}).get("timing_alpha"),
+            "regime_capture_alpha": ((p3_decision or {}).get("revenue_attribution") or {}).get("regime_capture_alpha"),
+            "fcas_stack_proxy": ((p3_decision or {}).get("revenue_attribution") or {}).get("fcas_stack_proxy"),
+        },
+        "decision_adjusted_metrics": _build_decision_adjusted_metrics(
+            base_metrics,
+            p3_decision,
+            baseline_arbitrage,
+            baseline_fcas,
+            decision_adjusted_result=decision_adjusted_result,
+        ),
     }
+    if decision_adjusted_scenarios:
+        response["decision_adjusted_scenarios"] = [
+            scenario.model_dump() for scenario in decision_adjusted_scenarios
+        ]
+    if decision_adjusted_monte_carlo is not None:
+        response["decision_adjusted_monte_carlo"] = decision_adjusted_monte_carlo.model_dump()
+    if decision_adjusted_result is not None:
+        response["decision_adjusted_cash_flows"] = [row.model_dump() for row in decision_adjusted_result.cash_flows]
     return _attach_investment_metadata(response, region=params.region)
 
 
@@ -4865,6 +6865,36 @@ def get_bess_backtest_coverage(
         raise
     except Exception as exc:
         logger.error("BESS backtest coverage API error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post(
+    "/api/p3/bess/decision-layer",
+    summary="Run P3 BESS decision layer",
+    description="Combines standardized BESS backtest output with the P2 forecast layer to produce a dispatch decision bundle, scenario spread, degradation-aware revenue attribution, and preview-grade decision diagnostics.",
+    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
+    response_model=P3BessDecisionLayerPayload,
+)
+def run_p3_bess_decision_layer(params: P3BessDecisionParams, access_scope=None):
+    try:
+        if access_scope:
+            _assert_scope_allows_internal_query(access_scope, region=params.region, market=params.market)
+        backtest_payload = run_bess_backtest(params, access_scope=access_scope)
+        forecast_payload = get_p2_forecast_layer(
+            market=params.market,
+            region=params.region,
+            horizon=params.forecast_horizon,
+            as_of=params.as_of,
+        )
+        return _build_p3_bess_decision_payload(
+            params,
+            backtest_payload=backtest_payload,
+            forecast_payload=forecast_payload,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("P3 BESS decision layer error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post(
@@ -4982,6 +7012,23 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                     annual_cycles_history,
                 )
 
+            p3_decision = _build_investment_p3_decision(params)
+            decision_adjusted_scenarios = _build_decision_adjusted_scenarios(
+                params,
+                annual_cycles_history,
+                baseline_arbitrage,
+                baseline_fcas,
+                p3_decision,
+            )
+            decision_adjusted_result = decision_adjusted_scenarios[0] if decision_adjusted_scenarios else None
+            decision_adjusted_monte_carlo = _build_decision_adjusted_monte_carlo(
+                params,
+                annual_cycles_history,
+                baseline_arbitrage,
+                baseline_fcas,
+                p3_decision,
+            )
+
             response = _build_investment_response(
                 params=params,
                 base_result=base_result,
@@ -4991,6 +7038,10 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                 arbitrage_baseline_source=arbitrage_baseline_source,
                 baseline_fcas=baseline_fcas,
                 fcas_baseline_source=fcas_baseline_source,
+                p3_decision=p3_decision,
+                decision_adjusted_result=decision_adjusted_result,
+                decision_adjusted_scenarios=decision_adjusted_scenarios,
+                decision_adjusted_monte_carlo=decision_adjusted_monte_carlo,
                 backtest_summary=backtest_summary,
             )
             response = _analysis_cache_store(

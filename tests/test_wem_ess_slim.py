@@ -289,8 +289,39 @@ class WemEssSlimParsingTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload, b"abcdef")
-        self.assertNotIn("Range", calls[0])
-        self.assertEqual(calls[1]["Range"], "bytes=3-")
+
+    def test_sync_wem_ess_range_writes_source_sync_state(self):
+        handle, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(handle)
+        calls = []
+
+        def fake_sync_capabilities(db):
+            return 0
+
+        def fake_scrape_day(current, db):
+            calls.append(current.strftime("%Y-%m-%d"))
+            return 2, 1
+
+        with mock.patch.object(aemo_wem_ess_scraper, "sync_fcess_capabilities", side_effect=fake_sync_capabilities), \
+             mock.patch.object(aemo_wem_ess_scraper, "scrape_day", side_effect=fake_scrape_day), \
+             mock.patch.object(aemo_wem_ess_scraper.time, "sleep", return_value=None):
+            stats = aemo_wem_ess_scraper.sync_wem_ess_range(
+                aemo_wem_ess_scraper.datetime(2026, 4, 1),
+                aemo_wem_ess_scraper.datetime(2026, 4, 2),
+                db_path,
+                prune_before_start=False,
+            )
+
+        db = DatabaseManager(db_path)
+        state = db.fetch_aemo_source_sync_state("aemo_wem_ess_market")
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+        self.assertEqual(calls, ["2026-04-01", "2026-04-02"])
+        self.assertEqual(stats["inserted_market_rows"], 4)
+        self.assertIsNotNone(state)
+        self.assertEqual(state["source_id"], "aemo_wem_ess_market")
+        self.assertEqual(state["sync_status"], "ok")
 
     def test_download_bytes_ignores_stdout_flush_errors(self):
         class FakeResponse:

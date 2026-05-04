@@ -682,3 +682,75 @@ P0 spec 确认后，下一步 implementation plan 建议进一步拆成几个子
 
 这样既能保持统一路线，又能控制单次实施范围。
 
+---
+
+## 16. 首轮实施状态
+
+截至 2026-04-30，本 spec 对应的第一轮最小实现已落地以下能力：
+
+- canonical dataset family registry 第一版
+- `build_series_contract()` 第一版
+- AEMO-first canonical dataset builders 第二版：
+  - `load actual`
+  - `load forecast`
+  - `wind forecast`
+  - `wind actual`
+  - `solar forecast`
+  - `solar actual`
+  - `rooftop_pv`
+  - `outage`
+  - `interconnector_flow`
+  - `reserve_requirement`
+  - `reserve_shortfall`
+  - `weather`
+  - `unit_availability`
+  - `constraint`
+  - `settlement`
+- `/api/p0/datasets/*` 第二版 serving contract：
+  - `load-actual`
+  - `load-forecast`
+  - `wind-forecast`
+  - `wind-actual`
+  - `solar-forecast`
+  - `solar-actual`
+  - `rooftop-pv`
+  - `outage`
+  - `interconnector-flow`
+  - `reserve-requirement`
+  - `reserve-shortfall`
+  - `weather`
+  - `unit-availability`
+  - `settlement`
+  - `constraint`
+- source-backed 第三版 serving 状态：
+  - `load_actual` 已接 `operational_demand_actual_hh`
+  - `load_forecast` 已接 `operational_demand_forecast_hh`
+  - `rooftop_pv` 已接 `rooftop_pv_actual_measurement`
+  - `wind_forecast` 已接 `predispatch_region_solution.ss_wind_uigf`
+  - `solar_forecast` 已接 `predispatch_region_solution.ss_solar_uigf`
+  - `wind_actual` 已接 `dispatch_region_summary.ss_wind_clearedmw`（actual proxy）
+  - `solar_actual` 已接 `dispatch_region_summary.ss_solar_clearedmw`（actual proxy）
+  - `interconnector_flow` 已接 `dispatch_interconnector_flow`
+  - `settlement` 已接 `trading_price_*`
+  - `constraint` 已接 `wem_ess_constraint_summary`
+  - `reserve_requirement` 已接 `wem_ess_market_price`
+  - `reserve_shortfall` 已接 `wem_reserve_shortfall_snapshot`
+  - `weather` 已接 `bom_weather_observation`
+  - `unit_availability` 已接 `pdpasa_duid_availability + du_detail_summary`
+  - `outage` 已接 `grid_event_raw`
+  - 无落地原始表的数据族显式返回 `source_unavailable`
+- frontend metadata reader 第一版：
+  - `grade`
+  - `dataset_family`
+  - `observation_kind`
+  - `lineage`
+  - `coverage`
+  - `freshness`
+  - dataset family label formatting
+
+这一状态代表 P0 主骨架已经开始形成，但仍不代表：
+
+- 全部 fundamentals 都达到 production-grade source governance（weather 仍有 fallback provider 语义，wind/solar actual 仍是 proxy，reserve 仍以 WEM 为主）
+- settlement 已进入完整收益兑现链路
+- 非 AEMO adapter 已实现
+- P1/P2/P3 已消费完整 P0 输出

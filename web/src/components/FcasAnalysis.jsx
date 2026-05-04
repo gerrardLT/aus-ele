@@ -18,6 +18,7 @@ import { fetchJson } from '../lib/apiClient';
 import { buildPeriodOverlayMap, getEventText, metaForState } from '../lib/eventOverlays';
 import DataQualityBadge from './DataQualityBadge';
 import { getDataGradeCaveat, getPreviewModeLabel } from '../lib/resultMetadata';
+import RegimeCompactInline from './RegimeCompactInline';
 
 const AGGREGATIONS = ['daily', 'weekly', 'monthly'];
 
@@ -70,6 +71,7 @@ export default function FcasAnalysis({
   eventOverlay,
   apiBase,
   t,
+  regimeCompactCopy,
 }) {
   const eventText = getEventText(lang);
   const [aggregation, setAggregation] = useState('monthly');
@@ -239,6 +241,10 @@ export default function FcasAnalysis({
         </div>
       ) : data?.data?.length > 0 ? (
         <>
+          <div className="mb-6">
+            <RegimeCompactInline compact={data.regime_compact} copy={regimeCompactCopy} />
+          </div>
+
           {data.summary && (
             <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-10">
               <SummaryCard label={t.fcasTotalAvg} value={fmt(data.summary.total_avg_fcas_price)} sub="/MWh" />

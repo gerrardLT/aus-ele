@@ -55,9 +55,6 @@ def get_window_sizes(region: str) -> dict:
     }
 
 
-def get_all_fees() -> list:
-    """Return all default fees as a list of dicts for API response."""
-    return [
-        {"region": region, "fee": fee}
-        for region, fee in DEFAULT_NETWORK_FEES.items()
-    ]
+def get_all_fees() -> dict[str, float]:
+    """Return all default fees as a region->fee mapping for API response."""
+    return dict(DEFAULT_NETWORK_FEES)

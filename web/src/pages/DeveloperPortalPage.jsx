@@ -28,6 +28,13 @@ function formatValue(value) {
   return value ?? '-';
 }
 
+function formatDecimal(value, digits = 2) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '-';
+  }
+  return value.toFixed(digits);
+}
+
 function MetricCard({ label, value }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -41,10 +48,65 @@ function MetricCard({ label, value }) {
   );
 }
 
+function buildContractPreview() {
+  return {
+    regime_compact: {
+      availability_status: 'available',
+      primary_regime: {
+        regime: 'scarcity',
+        score: 81.4,
+        confidence: 0.78,
+      },
+      active_regimes: [
+        { regime: 'scarcity', score: 81.4, confidence: 0.78 },
+        { regime: 'reserve_stress', score: 63.2, confidence: 0.61 },
+      ],
+      regime_score_map: {
+        scarcity: 81.4,
+        reserve_stress: 63.2,
+        oversupply: 8.4,
+      },
+      top_drivers: [
+        { driver_type: 'load_tightness', headline: 'Tight reserve margin is lifting scarcity risk.' },
+      ],
+      transition_hints: [
+        'Reserve stress can escalate into broader scarcity if shortfalls persist.',
+      ],
+      warnings: [],
+    },
+    regime_layer: {
+      primary_regime: {
+        regime: 'scarcity',
+        score: 81.4,
+        confidence: 0.78,
+      },
+      active_regimes: [
+        { regime: 'scarcity', score: 81.4, confidence: 0.78 },
+        { regime: 'reserve_stress', score: 63.2, confidence: 0.61 },
+      ],
+      drivers: [
+        {
+          driver_type: 'load_tightness',
+          signal: 21.1,
+          headline: 'Tight reserve margin is lifting scarcity risk.',
+        },
+      ],
+      transition_hints: [
+        'Reserve stress can escalate into broader scarcity if shortfalls persist.',
+      ],
+      metadata: {
+        dataset_family: 'regime_layer',
+        methodology_version: 'p1_regime_layer_v1',
+      },
+    },
+  };
+}
+
 export default function DeveloperPortalPage() {
   const [lang, setLang] = useState(() => readPreferredLang());
   const [apiKey, setApiKey] = useState(() => readStoredApiKey());
   const [payload, setPayload] = useState(null);
+  const [governance, setGovernance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const copy = useMemo(
@@ -56,6 +118,11 @@ export default function DeveloperPortalPage() {
   const quota = payload?.data?.quota || {};
   const billing = payload?.data?.billing || {};
   const ledger = payload?.data?.ledger || {};
+  const governanceSummary = governance?.summary || {};
+  const governanceSourceRows = governance?.source_rows || [];
+  const governanceFreshnessSources = governance?.freshness?.sources || [];
+  const governanceMarkets = governance?.quality?.markets || {};
+  const governanceDriftModels = governance?.drift?.models || [];
   const portalStatusValue = error
     ? copy.error
     : payload
@@ -67,7 +134,14 @@ export default function DeveloperPortalPage() {
     { label: copy.readoutQuota, value: formatValue(quota.remaining_units) },
     { label: copy.readoutTrace, value: formatValue(payload?.meta?.trace_id) },
   ];
+  const governanceMetrics = [
+    { label: copy.governanceSources, value: formatValue(governanceSummary.source_count) },
+    { label: copy.governanceDelayedSources, value: formatValue(governanceSummary.delayed_source_count) },
+    { label: copy.governanceMarkets, value: formatValue(governanceSummary.market_count) },
+    { label: copy.governanceSnapshots, value: formatValue(governanceSummary.snapshot_count) },
+  ];
   const navCopy = translations[lang]?.nav || translations.zh.nav;
+  const contractPreview = useMemo(() => buildContractPreview(), []);
   const workspaceLinks = [
     { key: 'home', href: '/', label: navCopy.brand },
     { key: 'fingrid', href: '/fingrid', label: navCopy.fingrid },
@@ -115,7 +189,18 @@ export default function DeveloperPortalPage() {
     }
   };
 
+  const loadGovernance = async () => {
+    try {
+      const data = await fetchJson(`${API_BASE}/model-governance/summary`);
+      setGovernance(data);
+    } catch (err) {
+      console.error(err);
+      setGovernance(null);
+    }
+  };
+
   useEffect(() => {
+    loadGovernance();
     if (apiKey.trim()) {
       loadPortal();
     }
@@ -296,6 +381,181 @@ export default function DeveloperPortalPage() {
               ) : (
                 <div className="text-sm text-[var(--color-muted)]">{copy.noLedger}</div>
               )}
+            </div>
+          </section>
+        </PageSection>
+
+        <PageSection
+          id="stage-contracts"
+          title={copy.stageContracts}
+          description={copy.stageContractsDesc}
+        >
+          <section className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                {copy.contractCompact}
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--color-muted)]">
+                {copy.contractCompactDesc}
+              </p>
+              <pre className="mt-4 overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs leading-6 text-[var(--color-text)]">
+{JSON.stringify(contractPreview.regime_compact, null, 2)}
+              </pre>
+            </div>
+
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                {copy.contractFull}
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--color-muted)]">
+                {copy.contractFullDesc}
+              </p>
+              <pre className="mt-4 overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs leading-6 text-[var(--color-text)]">
+{JSON.stringify(contractPreview.regime_layer, null, 2)}
+              </pre>
+            </div>
+          </section>
+        </PageSection>
+
+        <PageSection
+          id="stage-governance"
+          title={copy.stageGovernance}
+          description={copy.stageGovernanceDesc}
+        >
+          <section className="grid gap-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {governanceMetrics.map((item) => (
+                <MetricCard key={item.label} label={item.label} value={item.value} />
+              ))}
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                  {copy.governanceFreshness}
+                </div>
+                <div className="mt-4 grid gap-3">
+                  {governanceFreshnessSources.map((item) => (
+                    <div
+                      key={item.source_key}
+                      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-[var(--color-text)]">{item.source_key}</span>
+                        <span className="text-xs uppercase tracking-[0.08em] text-[var(--color-muted)]">
+                          {item.status || '-'}
+                        </span>
+                      </div>
+                      <div className="mt-2 text-xs leading-6 text-[var(--color-muted)]">
+                        {item.last_updated_at || '-'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                  {copy.governanceQuality}
+                </div>
+                <div className="mt-4 grid gap-3">
+                  {Object.entries(governanceMarkets).map(([marketKey, marketValue]) => (
+                    <div
+                      key={marketKey}
+                      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-[var(--color-text)]">{marketKey}</span>
+                        <span className="text-xs text-[var(--color-muted)]">
+                          {copy.governanceSnapshots}: {formatValue(marketValue?.dataset_count)}
+                        </span>
+                      </div>
+                      <div className="mt-2 grid gap-1 text-xs leading-6 text-[var(--color-muted)]">
+                        <div>{copy.governanceQualityScore}: {formatDecimal(marketValue?.average_quality_score, 3)}</div>
+                        <div>{copy.governanceIssues}: {formatValue(marketValue?.issue_count)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                  {copy.governanceDrift}
+                </div>
+                <div className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm">
+                  <div className="text-[var(--color-text)]">{governance?.drift?.status || '-'}</div>
+                  <div className="mt-2 text-xs leading-6 text-[var(--color-muted)]">
+                    {governance?.drift?.reason || '-'}
+                  </div>
+                  <div className="mt-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                      {copy.governanceModelCoverage}
+                    </div>
+                    <div className="mt-2 grid gap-2">
+                      {governanceDriftModels.map((item) => (
+                        <div key={item.model_key} className="flex items-center justify-between gap-3 text-xs">
+                          <span className="text-[var(--color-text)]">{item.model_key}</span>
+                          <span className="text-[var(--color-muted)]">{item.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                {copy.governanceSourceCatalog}
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                {governanceSourceRows.length ? (
+                  <table className="min-w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-[var(--color-border)] text-[var(--color-muted)]">
+                        <th className="px-3 py-2">{copy.governanceSourceId}</th>
+                        <th className="px-3 py-2">{copy.governanceMarket}</th>
+                        <th className="px-3 py-2">{copy.governanceDatasetFamily}</th>
+                        <th className="px-3 py-2">{copy.governanceStatus}</th>
+                        <th className="px-3 py-2">{copy.governanceQualityScore}</th>
+                        <th className="px-3 py-2">{copy.governanceGrade}</th>
+                        <th className="px-3 py-2">{copy.governanceUpdatedAt}</th>
+                        <th className="px-3 py-2">{copy.governanceIssues}</th>
+                        <th className="px-3 py-2">{copy.governanceLineage}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {governanceSourceRows.map((item) => (
+                        <tr key={item.source_id} className="border-b border-[var(--color-border)] align-top">
+                          <td className="px-3 py-2 font-medium text-[var(--color-text)]">{item.source_id}</td>
+                          <td className="px-3 py-2">{item.market || '-'}</td>
+                          <td className="px-3 py-2">{item.dataset_family || '-'}</td>
+                          <td className="px-3 py-2">{item.status || '-'}</td>
+                          <td className="px-3 py-2">{formatDecimal(item.quality_score, 3)}</td>
+                          <td className="px-3 py-2">{item.data_grade || '-'}</td>
+                          <td className="px-3 py-2">{item.last_updated_at || '-'}</td>
+                          <td className="px-3 py-2">{formatValue(item.issue_count)}</td>
+                          <td className="px-3 py-2 text-xs leading-6 text-[var(--color-muted)]">
+                            {item.lineage?.schema_mapping || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="text-sm text-[var(--color-muted)]">{copy.governanceEmptySourceCatalog}</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em]">
+                {copy.governanceDisclaimer}
+              </div>
+              <div className="mt-2">
+                {governance?.disclaimer?.usage_scope || '-'}
+              </div>
             </div>
           </section>
         </PageSection>

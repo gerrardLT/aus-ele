@@ -16,6 +16,8 @@ import { fetchJson } from '../lib/apiClient';
 import { buildPeriodOverlayMap, getEventText, metaForState } from '../lib/eventOverlays';
 import DataQualityBadge from './DataQualityBadge';
 import { getDataGradeCaveat, getPreviewModeLabel } from '../lib/resultMetadata';
+import RegimeCompactInline from './RegimeCompactInline';
+import { pickFirstAvailableRegimeCompact } from '../lib/regimeCompact';
 
 const FCAS_KEYS = [
   { key: 'raise1sec_rrp', copyKey: 'raise1sec', color: '#1d4ed8' },
@@ -78,6 +80,7 @@ export default function RevenueStacking({
   eventOverlay,
   apiBase,
   t,
+  regimeCompactCopy,
 }) {
   const eventText = getEventText(lang);
   const [arbitrageData, setArbitrageData] = useState(null);
@@ -207,6 +210,11 @@ export default function RevenueStacking({
     };
   }, [chartData]);
 
+  const effectiveRegimeCompact = pickFirstAvailableRegimeCompact(
+    fcasData?.regime_compact,
+    arbitrageData?.regime_compact,
+  );
+
   const renderLegend = () => (
     <div className="flex flex-wrap gap-4 mb-6 text-xs font-mono">
       <span className="flex items-center gap-1.5">
@@ -276,6 +284,10 @@ export default function RevenueStacking({
         </div>
       ) : chartData.length > 0 ? (
         <>
+          <div className="mb-6">
+            <RegimeCompactInline compact={effectiveRegimeCompact} copy={regimeCompactCopy} />
+          </div>
+
           {totalSummary && (
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
               <SummaryCard label={t.stackSummaryPeriods} value={totalSummary.periods} />
