@@ -107,8 +107,35 @@ test('FinlandPage uses board overview and readiness helpers with workspace shell
   assert.match(source, /FinlandBoardHeader/);
   assert.match(source, /FinlandOverviewCards/);
   assert.match(source, /FinlandWorkbenchTabs/);
+  assert.match(source, /FinlandDataTable/);
+  assert.match(source, /FinlandLinkedChart/);
+  assert.match(source, /FinlandFieldDetailPanel/);
   assert.match(source, /Promise\.all\(\s*\[/);
   assert.match(source, /headerMetrics=/);
+});
+
+test('FinlandPage tracks selected fields and wires them into the linked analysis shell', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+
+  assert.match(source, /const \[selectedFields,\s*setSelectedFields\] = useState\(\[\]\)/);
+  assert.match(source, /<FinlandDataTable[\s\S]*onSelectField=\{setSelectedFields\}/);
+  assert.match(source, /<FinlandLinkedChart[\s\S]*selectedFields=\{selectedFields\}/);
+  assert.match(source, /<FinlandFieldDetailPanel[\s\S]*selectedFields=\{selectedFields\}/);
+});
+
+test('Finland workbench components expose selection and linked-shell contracts', () => {
+  const tableSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandDataTable.jsx'), 'utf8');
+  const chartSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandLinkedChart.jsx'), 'utf8');
+  const detailSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandFieldDetailPanel.jsx'), 'utf8');
+
+  assert.match(tableSource, /onSelectField/);
+  assert.match(tableSource, /selectedFields/);
+  assert.match(tableSource, /sticky top-0/);
+  assert.match(tableSource, /sticky left-0/);
+  assert.match(chartSource, /selectedFields/);
+  assert.match(chartSource, /selectedFields\.length/);
+  assert.match(detailSource, /selectedFields/);
+  assert.match(detailSource, /selectedFields\.map/);
 });
 
 test('Finland board components expose overview and workbench shell structure with page-owned header metrics', () => {

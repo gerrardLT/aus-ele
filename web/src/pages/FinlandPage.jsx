@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import PageWorkspaceNav from '../components/PageWorkspaceNav';
 import FinlandBoardHeader from '../components/finland/FinlandBoardHeader';
+import FinlandDataTable from '../components/finland/FinlandDataTable';
+import FinlandFieldDetailPanel from '../components/finland/FinlandFieldDetailPanel';
+import FinlandLinkedChart from '../components/finland/FinlandLinkedChart';
 import FinlandOverviewCards from '../components/finland/FinlandOverviewCards';
 import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
 import { fetchJson } from '../lib/apiClient';
@@ -89,11 +92,43 @@ function buildHeaderMetrics(copy, overviewPayload, readinessPayload) {
   };
 }
 
+function summarizeValue(value, fallback) {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  if (typeof value === 'object') {
+    return Array.isArray(value) ? `${value.length} items` : `${Object.keys(value).length} keys`;
+  }
+  return String(value);
+}
+
+function buildFieldRows(copy, overviewPayload, readinessPayload) {
+  const fallbackValue = copy.notAvailable;
+  const rows = [];
+  const pushEntries = (sourceLabel, payload) => {
+    Object.entries(payload || {}).forEach(([key, value]) => {
+      rows.push({
+        id: `${sourceLabel}-${key}`,
+        label: key,
+        source: sourceLabel,
+        readiness: value === null || value === undefined ? copy.pending : 'ready',
+        value: summarizeValue(value, fallbackValue),
+      });
+    });
+  };
+
+  pushEntries('overview', overviewPayload);
+  pushEntries('readiness', readinessPayload);
+
+  return rows.slice(0, 16);
+}
+
 export default function FinlandPage() {
   const [lang, setLang] = useState(() => readPreferredLang());
   const [overviewPayload, setOverviewPayload] = useState(null);
   const [readinessPayload, setReadinessPayload] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const [selectedFields, setSelectedFields] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const copy = useMemo(
@@ -107,6 +142,10 @@ export default function FinlandPage() {
   );
   const headerMetrics = useMemo(
     () => buildHeaderMetrics(copy, overviewPayload, readinessPayload),
+    [copy, overviewPayload, readinessPayload],
+  );
+  const fieldRows = useMemo(
+    () => buildFieldRows(copy, overviewPayload, readinessPayload),
     [copy, overviewPayload, readinessPayload],
   );
   const tabs = useMemo(
@@ -229,6 +268,33 @@ export default function FinlandPage() {
           onTabChange={setActiveTab}
           panelCopy={copy.workbenchPanel}
         />
+
+        {activeTab === 'table' ? (
+          <FinlandDataTable
+            fields={fieldRows}
+            selectedFields={selectedFields}
+            onSelectField={setSelectedFields}
+            copy={{
+              eyebrow: copy.tabs.table.label,
+              title: copy.tabs.table.panelTitle,
+              description: copy.tabs.table.panelDescription,
+            }}
+          />
+        ) : null}
+
+        {activeTab === 'analysis' ? (
+          <section className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
+            <FinlandLinkedChart
+              selectedFields={selectedFields}
+              copy={{
+                eyebrow: copy.tabs.analysis.label,
+                title: copy.tabs.analysis.panelTitle,
+                populatedDescription: copy.tabs.analysis.panelDescription,
+              }}
+            />
+            <FinlandFieldDetailPanel selectedFields={selectedFields} />
+          </section>
+        ) : null}
       </div>
     </main>
   );
