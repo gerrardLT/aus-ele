@@ -124,6 +124,28 @@ def _join_rows_for_view(view_config: dict, db, start: str | None, end: str | Non
     return [row_map[key] for key in sorted(row_map)]
 
 
+def _aggregate_rows_by_day(rows: list[dict], view_config: dict) -> list[dict]:
+    day_map: dict[str, dict] = {}
+    numeric_fields = [field_key for field_key in view_config["columns"] if field_key not in {"date", "timestamp_helsinki"}]
+    for row in rows:
+        date_key = row["date"]
+        bucket = day_map.setdefault(date_key, {"date": date_key, "_samples": {field_key: [] for field_key in numeric_fields}})
+        for field_key in numeric_fields:
+            value = row.get(field_key)
+            if value is not None:
+                bucket["_samples"][field_key].append(float(value))
+
+    aggregated_rows = []
+    for date_key in sorted(day_map):
+        bucket = day_map[date_key]
+        aggregated = {"date": date_key}
+        for field_key in numeric_fields:
+            samples = bucket["_samples"][field_key]
+            aggregated[field_key] = round(mean(samples), 4) if samples else None
+        aggregated_rows.append(aggregated)
+    return aggregated_rows
+
+
 def _points_for_series(db, field_key: str, start: str | None, end: str | None, granularity: str) -> list[dict]:
     rows = _fetch_series(db, field_key, start, end, granularity)
     return [
@@ -159,13 +181,18 @@ def build_finland_board_overview_payload(db, start: str | None, end: str | None)
 
 def build_finland_board_table_payload(db, view: str, start: str | None, end: str | None, tz: str) -> dict:
     view_config = get_finland_board_view(view)
+    if view in {"summary_stats", "field_dictionary"}:
+        raise ValueError(f"View '{view}' is not a tabular board table view")
+    rows = _join_rows_for_view(view_config, db, start, end, tz)
+    if view_config["granularity"] == "day":
+        rows = _aggregate_rows_by_day(rows, view_config)
     return {
         "view": view_config["view_key"],
         "title": view_config["title"],
         "granularity": view_config["granularity"],
         "timezone": tz,
         "columns": [_column_payload(field_key) for field_key in view_config["columns"]],
-        "rows": _join_rows_for_view(view_config, db, start, end, tz),
+        "rows": rows,
     }
 
 
@@ -180,7 +207,9 @@ def build_finland_board_chart_payload(
     if mode not in VALID_CHART_MODES:
         raise ValueError(f"Unsupported chart mode: {mode}")
     normalized_granularity = _normalize_chart_granularity(granularity)
-    if mode == "spread" and len(fields) == 2:
+    if mode == "spread":
+        if len(fields) != 2:
+            raise ValueError("Spread mode requires exactly 2 fields")
         left_rows = {row["timestamp_utc"]: row for row in _fetch_series(db, fields[0], start, end, normalized_granularity)}
         right_rows = {row["timestamp_utc"]: row for row in _fetch_series(db, fields[1], start, end, normalized_granularity)}
         points = []
