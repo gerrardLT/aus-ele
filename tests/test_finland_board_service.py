@@ -4,77 +4,141 @@ from tests.support import ensure_repo_import_paths
 
 ensure_repo_import_paths()
 
-from finland_board_contracts import (
-    FINLAND_BOARD_FIELDS,
-    FINLAND_BOARD_VIEWS,
-    get_finland_board_field,
-    get_finland_board_view,
+from finland_board_service import (
+    build_finland_board_chart_payload,
+    build_finland_board_field_catalog_rows,
+    build_finland_board_overview_payload,
+    build_finland_board_readiness_payload,
+    build_finland_board_table_payload,
 )
 
 
-class FinlandBoardContractTests(unittest.TestCase):
-    """Contract invariants for the Finland board field and view registries."""
+def _point(timestamp_utc, timestamp_local, value):
+    return {
+        "timestamp_utc": timestamp_utc,
+        "timestamp_local": timestamp_local,
+        "value": value,
+    }
 
-    def test_capacity_hourly_view_declares_expected_columns_including_spot(self):
-        view = get_finland_board_view("capacity_hourly")
 
-        self.assertEqual(view["view_key"], "capacity_hourly")
-        self.assertEqual(view["granularity"], "1h")
-        self.assertEqual(
-            view["columns"],
-            [
-                "timestamp_local",
-                "fcr_n_capacity_price",
-                "fcr_d_up_capacity_price",
-                "fcr_d_down_capacity_price",
-                "day_ahead_spot_price",
+class StubDatabase:
+    def __init__(self):
+        self.series_by_field = {
+            "fcr_n_price_eur_mw": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 10.0),
+                _point("2026-04-01T01:00:00Z", "2026-04-01T04:00:00+03:00", 14.0),
             ],
+            "afrr_act_up_eur_mwh": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 82.0),
+                _point("2026-04-01T01:00:00Z", "2026-04-01T04:00:00+03:00", 86.0),
+            ],
+            "mfrr_act_up_eur_mwh": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 94.0),
+                _point("2026-04-01T01:00:00Z", "2026-04-01T04:00:00+03:00", 98.0),
+            ],
+            "imbalance_price_eur_mwh": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 105.0),
+                _point("2026-04-01T01:00:00Z", "2026-04-01T04:00:00+03:00", 112.0),
+            ],
+            "spot_price_fi_eur_mwh": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 75.0),
+                _point("2026-04-01T01:00:00Z", "2026-04-01T04:00:00+03:00", 80.0),
+            ],
+            "fcr_d_up_price_eur_mw": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 11.0),
+            ],
+            "fcr_d_down_price_eur_mw": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 8.0),
+            ],
+            "afrr_cap_up_eur_mw": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 13.0),
+            ],
+            "afrr_cap_down_eur_mw": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 9.0),
+            ],
+            "mfrr_cap_up_eur_mw": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 12.0),
+            ],
+            "mfrr_cap_down_eur_mw": [
+                _point("2026-04-01T00:00:00Z", "2026-04-01T03:00:00+03:00", 7.0),
+            ],
+        }
+
+    def fetch_finland_board_series(self, field_key, start=None, end=None, granularity=None):
+        return list(self.series_by_field.get(field_key, []))
+
+
+class FinlandBoardServiceTests(unittest.TestCase):
+    def test_overview_returns_six_cards(self):
+        payload = build_finland_board_overview_payload(
+            StubDatabase(),
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
         )
 
-    def test_spot_field_is_marked_as_external_join(self):
-        field_def = get_finland_board_field("day_ahead_spot_price")
+        self.assertEqual(len(payload["cards"]), 6)
 
-        self.assertEqual(field_def["field_key"], "day_ahead_spot_price")
-        self.assertEqual(field_def["source_type"], "external_join")
-        self.assertEqual(field_def["granularity"], "1h")
+    def test_capacity_table_exposes_spot_join_column(self):
+        payload = build_finland_board_table_payload(
+            StubDatabase(),
+            view="capacity_hourly",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            tz="Europe/Helsinki",
+        )
 
-    def test_every_non_empty_view_column_exists_in_field_registry(self):
-        for view_key in FINLAND_BOARD_VIEWS:
-            view = get_finland_board_view(view_key)
-            for column in view["columns"]:
-                if column:
-                    self.assertIn(column, FINLAND_BOARD_FIELDS, msg=f"{view_key}:{column}")
+        spot_column = next(column for column in payload["columns"] if column["field_key"] == "spot_price_fi_eur_mwh")
+        self.assertEqual(spot_column["source_type"], "external_join")
+        self.assertEqual(payload["rows"][0]["spot_price_fi_eur_mwh"], 75.0)
 
-    def test_field_registry_keys_match_embedded_field_key_values(self):
-        for field_key, field_def in FINLAND_BOARD_FIELDS.items():
-            self.assertEqual(field_def["field_key"], field_key)
+    def test_spread_chart_returns_difference_series_key(self):
+        payload = build_finland_board_chart_payload(
+            StubDatabase(),
+            fields=["imbalance_price_eur_mwh", "spot_price_fi_eur_mwh"],
+            mode="spread",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-02T00:00:00Z",
+            granularity="hour",
+        )
 
-    def test_view_registry_keys_match_embedded_view_key_values(self):
-        for view_key, view_def in FINLAND_BOARD_VIEWS.items():
-            self.assertEqual(view_def["view_key"], view_key)
+        self.assertEqual(payload["mode"], "spread")
+        self.assertEqual(
+            payload["series"][0]["field_key"],
+            "imbalance_price_eur_mwh-minus-spot_price_fi_eur_mwh",
+        )
+        self.assertEqual(payload["series"][0]["points"][0]["value"], 30.0)
 
-    def test_unknown_field_raises_key_error(self):
-        with self.assertRaises(KeyError):
-            get_finland_board_field("unknown_field")
+    def test_field_catalog_rows_are_registry_backed(self):
+        rows = build_finland_board_field_catalog_rows()
 
-    def test_unknown_view_raises_key_error(self):
-        with self.assertRaises(KeyError):
-            get_finland_board_view("unknown_view")
+        spot_row = next(row for row in rows if row["field_key"] == "spot_price_fi_eur_mwh")
+        self.assertEqual(spot_row["source_type"], "external_join")
+        self.assertEqual(spot_row["source_name"], "Nord Pool")
 
-    def test_returned_field_definition_is_safe_from_caller_mutation(self):
-        first = get_finland_board_field("day_ahead_spot_price")
-        first["label"] = "mutated"
+    def test_readiness_payload_reuses_market_model_sources(self):
+        payload = build_finland_board_readiness_payload(
+            StubDatabase(),
+            {
+                "summary": {
+                    "live_source_count": 2,
+                    "configured_external_source_count": 1,
+                },
+                "sources": [
+                    {"source_key": "fingrid", "status": "live"},
+                    {
+                        "source_key": "nord_pool",
+                        "status": "configured",
+                        "integration": {"readiness": "configured"},
+                    },
+                ],
+                "metadata": {"warnings": ["planned_external_sources"]},
+            },
+        )
 
-        second = get_finland_board_field("day_ahead_spot_price")
+        self.assertEqual(payload["summary"]["live_source_count"], 2)
+        self.assertEqual(payload["sources"][1]["integration"]["readiness"], "configured")
+        self.assertIn("planned_external_sources", payload["warnings"])
 
-        self.assertEqual(second["label"], "Day-ahead spot price")
 
-    def test_returned_view_definition_is_safe_from_caller_mutation(self):
-        first = get_finland_board_view("capacity_hourly")
-        first["columns"].append("unexpected_column")
-        first["label"] = "mutated"
-
-        second = get_finland_board_view("capacity_hourly")
-
-        self.assertEqual(second["label"], "Hourly capacity board")
-        self.assertNotIn("unexpected_column", second["columns"])
+if __name__ == "__main__":
+    unittest.main()
