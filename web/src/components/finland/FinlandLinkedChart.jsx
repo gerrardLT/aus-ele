@@ -1,26 +1,18 @@
-const DEFAULT_COPY = {
-  eyebrow: 'Linked Chart',
-  title: 'Selection-driven chart shell',
-  emptyTitle: 'No fields selected',
-  emptyDescription: 'Select one or more rows from the board table to stage a linked comparison view.',
-  populatedDescription: 'The chart endpoint wiring lands in a later task. This shell already reflects the active field selection.',
-};
-
-export default function FinlandLinkedChart({ selectedFields = [], copy = DEFAULT_COPY }) {
+export default function FinlandLinkedChart({ selectedFields = [], copy }) {
   const hasSelection = selectedFields.length > 0;
 
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
-        {copy.eyebrow || DEFAULT_COPY.eyebrow}
+        {copy.eyebrow}
       </div>
       <div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[linear-gradient(160deg,rgba(15,23,42,0.86),rgba(18,24,38,0.92))]">
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
           <h3 className="text-base font-semibold text-[var(--color-text)]">
-            {copy.title || DEFAULT_COPY.title}
+            {copy.title}
           </h3>
           <span className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-2 py-1 text-[11px] font-semibold text-cyan-200">
-            {selectedFields.length} selected
+            {selectedFields.length} {copy.selectionCountSuffix}
           </span>
         </div>
         <div className="grid gap-4 p-4">
@@ -29,12 +21,14 @@ export default function FinlandLinkedChart({ selectedFields = [], copy = DEFAULT
               <div className="w-full max-w-xl">
                 <div className="flex items-end gap-3">
                   {selectedFields.map((field, index) => (
-                    <div key={field} className="flex flex-1 flex-col items-center gap-3">
+                    <div key={field.id} className="flex flex-1 flex-col items-center gap-3">
                       <div
                         className="w-full rounded-t-md bg-[linear-gradient(180deg,#5eead4,#f59e0b)]"
                         style={{ height: `${72 + (index % 4) * 24}px` }}
                       />
-                      <div className="max-w-full truncate text-xs text-[var(--color-muted)]">{field}</div>
+                      <div className="max-w-full truncate text-xs text-[var(--color-muted)]">
+                        {field.label}{field.unit ? ` (${field.unit})` : ''}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -42,17 +36,17 @@ export default function FinlandLinkedChart({ selectedFields = [], copy = DEFAULT
             ) : (
               <div className="grid max-w-md gap-2 text-center">
                 <div className="text-base font-semibold text-[var(--color-text)]">
-                  {copy.emptyTitle || DEFAULT_COPY.emptyTitle}
+                  {copy.emptyTitle}
                 </div>
                 <p className="text-sm leading-6 text-[var(--color-muted)]">
-                  {copy.emptyDescription || DEFAULT_COPY.emptyDescription}
+                  {copy.emptyDescription}
                 </p>
               </div>
             )}
           </div>
           {hasSelection ? (
             <p className="text-sm leading-6 text-[var(--color-muted)]">
-              {copy.populatedDescription || DEFAULT_COPY.populatedDescription}
+              {copy.populatedDescription}
             </p>
           ) : null}
         </div>

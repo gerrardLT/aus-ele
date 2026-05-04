@@ -862,4 +862,100 @@ translations.en.finlandBoard = {
     defaultTitle: 'Finland board shell',
     defaultDescription: 'Only the page shell and overview layer are active right now.',
   },
+  tableShell: {
+    eyebrow: 'Board Table',
+    title: 'Selectable board table shell',
+    description: 'Task 6 keeps the table on a small, stable descriptor list so selection can drive linked analysis without depending on transport keys.',
+    empty: 'No field rows available yet.',
+    ready: 'Ready',
+    columns: {
+      field: 'Field',
+      source: 'Source',
+      unit: 'Unit',
+      readiness: 'Readiness',
+      value: 'Signal',
+    },
+    action: {
+      selected: 'Selected',
+      available: 'Select',
+    },
+  },
+  linkedChart: {
+    eyebrow: 'Linked Analysis',
+    title: 'Selection-driven chart shell',
+    emptyTitle: 'No fields selected',
+    emptyDescription: 'Select one or more stable table descriptors to stage the linked comparison view.',
+    populatedDescription: 'Task 6 only carries stable field selection into the linked-analysis shell. Chart endpoint wiring stays out of scope.',
+    selectionCountSuffix: 'selected',
+  },
+  fieldDetailPanel: {
+    eyebrow: 'Field Detail',
+    title: 'Selected field detail shell',
+    emptyTitle: 'Waiting for a field selection',
+    emptyDescription: 'Choose fields from the table to preview the stable detail slots reserved for later dictionary, provenance, and drill-down wiring.',
+    listTitle: 'Active field slots',
+    pending: 'Pending linked detail wiring',
+    selectionDescription: 'This panel is intentionally limited to stable selection awareness for Task 6.',
+  },
+  fieldCatalog: [
+    {
+      id: 'coverage_window',
+      label: 'Coverage Window',
+      unit: 'time',
+      source: 'overview',
+      path: 'window.start',
+    },
+    {
+      id: 'source_footprint',
+      label: 'Source Footprint',
+      unit: 'sources',
+      source: 'overview',
+      path: 'summary.source_count',
+    },
+    {
+      id: 'readiness_status',
+      label: 'Readiness',
+      unit: 'status',
+      source: 'readiness',
+      path: 'summary.status',
+    },
+    {
+      id: 'trace_id',
+      label: 'Trace',
+      unit: 'id',
+      source: 'overview',
+      path: 'meta.trace_id',
+    },
+  ],
 };
+
+translations.zh.finlandBoard.tableShell = {
+  eyebrow: 'Board Table',
+  title: '琛ㄦ牸宸ヤ綔鍙板澹?',
+  description: 'Task 6 鐢ㄧǔ瀹氬瓧娈垫弿杩板櫒鏀拺閫夋嫨鍜岃仈鍔ㄥ垎鏋愬澹筹紝涓嶄緷璧杙ayload transport key銆?',
+  empty: '鏆傛棤鍙敤瀛楁',
+  ready: 'Ready',
+  columns: translations.en.finlandBoard.tableShell.columns,
+  action: translations.en.finlandBoard.tableShell.action,
+};
+
+translations.zh.finlandBoard.linkedChart = {
+  eyebrow: 'Linked Analysis',
+  title: '鑱斿姩鍥捐〃澶栧３',
+  emptyTitle: '灏氭湭閫夋嫨瀛楁',
+  emptyDescription: '鍏堝湪琛ㄦ牸涓€夋嫨瀛楁锛岃繖閲屽彧灞曠ず閫夋嫨缁撴灉鍜屽悗缁壙杞戒綅銆?',
+  populatedDescription: 'Task 6 浠呮帴閫夋嫨鐘舵€佸埌 linked analysis 澶栧３锛屾湭鎺ュ叆 chart endpoint 銆?',
+  selectionCountSuffix: 'selected',
+};
+
+translations.zh.finlandBoard.fieldDetailPanel = {
+  eyebrow: 'Field Detail',
+  title: '瀛楁璇︽儏澶栧３',
+  emptyTitle: '绛夊緟瀛楁閫夋嫨',
+  emptyDescription: '閫夋嫨琛ㄦ牸涓殑瀛楁鍚庯紝杩欓噷鍐嶆帴鍏ュ瓧鍏搞€佹潵婧愬拰 drill-down 淇℃伅銆?',
+  listTitle: '宸查€夊瓧娈?',
+  pending: 'Pending linked detail wiring',
+  selectionDescription: 'Task 6 浠呬繚鐣欑ǔ瀹氶€夋嫨鎰熺煡锛屼笉瀹炵幇瀛楀吀璺宠浆鎴栨棩妯″紡鍒囨崲銆?',
+};
+
+translations.zh.finlandBoard.fieldCatalog = [...translations.en.finlandBoard.fieldCatalog];

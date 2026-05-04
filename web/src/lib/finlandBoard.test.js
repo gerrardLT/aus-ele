@@ -117,25 +117,45 @@ test('FinlandPage uses board overview and readiness helpers with workspace shell
 test('FinlandPage tracks selected fields and wires them into the linked analysis shell', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
 
-  assert.match(source, /const \[selectedFields,\s*setSelectedFields\] = useState\(\[\]\)/);
-  assert.match(source, /<FinlandDataTable[\s\S]*onSelectField=\{setSelectedFields\}/);
-  assert.match(source, /<FinlandLinkedChart[\s\S]*selectedFields=\{selectedFields\}/);
-  assert.match(source, /<FinlandFieldDetailPanel[\s\S]*selectedFields=\{selectedFields\}/);
+  assert.match(source, /const \[selectedFieldIds,\s*setSelectedFieldIds\] = useState\(\[\]\)/);
+  assert.match(source, /const fieldDescriptors = useMemo\(/);
+  assert.match(source, /const selectedFields = useMemo\(/);
+  assert.match(source, /<FinlandDataTable[\s\S]*selectedFieldIds=\{selectedFieldIds\}[\s\S]*onSelectField=\{setSelectedFieldIds\}/);
+  assert.match(source, /<FinlandLinkedChart[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{copy\.linkedChart\}/);
+  assert.match(source, /<FinlandFieldDetailPanel[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{copy\.fieldDetailPanel\}/);
+  assert.doesNotMatch(source, /id:\s*`\$\{sourceLabel\}-\$\{key\}`/);
+  assert.doesNotMatch(source, /Object\.entries\(payload \|\| \{\}\)/);
 });
 
-test('Finland workbench components expose selection and linked-shell contracts', () => {
+test('Finland workbench components rely on page-owned copy and stable descriptor contracts', () => {
   const tableSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandDataTable.jsx'), 'utf8');
   const chartSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandLinkedChart.jsx'), 'utf8');
   const detailSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandFieldDetailPanel.jsx'), 'utf8');
 
   assert.match(tableSource, /onSelectField/);
-  assert.match(tableSource, /selectedFields/);
+  assert.match(tableSource, /selectedFieldIds/);
   assert.match(tableSource, /sticky top-0/);
   assert.match(tableSource, /sticky left-0/);
+  assert.match(tableSource, /field\.unit/);
+  assert.doesNotMatch(tableSource, /DEFAULT_COPY/);
   assert.match(chartSource, /selectedFields/);
   assert.match(chartSource, /selectedFields\.length/);
+  assert.match(chartSource, /field\.label/);
+  assert.match(chartSource, /field\.unit/);
+  assert.doesNotMatch(chartSource, /DEFAULT_COPY/);
   assert.match(detailSource, /selectedFields/);
   assert.match(detailSource, /selectedFields\.map/);
+  assert.match(detailSource, /field\.label/);
+  assert.match(detailSource, /field\.unit/);
+  assert.doesNotMatch(detailSource, /DEFAULT_COPY/);
+});
+
+test('Finland translations include table, chart, and detail shell copy owned by the page', () => {
+  assert.equal(translations.en.finlandBoard.tableShell.columns.field, 'Field');
+  assert.equal(translations.en.finlandBoard.tableShell.columns.unit, 'Unit');
+  assert.equal(translations.en.finlandBoard.linkedChart.emptyTitle, 'No fields selected');
+  assert.equal(translations.en.finlandBoard.fieldDetailPanel.pending, 'Pending linked detail wiring');
+  assert.equal(translations.en.finlandBoard.fieldCatalog.length, 4);
 });
 
 test('Finland board components expose overview and workbench shell structure with page-owned header metrics', () => {

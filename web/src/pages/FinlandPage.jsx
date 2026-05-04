@@ -102,25 +102,20 @@ function summarizeValue(value, fallback) {
   return String(value);
 }
 
-function buildFieldRows(copy, overviewPayload, readinessPayload) {
-  const fallbackValue = copy.notAvailable;
-  const rows = [];
-  const pushEntries = (sourceLabel, payload) => {
-    Object.entries(payload || {}).forEach(([key, value]) => {
-      rows.push({
-        id: `${sourceLabel}-${key}`,
-        label: key,
-        source: sourceLabel,
-        readiness: value === null || value === undefined ? copy.pending : 'ready',
-        value: summarizeValue(value, fallbackValue),
-      });
-    });
-  };
+function buildFieldDescriptors(copy, overviewPayload, readinessPayload) {
+  return copy.fieldCatalog.map((descriptor) => {
+    const payload = descriptor.source === 'overview' ? overviewPayload : readinessPayload;
+    const rawValue = readPath(payload, descriptor.path);
 
-  pushEntries('overview', overviewPayload);
-  pushEntries('readiness', readinessPayload);
-
-  return rows.slice(0, 16);
+    return {
+      id: descriptor.id,
+      label: descriptor.label,
+      unit: descriptor.unit,
+      source: descriptor.source,
+      readiness: rawValue === null || rawValue === undefined ? copy.pending : copy.tableShell.ready,
+      value: summarizeValue(rawValue, copy.notAvailable),
+    };
+  });
 }
 
 export default function FinlandPage() {
@@ -128,7 +123,7 @@ export default function FinlandPage() {
   const [overviewPayload, setOverviewPayload] = useState(null);
   const [readinessPayload, setReadinessPayload] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
-  const [selectedFields, setSelectedFields] = useState([]);
+  const [selectedFieldIds, setSelectedFieldIds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const copy = useMemo(
@@ -144,9 +139,13 @@ export default function FinlandPage() {
     () => buildHeaderMetrics(copy, overviewPayload, readinessPayload),
     [copy, overviewPayload, readinessPayload],
   );
-  const fieldRows = useMemo(
-    () => buildFieldRows(copy, overviewPayload, readinessPayload),
+  const fieldDescriptors = useMemo(
+    () => buildFieldDescriptors(copy, overviewPayload, readinessPayload),
     [copy, overviewPayload, readinessPayload],
+  );
+  const selectedFields = useMemo(
+    () => fieldDescriptors.filter((field) => selectedFieldIds.includes(field.id)),
+    [fieldDescriptors, selectedFieldIds],
   );
   const tabs = useMemo(
     () => [
@@ -271,14 +270,10 @@ export default function FinlandPage() {
 
         {activeTab === 'table' ? (
           <FinlandDataTable
-            fields={fieldRows}
-            selectedFields={selectedFields}
-            onSelectField={setSelectedFields}
-            copy={{
-              eyebrow: copy.tabs.table.label,
-              title: copy.tabs.table.panelTitle,
-              description: copy.tabs.table.panelDescription,
-            }}
+            fields={fieldDescriptors}
+            selectedFieldIds={selectedFieldIds}
+            onSelectField={setSelectedFieldIds}
+            copy={copy.tableShell}
           />
         ) : null}
 
@@ -286,13 +281,9 @@ export default function FinlandPage() {
           <section className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
             <FinlandLinkedChart
               selectedFields={selectedFields}
-              copy={{
-                eyebrow: copy.tabs.analysis.label,
-                title: copy.tabs.analysis.panelTitle,
-                populatedDescription: copy.tabs.analysis.panelDescription,
-              }}
+              copy={copy.linkedChart}
             />
-            <FinlandFieldDetailPanel selectedFields={selectedFields} />
+            <FinlandFieldDetailPanel selectedFields={selectedFields} copy={copy.fieldDetailPanel} />
           </section>
         ) : null}
       </div>
