@@ -606,6 +606,7 @@ export const translations = {
 
 translations.zh.nav = {
   ...translations.zh.nav,
+  finland: '芬兰市场看板',
   fingrid: 'Fingrid',
   developerPortal: '\u5f00\u53d1\u8005\u95e8\u6237',
   sync: '\u540c\u6b65\u6570\u636e',
@@ -614,6 +615,7 @@ translations.zh.nav = {
 
 translations.en.nav = {
   ...translations.en.nav,
+  finland: 'Finland Board',
   fingrid: 'Fingrid',
   developerPortal: 'Developer Portal',
   sync: 'Sync',
@@ -722,4 +724,142 @@ translations.en.developerPortal = {
   endpoint: 'Endpoint',
   method: 'Method',
   noLedger: 'No ledger items are available.',
+};
+
+translations.zh.finlandBoard = {
+  brand: 'FINLAND BOARD',
+  title: '芬兰市场看板',
+  subtitle: '读取 overview 与 readiness 接口，先搭建工作台外壳，不进入表格联动和分析链路。',
+  toggleLanguage: 'EN / 中',
+  toggleLanguageAriaLabel: '切换 Finland 页面语言',
+  meta: {
+    scope: 'Task 5 shell / overview / navigation',
+  },
+  status: {
+    loading: '加载中',
+    ready: '已连接',
+    error: '请求异常',
+  },
+  heroTitle: 'Finland route 已接入真实 board 读数。',
+  heroDescription: '这一层只负责顶层工作台结构、概览卡片和 workbench 标签壳，后续表格与 linked analysis 会在后续任务中接上。',
+  signalLabel: 'Payload Signals',
+  overviewPayloadLabel: 'Overview 字段数',
+  readinessPayloadLabel: 'Readiness 字段数',
+  deliveryLabel: '当前交付',
+  deliveryValue: 'Shell only',
+  cardFallback: '暂无',
+  cardDescriptionFallback: '等待后续表格与联动分析接入。',
+  notAvailable: '暂无',
+  pending: '待评估',
+  errorTitle: 'Finland board 接口加载失败',
+  cards: {
+    coverageWindow: {
+      label: '覆盖窗口',
+      description: '优先显示 overview / readiness 暴露出的时间窗口。',
+    },
+    sourceCount: {
+      label: '已接入来源',
+      description: '概览层只显示 source footprint，不展开逐字段表格。',
+    },
+    readiness: {
+      label: 'Readiness',
+      description: '保留 readiness 状态读数，作为后续表格可用性的入口。',
+    },
+    trace: {
+      label: 'Trace',
+      description: '便于后续联调 overview 与 readiness 返回链路。',
+    },
+  },
+  tabs: {
+    overview: {
+      label: 'Overview',
+      panelTitle: 'Overview shell 已就位',
+      panelDescription: '当前标签保留概览视图的承载位，后续任务再接入完整 board table。',
+    },
+    table: {
+      label: 'Board Table',
+      panelTitle: '表格工作台暂未接入',
+      panelDescription: '本任务不实现表格、字段目录、筛选器和滚动联动。',
+    },
+    analysis: {
+      label: 'Linked Analysis',
+      panelTitle: '联动分析壳已预留',
+      panelDescription: '本任务仅预留 linked analysis 入口，不实现 drill-down 与交叉跳转。',
+    },
+  },
+  workbenchPanel: {
+    tabListLabel: 'Finland workbench tabs',
+    eyebrow: 'Workbench Shell',
+    defaultTitle: 'Finland board shell',
+    defaultDescription: '当前只有页面壳和概览层，没有进入表格与联动行为。',
+  },
+};
+
+translations.en.finlandBoard = {
+  brand: 'FINLAND BOARD',
+  title: 'Finland Market Board',
+  subtitle: 'Load the real overview and readiness payloads first, while keeping the table and linked analysis out of scope.',
+  toggleLanguage: '中 / EN',
+  toggleLanguageAriaLabel: 'Toggle Finland page language',
+  meta: {
+    scope: 'Task 5 shell / overview / navigation',
+  },
+  status: {
+    loading: 'Loading',
+    ready: 'Connected',
+    error: 'Request error',
+  },
+  heroTitle: 'The Finland route now reads from live board endpoints.',
+  heroDescription: 'This pass is intentionally narrow: top-level workspace framing, overview cards, and a workbench tab shell. The full table and linked analysis stay for later tasks.',
+  signalLabel: 'Payload Signals',
+  overviewPayloadLabel: 'Overview keys',
+  readinessPayloadLabel: 'Readiness keys',
+  deliveryLabel: 'Current delivery',
+  deliveryValue: 'Shell only',
+  cardFallback: 'Not available',
+  cardDescriptionFallback: 'Waiting for the later table and linked-analysis tasks.',
+  notAvailable: 'Not available',
+  pending: 'Pending',
+  errorTitle: 'Failed to load Finland board endpoints',
+  cards: {
+    coverageWindow: {
+      label: 'Coverage Window',
+      description: 'Prefers any time window exposed by the overview or readiness payload.',
+    },
+    sourceCount: {
+      label: 'Source Footprint',
+      description: 'The shell only shows the source footprint and does not expand into field-level tables yet.',
+    },
+    readiness: {
+      label: 'Readiness',
+      description: 'Keeps the readiness readout visible as the handoff point for later table work.',
+    },
+    trace: {
+      label: 'Trace',
+      description: 'Useful for tracing the overview and readiness request chain during follow-on work.',
+    },
+  },
+  tabs: {
+    overview: {
+      label: 'Overview',
+      panelTitle: 'Overview shell is in place',
+      panelDescription: 'This tab holds the overview surface now. The full board table lands in a later task.',
+    },
+    table: {
+      label: 'Board Table',
+      panelTitle: 'Table workbench is intentionally deferred',
+      panelDescription: 'This task does not implement the table, field catalog, filters, or scroll-linked behavior.',
+    },
+    analysis: {
+      label: 'Linked Analysis',
+      panelTitle: 'Linked-analysis shell is reserved',
+      panelDescription: 'This task only keeps the future entry point visible. Drill-down and cross-link behavior are not built yet.',
+    },
+  },
+  workbenchPanel: {
+    tabListLabel: 'Finland workbench tabs',
+    eyebrow: 'Workbench Shell',
+    defaultTitle: 'Finland board shell',
+    defaultDescription: 'Only the page shell and overview layer are active right now.',
+  },
 };

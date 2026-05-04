@@ -95,3 +95,40 @@ test('main.jsx mounts a real FinlandPage import for the finland root page', () =
   assert.match(source, /<FinlandPage \/>/);
   assert.doesNotMatch(source, /const FinlandPage = App/);
 });
+
+test('FinlandPage uses board overview and readiness helpers with workspace shell components', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+
+  assert.match(source, /fetchJson/);
+  assert.match(source, /buildFinlandBoardOverviewUrl/);
+  assert.match(source, /buildFinlandBoardReadinessUrl/);
+  assert.match(source, /PageWorkspaceNav/);
+  assert.match(source, /FinlandBoardHeader/);
+  assert.match(source, /FinlandOverviewCards/);
+  assert.match(source, /FinlandWorkbenchTabs/);
+  assert.match(source, /Promise\.all\(\s*\[/);
+});
+
+test('Finland board components expose overview and workbench shell structure', () => {
+  const headerSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandBoardHeader.jsx'), 'utf8');
+  const cardsSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandOverviewCards.jsx'), 'utf8');
+  const tabsSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandWorkbenchTabs.jsx'), 'utf8');
+
+  assert.match(headerSource, /copy\./);
+  assert.match(cardsSource, /cards\.map/);
+  assert.match(tabsSource, /tabs\.map/);
+  assert.match(tabsSource, /aria-selected/);
+  assert.match(tabsSource, /panelCopy\./);
+});
+
+test('app shell and translations include Finland navigation entry and localized board copy', () => {
+  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  const translationsSource = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
+
+  assert.match(appSource, /href="\/finland"/);
+  assert.match(appSource, /t\.nav\.finland/);
+  assert.match(translationsSource, /translations\.zh\.nav = \{/);
+  assert.match(translationsSource, /finland:/);
+  assert.match(translationsSource, /translations\.zh\.finlandBoard = \{/);
+  assert.match(translationsSource, /translations\.en\.finlandBoard = \{/);
+});

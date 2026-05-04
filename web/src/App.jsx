@@ -391,6 +391,16 @@ function App() {
           </div>
           <div className="mt-2 grid gap-1">
             <motion.a
+              href="/finland"
+              whileHover={prefersReducedMotion ? undefined : { x: 3 }}
+              whileTap={prefersReducedMotion ? undefined : { scale: 0.988 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="relative flex min-h-[40px] items-center overflow-hidden rounded-lg px-3 text-sm text-white/56 transition-colors hover:text-white"
+            >
+              <span className="absolute inset-0 rounded-lg bg-transparent transition-colors duration-200 hover:bg-white/6" />
+              <span className="relative z-10">{t.nav.finland}</span>
+            </motion.a>
+            <motion.a
               href="/fingrid"
               whileHover={prefersReducedMotion ? undefined : { x: 3 }}
               whileTap={prefersReducedMotion ? undefined : { scale: 0.988 }}
