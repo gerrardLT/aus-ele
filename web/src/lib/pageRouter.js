@@ -1,4 +1,7 @@
 export function resolveRootPage(pathname = '/') {
+  if (pathname.startsWith('/finland')) {
+    return 'finland';
+  }
   if (pathname.startsWith('/fingrid')) {
     return 'fingrid';
   }

@@ -7,11 +7,14 @@ import DeveloperPortalPage from './pages/DeveloperPortalPage.jsx'
 import { resolveRootPage } from './lib/pageRouter.js'
 
 const rootPage = resolveRootPage(globalThis.location?.pathname || '/')
-const rootElement = rootPage === 'fingrid'
-  ? <FingridPage />
-  : rootPage === 'developer'
-    ? <DeveloperPortalPage />
-    : <App />
+const FinlandPage = App
+const rootElement = rootPage === 'finland'
+  ? <FinlandPage />
+  : rootPage === 'fingrid'
+    ? <FingridPage />
+    : rootPage === 'developer'
+      ? <DeveloperPortalPage />
+      : <App />
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
