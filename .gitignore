@@ -65,6 +65,9 @@ htmlcov/
 tmp_*.log
 tmp_*.out.log
 tmp_*.err.log
+*-live.out.log
+*-live.err.log
+tmp-openapi.json
 data/fingrid_backfill_*.log
 data/fingrid_backfill_*.err.log
 backend-dev.log
