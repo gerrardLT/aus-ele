@@ -3,13 +3,13 @@ import {
   CartesianGrid,
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { fetchJson } from '../../lib/apiClient';
 import { buildFinlandBoardChartUrl } from '../../lib/finlandApi';
+import { useMeasuredElement } from '../../lib/useMeasuredElement';
 
 const SERIES_COLORS = ['#5eead4', '#f59e0b', '#38bdf8', '#fb7185'];
 
@@ -58,6 +58,7 @@ export default function FinlandLinkedChart({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const hasSelection = selectedFields.length > 0;
+  const [chartFrameRef, chartFrameSize] = useMeasuredElement();
 
   useEffect(() => {
     let cancelled = false;
@@ -143,9 +144,12 @@ export default function FinlandLinkedChart({
 
           {hasSelection && !loading && !error && payload?.series?.length ? (
             <>
-              <div className="h-72 min-w-0 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3">
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240}>
-                  <LineChart data={chartData}>
+              <div
+                ref={chartFrameRef}
+                className="h-72 min-w-0 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3"
+              >
+                {chartFrameSize.width > 0 && chartFrameSize.height > 0 ? (
+                  <LineChart width={chartFrameSize.width} height={chartFrameSize.height} data={chartData}>
                     <CartesianGrid stroke="rgba(148,163,184,0.16)" strokeDasharray="3 3" />
                     <XAxis dataKey="timestamp" minTickGap={36} stroke="rgba(148,163,184,0.72)" />
                     <YAxis stroke="rgba(148,163,184,0.72)" />
@@ -162,7 +166,7 @@ export default function FinlandLinkedChart({
                       />
                     ))}
                   </LineChart>
-                </ResponsiveContainer>
+                ) : null}
               </div>
               <p className="text-sm leading-6 text-[var(--color-muted)]">
                 {copy.populatedDescription}

@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
 } from 'recharts';
 import { fetchJson } from '../../lib/apiClient';
 import { buildFinlandBoardChartUrl } from '../../lib/finlandApi';
+import { useMeasuredElement } from '../../lib/useMeasuredElement';
 
 const SERIES_COLORS = ['#d4b26a', '#57d3bc', '#7db3ff'];
 
@@ -135,39 +135,11 @@ export default function FinlandComparisonRail({
       {!loading && !error && seriesCards.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {seriesCards.map((item, index) => (
-            <article
+            <CompactSeriesCard
               key={item.field_key}
-              className="grid min-w-0 gap-3 rounded-lg border border-[color:color-mix(in_oklab,var(--color-border)_82%,#d4b26a_18%)] bg-[rgba(11,19,31,0.78)] p-4"
-            >
-              <div className="grid gap-1">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
-                  {item.label}
-                </div>
-                <div className="flex items-end justify-between gap-3">
-                  <div className="text-2xl font-semibold text-[var(--color-text)]">
-                    {formatValue(item.latestValue)}
-                  </div>
-                  <div className="text-xs text-[var(--color-muted)]">
-                    {item.deltaValue === null ? '--' : `${item.deltaValue >= 0 ? '+' : ''}${formatValue(item.deltaValue)}`}
-                  </div>
-                </div>
-              </div>
-
-              <div className="h-24 min-w-0">
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={96}>
-                  <LineChart data={item.chartPoints}>
-                    <Tooltip content={<CompactTooltip />} />
-                    <Line
-                      type="monotone"
-                      dataKey="value"
-                      stroke={SERIES_COLORS[index % SERIES_COLORS.length]}
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </article>
+              item={item}
+              color={SERIES_COLORS[index % SERIES_COLORS.length]}
+            />
           ))}
         </div>
       ) : null}
@@ -192,5 +164,42 @@ export default function FinlandComparisonRail({
         )
       ) : null}
     </section>
+  );
+}
+
+function CompactSeriesCard({ item, color }) {
+  const [chartFrameRef, chartFrameSize] = useMeasuredElement();
+
+  return (
+    <article className="grid min-w-0 gap-3 rounded-lg border border-[color:color-mix(in_oklab,var(--color-border)_82%,#d4b26a_18%)] bg-[rgba(11,19,31,0.78)] p-4">
+      <div className="grid gap-1">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
+          {item.label}
+        </div>
+        <div className="flex items-end justify-between gap-3">
+          <div className="text-2xl font-semibold text-[var(--color-text)]">
+            {formatValue(item.latestValue)}
+          </div>
+          <div className="text-xs text-[var(--color-muted)]">
+            {item.deltaValue === null ? '--' : `${item.deltaValue >= 0 ? '+' : ''}${formatValue(item.deltaValue)}`}
+          </div>
+        </div>
+      </div>
+
+      <div ref={chartFrameRef} className="h-24 min-w-0">
+        {chartFrameSize.width > 0 && chartFrameSize.height > 0 ? (
+          <LineChart width={chartFrameSize.width} height={chartFrameSize.height} data={item.chartPoints}>
+            <Tooltip content={<CompactTooltip />} />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke={color}
+              strokeWidth={2}
+              dot={false}
+            />
+          </LineChart>
+        ) : null}
+      </div>
+    </article>
   );
 }

@@ -622,7 +622,8 @@ test('Finland primary price workbench scaffolds exist as focused components', ()
   assert.match(summarySource, /volatilityValues/);
   assert.match(railSource, /copy/);
   assert.match(railSource, /buildFinlandBoardChartUrl/);
-  assert.match(railSource, /ResponsiveContainer/);
+  assert.match(railSource, /useMeasuredElement/);
+  assert.match(railSource, /LineChart width=\{chartFrameSize\.width\} height=\{chartFrameSize\.height\}/);
   assert.match(railSource, /seriesCards/);
   assert.match(railSource, /item\.description \|\| item\.unit \|\| item\.field_key/);
   assert.match(workbenchSource, /FinlandPrimaryPriceSelector/);
