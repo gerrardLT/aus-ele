@@ -13,7 +13,13 @@ class ConnectorFrameworkTests(unittest.TestCase):
 
         self.assertIn("aemo_nem_trading_price", connector_ids)
         self.assertIn("aemo_wem_ess_market", connector_ids)
+        self.assertIn("fingrid_dataset_281", connector_ids)
+        self.assertIn("fingrid_dataset_283", connector_ids)
+        self.assertIn("fingrid_dataset_315", connector_ids)
+        self.assertIn("fingrid_dataset_316", connector_ids)
         self.assertIn("fingrid_dataset_317", connector_ids)
+        self.assertIn("fingrid_dataset_318", connector_ids)
+        self.assertIn("fingrid_dataset_319", connector_ids)
 
     def test_connector_specs_expose_required_taskbook_fields(self):
         for source_id in (

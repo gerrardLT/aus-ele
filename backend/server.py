@@ -493,6 +493,8 @@ response_cache = RedisResponseCache()
 SYNC_OWNER = f"{os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', 'host')}:{os.getpid()}"
 MARKET_SYNC_LOCK_NAME = "market_sync"
 FINGRID_SYNC_LOCK_NAME = "fingrid_sync"
+FINGRID_HOURLY_DATASET_IDS = ("281", "283", "315", "316", "317", "318", "319")
+FINGRID_DAILY_DATASET_IDS = ("288", "290", "321")
 MARKET_SYNC_LOCK_TTL_SECONDS = int(os.environ.get("AUS_ELE_MARKET_SYNC_LOCK_TTL_SECONDS", "21600"))
 FINGRID_SYNC_LOCK_TTL_SECONDS = int(os.environ.get("AUS_ELE_FINGRID_SYNC_LOCK_TTL_SECONDS", "7200"))
 
@@ -1731,6 +1733,20 @@ def enqueue_fingrid_hourly_sync_job():
     )
 
 
+def enqueue_fingrid_daily_sync_job():
+    existing = _find_open_job(job_type="fingrid_daily_sync", source_key="fingrid")
+    if existing:
+        return existing
+    return enqueue_job(
+        job_type="fingrid_daily_sync",
+        payload={"mode": "incremental"},
+        queue_name="sync",
+        source_key="fingrid",
+        priority=80,
+        max_attempts=2,
+    )
+
+
 def enqueue_report_generation_job(
     *,
     report_type: str,
@@ -1772,6 +1788,10 @@ def _register_job_handlers():
     job_registry.register(
         "fingrid_hourly_sync",
         lambda job, context: run_fingrid_hourly_sync(),
+    )
+    job_registry.register(
+        "fingrid_daily_sync",
+        lambda job, context: run_fingrid_daily_sync(),
     )
     job_registry.register(
         "report_generate",
@@ -1829,6 +1849,16 @@ async def lifespan(app: FastAPI):
             max_instances=1,
             coalesce=True,
             misfire_grace_time=15 * 60,
+        )
+        scheduler.add_job(
+            enqueue_fingrid_daily_sync_job,
+            'cron',
+            hour=3,
+            minute=25,
+            id="fingrid-daily-sync",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=60 * 60,
         )
         scheduler.start()
         app.state.scheduler = scheduler
@@ -5025,8 +5055,7 @@ def run_fingrid_hourly_sync(lock_pre_acquired: bool = False):
         logger.info("Starting Fingrid hourly incremental sync...")
         results = []
         failures = []
-        for dataset in fingrid_catalog.list_dataset_configs():
-            dataset_id = dataset["dataset_id"]
+        for dataset_id in FINGRID_HOURLY_DATASET_IDS:
             try:
                 results.append(fingrid_service.sync_dataset(db, dataset_id=dataset_id, mode="incremental"))
             except Exception as e:
@@ -5046,6 +5075,48 @@ def run_fingrid_hourly_sync(lock_pre_acquired: bool = False):
     except Exception as e:
         logger.error(f"Error in Fingrid hourly sync task: {e}")
         return {"status": "error", "datasets_synced": 0, "detail": str(e)}
+    finally:
+        if lock_acquired:
+            _release_job_lock(FINGRID_SYNC_LOCK_NAME)
+
+
+def run_fingrid_daily_sync(lock_pre_acquired: bool = False):
+    """Background task to refresh low-frequency Fingrid yearly market datasets."""
+    if not _fingrid_sync_enabled():
+        logger.info("Skipping Fingrid daily sync because FINGRID_API_KEY is not configured.")
+        return {"status": "skipped", "reason": "missing_api_key", "datasets_synced": 0}
+
+    lock_acquired = lock_pre_acquired
+    if not lock_acquired:
+        lock_acquired = _try_acquire_job_lock(FINGRID_SYNC_LOCK_NAME, FINGRID_SYNC_LOCK_TTL_SECONDS)
+        if not lock_acquired:
+            logger.info("Skipping Fingrid daily sync because another Fingrid sync is already running.")
+            return {"status": "skipped", "reason": "already_running", "datasets_synced": 0}
+
+    try:
+        logger.info("Starting Fingrid daily incremental sync...")
+        results = []
+        failures = []
+        for dataset_id in FINGRID_DAILY_DATASET_IDS:
+            try:
+                results.append(fingrid_service.sync_dataset(db, dataset_id=dataset_id, mode="incremental"))
+            except Exception as e:
+                logger.error("Error syncing Fingrid dataset %s during daily sync: %s", dataset_id, e)
+                failures.append({"dataset_id": dataset_id, "detail": str(e)})
+        if failures:
+            return {
+                "status": "error",
+                "datasets_synced": len(results),
+                "datasets_failed": len(failures),
+                "results": results,
+                "failures": failures,
+                "detail": "; ".join(f"{item['dataset_id']}: {item['detail']}" for item in failures),
+            }
+        logger.info("Completed Fingrid daily incremental sync.")
+        return {"status": "ok", "datasets_synced": len(results), "results": results}
+    except Exception as e:
+        logger.error("Error in Fingrid daily sync task: %s", e)
+        return {"status": "error", "detail": str(e), "datasets_synced": 0}
     finally:
         if lock_acquired:
             _release_job_lock(FINGRID_SYNC_LOCK_NAME)
@@ -5121,6 +5192,7 @@ def get_finland_board_table(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
     tz: str = Query("Europe/Helsinki"),
+    limit: int = Query(240, ge=50, le=5000, description="Maximum rows returned to keep the board responsive."),
 ):
     try:
         return build_finland_board_table_payload(
@@ -5129,6 +5201,7 @@ def get_finland_board_table(
             start=start,
             end=end,
             tz=tz,
+            limit=limit,
         )
     except HTTPException:
         raise
@@ -5154,6 +5227,7 @@ def get_finland_board_chart(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
     granularity: str = Query("1h"),
+    limit_points: int = Query(240, ge=50, le=5000, description="Maximum points per series returned to the linked chart."),
 ):
     try:
         return build_finland_board_chart_payload(
@@ -5163,6 +5237,7 @@ def get_finland_board_chart(
             start=start,
             end=end,
             granularity=granularity,
+            limit_points=limit_points,
         )
     except HTTPException:
         raise

@@ -9,7 +9,7 @@ export default function FinlandFieldDetailPanel({ selectedFields = [], copy }) {
   const labels = copy.labels;
 
   return (
-    <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+    <section className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
         {copy.eyebrow}
       </div>

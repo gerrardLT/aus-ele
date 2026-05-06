@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -57,6 +56,8 @@ export default function FinlandLinkedChart({
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [chartWidth, setChartWidth] = useState(0);
+  const chartContainerRef = useRef(null);
   const hasSelection = selectedFields.length > 0;
 
   useEffect(() => {
@@ -101,8 +102,32 @@ export default function FinlandLinkedChart({
 
   const chartData = useMemo(() => buildChartData(payload?.series), [payload]);
 
+  useEffect(() => {
+    const element = chartContainerRef.current;
+    if (!element) {
+      setChartWidth(0);
+      return undefined;
+    }
+
+    const updateWidth = () => {
+      setChartWidth(element.clientWidth || 0);
+    };
+
+    updateWidth();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateWidth();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasSelection, loading, error, payload]);
+
   return (
-    <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+    <section className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
         {copy.eyebrow}
       </div>
@@ -143,9 +168,12 @@ export default function FinlandLinkedChart({
 
           {hasSelection && !loading && !error && payload?.series?.length ? (
             <>
-              <div className="h-72 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
+              <div
+                ref={chartContainerRef}
+                className="h-72 min-w-0 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3"
+              >
+                {chartWidth > 0 ? (
+                  <LineChart width={chartWidth - 24} height={264} data={chartData}>
                     <CartesianGrid stroke="rgba(148,163,184,0.16)" strokeDasharray="3 3" />
                     <XAxis dataKey="timestamp" minTickGap={36} stroke="rgba(148,163,184,0.72)" />
                     <YAxis stroke="rgba(148,163,184,0.72)" />
@@ -162,7 +190,7 @@ export default function FinlandLinkedChart({
                       />
                     ))}
                   </LineChart>
-                </ResponsiveContainer>
+                ) : null}
               </div>
               <p className="text-sm leading-6 text-[var(--color-muted)]">
                 {copy.populatedDescription}

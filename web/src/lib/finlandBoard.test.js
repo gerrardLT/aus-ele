@@ -50,8 +50,9 @@ test('buildFinlandBoardTableUrl encodes expected query params', () => {
       start: '2026-05-01T00:00:00Z',
       end: '2026-05-02T00:00:00Z',
       tz: 'Europe/Helsinki',
+      limit: 240,
     }),
-    'http://127.0.0.1:8085/api/finland/board/table?view=capacity_hourly&start=2026-05-01T00%3A00%3A00Z&end=2026-05-02T00%3A00%3A00Z&tz=Europe%2FHelsinki',
+    'http://127.0.0.1:8085/api/finland/board/table?view=capacity_hourly&start=2026-05-01T00%3A00%3A00Z&end=2026-05-02T00%3A00%3A00Z&tz=Europe%2FHelsinki&limit=240',
   );
 });
 
@@ -90,8 +91,9 @@ test('buildFinlandBoardChartUrl encodes repeated fields and chart controls', () 
       start: '2026-05-01T00:00:00Z',
       end: '2026-05-02T00:00:00Z',
       granularity: '4h',
+      limitPoints: 180,
     }),
-    'http://127.0.0.1:8085/api/finland/board/chart?fields=fcrn_price&fields=spot_price&mode=compare&start=2026-05-01T00%3A00%3A00Z&end=2026-05-02T00%3A00%3A00Z&granularity=4h',
+    'http://127.0.0.1:8085/api/finland/board/chart?fields=fcrn_price&fields=spot_price&mode=compare&start=2026-05-01T00%3A00%3A00Z&end=2026-05-02T00%3A00%3A00Z&granularity=4h&limit_points=180',
   );
 });
 
@@ -237,11 +239,13 @@ test('Finland board helpers derive dictionary jumps, selected field details, and
     buildFinlandBoardChartRequest({
       selectedFields: [{ field_key: 'spot_price_fi_eur_mwh', granularity: '1h' }],
       viewGranularity: '1h',
+      limitPoints: 240,
     }),
     {
       fields: ['spot_price_fi_eur_mwh'],
       mode: 'single',
       granularity: '1h',
+      limitPoints: 240,
     },
   );
   assert.deepEqual(
@@ -251,11 +255,13 @@ test('Finland board helpers derive dictionary jumps, selected field details, and
         { field_key: 'imbalance_price_eur_mwh', granularity: '15m' },
       ],
       viewGranularity: 'day',
+      limitPoints: 240,
     }),
     {
       fields: ['spot_price_fi_eur_mwh', 'imbalance_price_eur_mwh'],
       mode: 'compare',
       granularity: 'day',
+      limitPoints: 240,
     },
   );
   assert.equal(buildFinlandBoardChartRequest({ selectedFields: [], viewGranularity: '1h' }), null);

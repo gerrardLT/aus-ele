@@ -13,17 +13,18 @@ export function buildFinlandBoardOverviewUrl(apiBase, { start, end } = {}) {
   return `${apiBase}/finland/board/overview${suffix ? `?${suffix}` : ''}`;
 }
 
-export function buildFinlandBoardTableUrl(apiBase, { view, start, end, tz } = {}) {
+export function buildFinlandBoardTableUrl(apiBase, { view, start, end, tz, limit } = {}) {
   const params = new URLSearchParams();
   if (view) params.set('view', view);
   if (start) params.set('start', start);
   if (end) params.set('end', end);
   if (tz) params.set('tz', tz);
+  if (limit) params.set('limit', String(limit));
   const suffix = params.toString();
   return `${apiBase}/finland/board/table${suffix ? `?${suffix}` : ''}`;
 }
 
-export function buildFinlandBoardChartUrl(apiBase, { fields = [], mode, start, end, granularity } = {}) {
+export function buildFinlandBoardChartUrl(apiBase, { fields = [], mode, start, end, granularity, limitPoints } = {}) {
   const params = new URLSearchParams();
   for (const field of fields) {
     params.append('fields', field);
@@ -32,6 +33,7 @@ export function buildFinlandBoardChartUrl(apiBase, { fields = [], mode, start, e
   if (start) params.set('start', start);
   if (end) params.set('end', end);
   if (granularity) params.set('granularity', granularity);
+  if (limitPoints) params.set('limit_points', String(limitPoints));
   const suffix = params.toString();
   return `${apiBase}/finland/board/chart${suffix ? `?${suffix}` : ''}`;
 }
@@ -124,6 +126,7 @@ export function buildFinlandBoardSelectedFields({
 export function buildFinlandBoardChartRequest({
   selectedFields = [],
   viewGranularity,
+  limitPoints,
 } = {}) {
   const fields = selectedFields
     .map((field) => field?.field_key || field?.id)
@@ -137,6 +140,7 @@ export function buildFinlandBoardChartRequest({
     fields,
     mode: fields.length === 1 ? 'single' : 'compare',
     granularity: viewGranularity || selectedFields[0]?.granularity || '1h',
+    limitPoints,
   };
 }
 

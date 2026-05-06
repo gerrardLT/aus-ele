@@ -397,6 +397,7 @@ class ExternalApiV1RouteTests(unittest.TestCase):
                     "start": "2026-04-01T00:00:00Z",
                     "end": "2026-04-02T00:00:00Z",
                     "tz": "Europe/Helsinki",
+                    "limit": 300,
                 },
             )
 
@@ -410,6 +411,7 @@ class ExternalApiV1RouteTests(unittest.TestCase):
             start="2026-04-01T00:00:00Z",
             end="2026-04-02T00:00:00Z",
             tz="Europe/Helsinki",
+            limit=300,
         )
 
     def test_finland_board_chart_route_supports_spread(self):
@@ -435,6 +437,7 @@ class ExternalApiV1RouteTests(unittest.TestCase):
                     ("start", "2026-04-01T00:00:00Z"),
                     ("end", "2026-04-02T00:00:00Z"),
                     ("granularity", "hour"),
+                    ("limit_points", "240"),
                 ],
             )
 
@@ -449,6 +452,7 @@ class ExternalApiV1RouteTests(unittest.TestCase):
             start="2026-04-01T00:00:00Z",
             end="2026-04-02T00:00:00Z",
             granularity="hour",
+            limit_points=240,
         )
 
     def test_finland_board_field_catalog_route_returns_items(self):

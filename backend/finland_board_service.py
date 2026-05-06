@@ -20,6 +20,16 @@ GRANULARITY_ALIASES = {
 
 VALID_CHART_MODES = {"single", "compare", "spread"}
 
+FINGRID_FIELD_DATASET_IDS = {
+    "fcr_n_price_eur_mw": "317",
+    "fcr_n_volume_mw": "316",
+    "fcr_d_up_price_eur_mw": "318",
+    "fcr_d_up_volume_mw": "315",
+    "fcr_d_down_price_eur_mw": "283",
+    "fcr_d_down_volume_mw": "281",
+    "imbalance_price_eur_mwh": "319",
+}
+
 
 def _parse_timestamp(value: str) -> datetime:
     if value.endswith("Z"):
@@ -33,12 +43,31 @@ def _format_timestamp(timestamp_utc: str, timestamp_local: str | None, tz: str) 
     return _parse_timestamp(timestamp_utc).astimezone(ZoneInfo(tz)).isoformat()
 
 
-def _fetch_series(db, field_key: str, start: str | None, end: str | None, granularity: str | None = None) -> list[dict]:
-    fetcher = getattr(db, "fetch_finland_board_series", None)
+def _fetch_fingrid_dataset_series(
+    db,
+    *,
+    dataset_id: str,
+    start: str | None,
+    end: str | None,
+) -> list[dict]:
+    fetcher = getattr(db, "fetch_fingrid_series", None)
     if fetcher is None:
         return []
-    rows = fetcher(field_key, start=start, end=end, granularity=granularity)
+    rows = fetcher(dataset_id=dataset_id, start_utc=start, end_utc=end)
     return list(rows or [])
+
+
+def _fetch_series(db, field_key: str, start: str | None, end: str | None, granularity: str | None = None) -> list[dict]:
+    fetcher = getattr(db, "fetch_finland_board_series", None)
+    if fetcher is not None:
+        rows = fetcher(field_key, start=start, end=end, granularity=granularity)
+        if rows:
+            return list(rows)
+
+    dataset_id = FINGRID_FIELD_DATASET_IDS.get(field_key)
+    if dataset_id:
+        return _fetch_fingrid_dataset_series(db, dataset_id=dataset_id, start=start, end=end)
+    return []
 
 
 def _values(rows: list[dict]) -> list[float]:
@@ -68,7 +97,7 @@ def _build_join_card(start: str | None, end: str | None, db) -> dict:
     spot_keys = {row["timestamp_utc"] for row in spot_rows}
     matched = len(capacity_keys & spot_keys)
     total = len(capacity_keys)
-    completeness = round((matched / total) * 100.0, 1) if total else None
+    completeness = round((matched / total) * 100.0, 1) if total and spot_keys else None
     latest_coverage = None
     if capacity_rows or spot_rows:
         latest_coverage = max(
@@ -146,6 +175,28 @@ def _aggregate_rows_by_day(rows: list[dict], view_config: dict) -> list[dict]:
     return aggregated_rows
 
 
+def _limit_table_rows(rows: list[dict], limit: int | None) -> list[dict]:
+    if limit is None or limit <= 0 or len(rows) <= limit:
+        return rows
+    return rows[-limit:]
+
+
+def _downsample_points(points: list[dict], limit: int | None) -> list[dict]:
+    if limit is None or limit <= 0 or len(points) <= limit:
+        return points
+    if limit == 1:
+        return [points[-1]]
+
+    last_index = len(points) - 1
+    indices = sorted(
+        {
+            round(position * last_index / (limit - 1))
+            for position in range(limit)
+        }
+    )
+    return [points[index] for index in indices]
+
+
 def _points_for_series(db, field_key: str, start: str | None, end: str | None, granularity: str) -> list[dict]:
     rows = _fetch_series(db, field_key, start, end, granularity)
     return [
@@ -179,13 +230,21 @@ def build_finland_board_overview_payload(db, start: str | None, end: str | None)
     }
 
 
-def build_finland_board_table_payload(db, view: str, start: str | None, end: str | None, tz: str) -> dict:
+def build_finland_board_table_payload(
+    db,
+    view: str,
+    start: str | None,
+    end: str | None,
+    tz: str,
+    limit: int | None = None,
+) -> dict:
     view_config = get_finland_board_view(view)
     if view in {"summary_stats", "field_dictionary"}:
         raise ValueError(f"View '{view}' is not a tabular board table view")
     rows = _join_rows_for_view(view_config, db, start, end, tz)
     if view_config["granularity"] == "day":
         rows = _aggregate_rows_by_day(rows, view_config)
+    rows = _limit_table_rows(rows, limit)
     return {
         "view": view_config["view_key"],
         "title": view_config["title"],
@@ -203,6 +262,7 @@ def build_finland_board_chart_payload(
     start: str | None,
     end: str | None,
     granularity: str,
+    limit_points: int | None = None,
 ) -> dict:
     if mode not in VALID_CHART_MODES:
         raise ValueError(f"Unsupported chart mode: {mode}")
@@ -220,6 +280,7 @@ def build_finland_board_chart_payload(
                     "value": round(float(left_rows[timestamp_utc]["value"]) - float(right_rows[timestamp_utc]["value"]), 4),
                 }
             )
+        points = _downsample_points(points, limit_points)
         series = [
             {
                 "field_key": f"{fields[0]}-minus-{fields[1]}",
@@ -232,7 +293,10 @@ def build_finland_board_chart_payload(
             {
                 "field_key": field_key,
                 "label": get_finland_board_field(field_key)["label"],
-                "points": _points_for_series(db, field_key, start, end, normalized_granularity),
+                "points": _downsample_points(
+                    _points_for_series(db, field_key, start, end, normalized_granularity),
+                    limit_points,
+                ),
             }
             for field_key in fields
         ]

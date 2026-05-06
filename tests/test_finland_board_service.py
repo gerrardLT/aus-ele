@@ -245,6 +245,41 @@ class FinlandBoardServiceTests(unittest.TestCase):
         self.assertEqual(payload["rows"][0]["imbalance_price_eur_mwh"], 108.5)
         self.assertEqual(payload["rows"][1]["spot_price_fi_eur_mwh"], 70.0)
 
+    def test_table_payload_limit_returns_latest_rows_only(self):
+        payload = build_finland_board_table_payload(
+            StubDatabase(),
+            view="capacity_hourly",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-03T00:00:00Z",
+            tz="Europe/Helsinki",
+            limit=2,
+        )
+
+        self.assertEqual(len(payload["rows"]), 2)
+        self.assertEqual(
+            [row["timestamp_utc"] for row in payload["rows"]],
+            [
+                "2026-04-01T01:00:00Z",
+                "2026-04-02T00:00:00Z",
+            ],
+        )
+
+    def test_chart_payload_limit_points_downsamples_each_series(self):
+        payload = build_finland_board_chart_payload(
+            StubDatabase(),
+            fields=["fcr_n_price_eur_mw", "spot_price_fi_eur_mwh"],
+            mode="compare",
+            start="2026-04-01T00:00:00Z",
+            end="2026-04-03T00:00:00Z",
+            granularity="1h",
+            limit_points=2,
+        )
+
+        self.assertEqual(len(payload["series"]), 2)
+        self.assertEqual(len(payload["series"][0]["points"]), 2)
+        self.assertEqual(payload["series"][0]["points"][0]["timestamp_utc"], "2026-04-01T00:00:00Z")
+        self.assertEqual(payload["series"][0]["points"][-1]["timestamp_utc"], "2026-04-02T00:00:00Z")
+
     def test_invalid_view_raises_key_error(self):
         with self.assertRaises(KeyError):
             build_finland_board_table_payload(

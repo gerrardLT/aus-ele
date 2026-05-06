@@ -27,6 +27,8 @@ import { translations } from '../translations.js';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
 const BOARD_TIMEZONE = 'Europe/Helsinki';
+const BOARD_TABLE_LIMIT = 240;
+const BOARD_CHART_LIMIT_POINTS = 240;
 const LANG_STORAGE_KEY = 'app_lang';
 const TABULAR_TABS = new Set(FINLAND_PRIMARY_BOARD_TABS);
 
@@ -113,7 +115,11 @@ export default function FinlandPage() {
     [selectedFieldIds, tablePayload, fieldCatalogItems],
   );
   const chartRequest = useMemo(
-    () => buildFinlandBoardChartRequest({ selectedFields, viewGranularity: tablePayload?.granularity }),
+    () => buildFinlandBoardChartRequest({
+      selectedFields,
+      viewGranularity: tablePayload?.granularity,
+      limitPoints: BOARD_CHART_LIMIT_POINTS,
+    }),
     [selectedFields, tablePayload],
   );
   const workbenchCopy = useMemo(
@@ -238,7 +244,11 @@ export default function FinlandPage() {
         const [nextTablePayload, nextFieldCatalogPayload] = await Promise.all(
           shouldLoadTable
             ? [
-              fetchJson(buildFinlandBoardTableUrl(API_BASE, { view: activeBoardView, tz: BOARD_TIMEZONE })),
+              fetchJson(buildFinlandBoardTableUrl(API_BASE, {
+                view: activeBoardView,
+                tz: BOARD_TIMEZONE,
+                limit: BOARD_TABLE_LIMIT,
+              })),
               fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
             ]
             : [

@@ -199,17 +199,16 @@ class FingridApiTests(unittest.TestCase):
 
     @mock.patch("server.os.environ", {"FINGRID_API_KEY": "test-key"})
     @mock.patch("server.fingrid_service.sync_dataset")
-    @mock.patch("server.fingrid_catalog.list_dataset_configs", return_value=[{"dataset_id": "317"}])
     def test_run_fingrid_hourly_sync_runs_incremental_sync_for_supported_datasets(
         self,
-        mock_list_configs,
         mock_sync_dataset,
     ):
         result = server.run_fingrid_hourly_sync()
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["datasets_synced"], 1)
-        mock_sync_dataset.assert_called_once_with(self.db, dataset_id="317", mode="incremental")
+        self.assertEqual(result["datasets_synced"], len(server.FINGRID_HOURLY_DATASET_IDS))
+        called_dataset_ids = [call.kwargs["dataset_id"] for call in mock_sync_dataset.call_args_list]
+        self.assertEqual(called_dataset_ids, list(server.FINGRID_HOURLY_DATASET_IDS))
 
     @mock.patch("server.fingrid_service.sync_dataset")
     def test_run_fingrid_hourly_sync_skips_when_api_key_is_missing(self, mock_sync_dataset):
@@ -232,10 +231,8 @@ class FingridApiTests(unittest.TestCase):
 
     @mock.patch("server.os.environ", {"FINGRID_API_KEY": "test-key"})
     @mock.patch("server.fingrid_service.sync_dataset", side_effect=RuntimeError("403 blocked by upstream"))
-    @mock.patch("server.fingrid_catalog.list_dataset_configs", return_value=[{"dataset_id": "317"}])
     def test_run_fingrid_hourly_sync_returns_structured_error_when_background_sync_fails(
         self,
-        mock_list_configs,
         mock_sync_dataset,
     ):
         result = server.run_fingrid_hourly_sync()
@@ -243,4 +240,23 @@ class FingridApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["datasets_synced"], 0)
         self.assertIn("403 blocked by upstream", result["detail"])
-        mock_sync_dataset.assert_called_once_with(self.db, dataset_id="317", mode="incremental")
+        self.assertEqual(mock_sync_dataset.call_count, len(server.FINGRID_HOURLY_DATASET_IDS))
+
+    @mock.patch("server.os.environ", {"FINGRID_API_KEY": "test-key"})
+    @mock.patch("server.fingrid_service.sync_dataset")
+    def test_run_fingrid_daily_sync_runs_incremental_sync_for_yearly_datasets(self, mock_sync_dataset):
+        result = server.run_fingrid_daily_sync()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["datasets_synced"], len(server.FINGRID_DAILY_DATASET_IDS))
+        called_dataset_ids = [call.kwargs["dataset_id"] for call in mock_sync_dataset.call_args_list]
+        self.assertEqual(called_dataset_ids, list(server.FINGRID_DAILY_DATASET_IDS))
+
+    @mock.patch("server.fingrid_service.sync_dataset")
+    def test_run_fingrid_daily_sync_skips_when_api_key_is_missing(self, mock_sync_dataset):
+        with mock.patch.dict("server.os.environ", {}, clear=True):
+            result = server.run_fingrid_daily_sync()
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "missing_api_key")
+        mock_sync_dataset.assert_not_called()
