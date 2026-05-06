@@ -137,7 +137,7 @@ export default function FinlandComparisonRail({
           {seriesCards.map((item, index) => (
             <article
               key={item.field_key}
-              className="grid gap-3 rounded-lg border border-[color:color-mix(in_oklab,var(--color-border)_82%,#d4b26a_18%)] bg-[rgba(11,19,31,0.78)] p-4"
+              className="grid min-w-0 gap-3 rounded-lg border border-[color:color-mix(in_oklab,var(--color-border)_82%,#d4b26a_18%)] bg-[rgba(11,19,31,0.78)] p-4"
             >
               <div className="grid gap-1">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
@@ -153,8 +153,8 @@ export default function FinlandComparisonRail({
                 </div>
               </div>
 
-              <div className="h-24">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-24 min-w-0">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={96}>
                   <LineChart data={item.chartPoints}>
                     <Tooltip content={<CompactTooltip />} />
                     <Line

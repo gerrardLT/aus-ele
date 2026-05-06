@@ -428,6 +428,20 @@ test('main.jsx mounts a real FinlandPage import for the finland root page', () =
   assert.doesNotMatch(source, /const FinlandPage = App/);
 });
 
+test('frontend pages use shared api base resolution instead of hard-coded dev origins', () => {
+  const finlandSource = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+  const fingridSource = fs.readFileSync(path.resolve(__dirname, '../pages/FingridPage.jsx'), 'utf8');
+  const portalSource = fs.readFileSync(path.resolve(__dirname, '../pages/DeveloperPortalPage.jsx'), 'utf8');
+  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  const apiBaseSource = fs.readFileSync(path.resolve(__dirname, './apiBase.js'), 'utf8');
+
+  assert.match(finlandSource, /getApiBase/);
+  assert.match(fingridSource, /getApiBase/);
+  assert.match(portalSource, /getApiBase/);
+  assert.match(appSource, /getApiBase/);
+  assert.match(apiBaseSource, /return '\/api'/);
+});
+
 test('FinlandPage uses board overview and readiness helpers with workspace shell components', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
 

@@ -4,9 +4,10 @@ import { ArrowRight, Activity, Database, ChevronUp, List } from 'lucide-react';
 import PriceChart from './components/PriceChart';
 import SummaryStats from './components/SummaryStats';
 import { fetchJson } from './lib/apiClient';
+import { getApiBase } from './lib/apiBase';
 import { translations } from './translations';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const API_BASE = getApiBase();
 const HourlyDistributionChart = lazy(() => import('./components/HourlyDistributionChart'));
 const PeakAnalysis = lazy(() => import('./components/PeakAnalysis'));
 const FcasAnalysis = lazy(() => import('./components/FcasAnalysis'));

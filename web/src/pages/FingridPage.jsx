@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchJson } from '../lib/apiClient';
+import { getApiBase } from '../lib/apiBase';
 import {
   buildFingridExportUrl,
   buildFingridSeriesUrl,
@@ -20,7 +21,7 @@ import FingridSeriesChart from '../components/fingrid/FingridSeriesChart';
 import FingridStatusPanel from '../components/fingrid/FingridStatusPanel';
 import FingridSummaryCards from '../components/fingrid/FingridSummaryCards';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const API_BASE = getApiBase();
 const LANG_STORAGE_KEY = 'app_lang';
 const AUTO_REFRESH_STATUS_INTERVAL_MS = 5 * 60 * 1000;
 

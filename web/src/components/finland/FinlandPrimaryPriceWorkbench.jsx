@@ -43,7 +43,7 @@ export default function FinlandPrimaryPriceWorkbench({
           copy={copy.selector}
         />
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(18rem,0.88fr)]">
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(18rem,0.88fr)]">
           <FinlandLinkedChart
             apiBase={apiBase}
             chartRequest={mainChartRequest}

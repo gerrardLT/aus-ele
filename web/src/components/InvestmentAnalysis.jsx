@@ -18,10 +18,11 @@ import {
   getInvestmentCopy,
   shouldAutoRunInvestment,
 } from '../lib/investmentAnalysis';
+import { getApiBase } from '../lib/apiBase';
 import DataQualityBadge from './DataQualityBadge';
 import { getDataGradeCaveat, getResultMetadata } from '../lib/resultMetadata';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const API_BASE = getApiBase();
 
 const PRESET_DEFAULTS = {
   power_mw: 100,

@@ -6,6 +6,7 @@ import FinlandOverviewCards from '../components/finland/FinlandOverviewCards';
 import FinlandPrimaryPriceWorkbench from '../components/finland/FinlandPrimaryPriceWorkbench';
 import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
 import { fetchJson } from '../lib/apiClient';
+import { getApiBase } from '../lib/apiBase';
 import {
   FINLAND_DAILY_BOARD_VIEWS,
   FINLAND_PRIMARY_BOARD_TABS,
@@ -27,7 +28,7 @@ import {
 } from '../lib/finlandApi';
 import { translations } from '../translations.js';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const API_BASE = getApiBase();
 const BOARD_TIMEZONE = 'Europe/Helsinki';
 const LANG_STORAGE_KEY = 'app_lang';
 const TABULAR_TABS = new Set(FINLAND_PRIMARY_BOARD_TABS);

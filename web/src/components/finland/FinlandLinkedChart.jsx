@@ -102,7 +102,7 @@ export default function FinlandLinkedChart({
   const chartData = useMemo(() => buildChartData(payload?.series), [payload]);
 
   return (
-    <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+    <section className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
         {copy.eyebrow}
       </div>
@@ -143,8 +143,8 @@ export default function FinlandLinkedChart({
 
           {hasSelection && !loading && !error && payload?.series?.length ? (
             <>
-              <div className="h-72 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-72 min-w-0 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240}>
                   <LineChart data={chartData}>
                     <CartesianGrid stroke="rgba(148,163,184,0.16)" strokeDasharray="3 3" />
                     <XAxis dataKey="timestamp" minTickGap={36} stroke="rgba(148,163,184,0.72)" />
