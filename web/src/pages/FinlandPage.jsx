@@ -2,21 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import PageWorkspaceNav from '../components/PageWorkspaceNav';
 import FinlandBoardHeader from '../components/finland/FinlandBoardHeader';
 import FinlandDataTable from '../components/finland/FinlandDataTable';
-import FinlandFieldDetailPanel from '../components/finland/FinlandFieldDetailPanel';
-import FinlandLinkedChart from '../components/finland/FinlandLinkedChart';
 import FinlandOverviewCards from '../components/finland/FinlandOverviewCards';
+import FinlandPrimaryPriceWorkbench from '../components/finland/FinlandPrimaryPriceWorkbench';
 import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
 import { fetchJson } from '../lib/apiClient';
+import { getApiBase } from '../lib/apiBase';
 import {
   FINLAND_DAILY_BOARD_VIEWS,
   FINLAND_PRIMARY_BOARD_TABS,
-  buildFinlandBoardChartRequest,
   buildFinlandBoardDictionaryRows,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
+  buildFinlandComparisonRailRequest,
+  buildFinlandPrimaryPriceOptions,
+  buildFinlandPrimaryPriceSummary,
   buildFinlandBoardSelectedFields,
   buildFinlandBoardTableUrl,
+  getDefaultFinlandPrimaryPriceField,
   getFinlandBoardOverviewCards,
   getFinlandBoardTableColumns,
   getFinlandBoardTableRows,
@@ -25,7 +28,7 @@ import {
 } from '../lib/finlandApi';
 import { translations } from '../translations.js';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const API_BASE = getApiBase();
 const BOARD_TIMEZONE = 'Europe/Helsinki';
 const BOARD_TABLE_LIMIT = 240;
 const BOARD_CHART_LIMIT_POINTS = 240;
@@ -38,24 +41,6 @@ function readPreferredLang() {
   } catch {
     return 'zh';
   }
-}
-
-function readPath(source, path, fallback = null) {
-  return path.split('.').reduce((value, key) => value?.[key], source) ?? fallback;
-}
-
-function formatCoverageWindow(overviewPayload, readinessPayload, copy) {
-  const start = readPath(overviewPayload, 'window.start')
-    || readPath(overviewPayload, 'data.window.start')
-    || readPath(readinessPayload, 'coverage.start');
-  const end = readPath(overviewPayload, 'window.end')
-    || readPath(overviewPayload, 'data.window.end')
-    || readPath(readinessPayload, 'coverage.end');
-
-  if (start && end) {
-    return `${start} -> ${end}`;
-  }
-  return start || end || copy.notAvailable;
 }
 
 function buildHeaderMetrics(copy, overviewPayload, readinessPayload) {
@@ -74,6 +59,7 @@ export default function FinlandPage() {
   const [fieldCatalogPayload, setFieldCatalogPayload] = useState(null);
   const [activeTab, setActiveTab] = useState('capacity_hourly');
   const [dailyMode, setDailyMode] = useState('daily_capacity');
+  const [primaryFieldKey, setPrimaryFieldKey] = useState(() => getDefaultFinlandPrimaryPriceField());
   const [selectedFieldIds, setSelectedFieldIds] = useState([]);
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [boardLoading, setBoardLoading] = useState(true);
@@ -110,17 +96,59 @@ export default function FinlandPage() {
     () => buildFinlandBoardDictionaryRows(fieldCatalogItems),
     [fieldCatalogItems],
   );
-  const selectedFields = useMemo(
-    () => buildFinlandBoardSelectedFields({ selectedFieldIds, tablePayload, fieldCatalogItems }),
-    [selectedFieldIds, tablePayload, fieldCatalogItems],
+  const primaryPriceOptions = useMemo(
+    () => buildFinlandPrimaryPriceOptions(fieldCatalogItems, { boardView: activeBoardView }),
+    [activeBoardView, fieldCatalogItems],
   );
-  const chartRequest = useMemo(
-    () => buildFinlandBoardChartRequest({
-      selectedFields,
-      viewGranularity: tablePayload?.granularity,
+  const effectivePrimaryFieldKey = primaryFieldKey;
+  const primaryPriceSummary = useMemo(
+    () => buildFinlandPrimaryPriceSummary({
+      primaryFieldKey: effectivePrimaryFieldKey,
+      tableRows,
+    }),
+    [effectivePrimaryFieldKey, tableRows],
+  );
+  const comparisonItems = useMemo(() => {
+    const request = buildFinlandComparisonRailRequest({
+      primaryFieldKey: effectivePrimaryFieldKey,
+      granularity: tablePayload?.granularity,
+    });
+    const fieldCatalogByKey = new Map(fieldCatalogItems.map((item) => [item.field_key, item]));
+
+    return request.fields
+      .filter((fieldKey) => fieldKey !== effectivePrimaryFieldKey)
+      .map((fieldKey) => fieldCatalogByKey.get(fieldKey))
+      .filter(Boolean)
+      .map((item) => ({
+        ...item,
+        id: item.field_key,
+        description: item.methodology_note || item.source_name || item.unit || item.field_key,
+      }));
+  }, [effectivePrimaryFieldKey, fieldCatalogItems, tablePayload]);
+  const comparisonChartRequest = useMemo(
+    () => buildFinlandComparisonRailRequest({
+      primaryFieldKey: effectivePrimaryFieldKey,
+      granularity: tablePayload?.granularity,
       limitPoints: BOARD_CHART_LIMIT_POINTS,
     }),
-    [selectedFields, tablePayload],
+    [effectivePrimaryFieldKey, tablePayload],
+  );
+  const primarySelectedField = useMemo(() => {
+    const [field] = buildFinlandBoardSelectedFields({
+      selectedFieldIds: [effectivePrimaryFieldKey],
+      tablePayload,
+      fieldCatalogItems,
+    });
+    return field || null;
+  }, [effectivePrimaryFieldKey, fieldCatalogItems, tablePayload]);
+  const mainChartRequest = useMemo(
+    () => ({
+      fields: [effectivePrimaryFieldKey],
+      mode: 'single',
+      granularity: tablePayload?.granularity || '1h',
+      limitPoints: BOARD_CHART_LIMIT_POINTS,
+    }),
+    [effectivePrimaryFieldKey, tablePayload],
   );
   const workbenchCopy = useMemo(
     () => ({
@@ -252,7 +280,7 @@ export default function FinlandPage() {
               fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
             ]
             : [
-              Promise.resolve(tablePayload),
+              Promise.resolve(null),
               fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
             ],
         );
@@ -282,6 +310,20 @@ export default function FinlandPage() {
       cancelled = true;
     };
   }, [activeBoardView, activeTab]);
+
+  useEffect(() => {
+    if (!primaryPriceOptions.length) {
+      return;
+    }
+
+    const hasCurrentOption = primaryPriceOptions.some((item) => item.field_key === primaryFieldKey);
+    if (hasCurrentOption) {
+      return;
+    }
+
+    const defaultField = primaryPriceOptions.find((item) => item.field_key === getDefaultFinlandPrimaryPriceField());
+    setPrimaryFieldKey(defaultField?.field_key || primaryPriceOptions[0].field_key);
+  }, [primaryFieldKey, primaryPriceOptions]);
 
   const handleDictionaryJump = (fieldKey, preferredView) => {
     if (FINLAND_DAILY_BOARD_VIEWS.includes(preferredView)) {
@@ -341,6 +383,21 @@ export default function FinlandPage() {
           onDictionaryJump={handleDictionaryJump}
         />
 
+        <FinlandPrimaryPriceWorkbench
+          apiBase={API_BASE}
+          copy={copy.priceWorkbench}
+          priceOptions={primaryPriceOptions}
+          selectedFieldKey={effectivePrimaryFieldKey}
+          onSelectField={setPrimaryFieldKey}
+          summary={primaryPriceSummary}
+          comparisonItems={comparisonItems}
+          mainChartRequest={mainChartRequest}
+          comparisonChartRequest={comparisonChartRequest}
+          selectedField={primarySelectedField}
+          mainChartCopy={copy.linkedChart}
+          fieldDetailCopy={{ ...copy.fieldDetailPanel, notAvailable: copy.notAvailable }}
+        />
+
         {TABULAR_TABS.has(activeTab) ? (
           <FinlandDataTable
             columns={tableColumns}
@@ -353,21 +410,6 @@ export default function FinlandPage() {
               description: `${copy.task7.tableDescriptionPrefix} ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
             }}
           />
-        ) : null}
-
-        {activeTab === 'analysis' ? (
-          <section className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
-            <FinlandLinkedChart
-              apiBase={API_BASE}
-              chartRequest={chartRequest}
-              selectedFields={selectedFields}
-              copy={copy.linkedChart}
-            />
-            <FinlandFieldDetailPanel
-              selectedFields={selectedFields}
-              copy={{ ...copy.fieldDetailPanel, notAvailable: copy.notAvailable }}
-            />
-          </section>
         ) : null}
       </div>
     </main>

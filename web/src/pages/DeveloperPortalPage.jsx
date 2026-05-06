@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchJson } from '../lib/apiClient';
+import { getApiBase } from '../lib/apiBase';
 import PageSection from '../components/PageSection';
 import PageWorkspaceNav from '../components/PageWorkspaceNav';
 import { translations } from '../translations.js';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const API_BASE = getApiBase();
 const LANG_STORAGE_KEY = 'app_lang';
 const API_KEY_STORAGE_KEY = 'developer_portal_api_key';
 

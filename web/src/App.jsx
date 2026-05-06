@@ -8,9 +8,10 @@ import DataQualityBadge from './components/DataQualityBadge';
 import PageSection from './components/PageSection';
 import PageWorkspaceNav from './components/PageWorkspaceNav';
 import { fetchJson } from './lib/apiClient';
+import { getApiBase } from './lib/apiBase';
 import { translations } from './translations';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+const API_BASE = getApiBase();
 const HourlyDistributionChart = lazy(() => import('./components/HourlyDistributionChart'));
 const PeakAnalysis = lazy(() => import('./components/PeakAnalysis'));
 const FcasAnalysis = lazy(() => import('./components/FcasAnalysis'));

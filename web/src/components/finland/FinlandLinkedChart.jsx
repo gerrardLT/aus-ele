@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import { fetchJson } from '../../lib/apiClient';
 import { buildFinlandBoardChartUrl } from '../../lib/finlandApi';
+import { useMeasuredElement } from '../../lib/useMeasuredElement';
 
 const SERIES_COLORS = ['#5eead4', '#f59e0b', '#38bdf8', '#fb7185'];
 
@@ -56,9 +57,8 @@ export default function FinlandLinkedChart({
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [chartWidth, setChartWidth] = useState(0);
-  const chartContainerRef = useRef(null);
   const hasSelection = selectedFields.length > 0;
+  const [chartFrameRef, chartFrameSize] = useMeasuredElement();
 
   useEffect(() => {
     let cancelled = false;
@@ -101,30 +101,6 @@ export default function FinlandLinkedChart({
   }, [apiBase, chartRequest]);
 
   const chartData = useMemo(() => buildChartData(payload?.series), [payload]);
-
-  useEffect(() => {
-    const element = chartContainerRef.current;
-    if (!element) {
-      setChartWidth(0);
-      return undefined;
-    }
-
-    const updateWidth = () => {
-      setChartWidth(element.clientWidth || 0);
-    };
-
-    updateWidth();
-
-    if (typeof ResizeObserver === 'undefined') {
-      return undefined;
-    }
-
-    const observer = new ResizeObserver(() => {
-      updateWidth();
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [hasSelection, loading, error, payload]);
 
   return (
     <section className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
@@ -169,11 +145,11 @@ export default function FinlandLinkedChart({
           {hasSelection && !loading && !error && payload?.series?.length ? (
             <>
               <div
-                ref={chartContainerRef}
+                ref={chartFrameRef}
                 className="h-72 min-w-0 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3"
               >
-                {chartWidth > 0 ? (
-                  <LineChart width={chartWidth - 24} height={264} data={chartData}>
+                {chartFrameSize.width > 0 && chartFrameSize.height > 0 ? (
+                  <LineChart width={chartFrameSize.width} height={chartFrameSize.height} data={chartData}>
                     <CartesianGrid stroke="rgba(148,163,184,0.16)" strokeDasharray="3 3" />
                     <XAxis dataKey="timestamp" minTickGap={36} stroke="rgba(148,163,184,0.72)" />
                     <YAxis stroke="rgba(148,163,184,0.72)" />

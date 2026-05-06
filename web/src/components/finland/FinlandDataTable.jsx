@@ -30,8 +30,8 @@ export default function FinlandDataTable({
   };
 
   return (
-    <section className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)]">
-      <div className="border-b border-[var(--color-border)] bg-[linear-gradient(135deg,rgba(79,209,197,0.14),rgba(251,191,36,0.1),transparent)] px-5 py-4">
+    <section className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[color:color-mix(in_oklab,var(--color-panel)_86%,transparent)]">
+      <div className="border-b border-[var(--color-border)] bg-[linear-gradient(135deg,rgba(148,163,184,0.08),rgba(212,178,106,0.08),transparent)] px-5 py-4">
         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
           {copy.eyebrow}
         </div>
