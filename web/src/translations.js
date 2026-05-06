@@ -1076,3 +1076,67 @@ translations.zh.finlandBoard.fieldDetailPanel = {
     methodology: '\u65b9\u6cd5\u8bf4\u660e',
   },
 };
+
+translations.en.finlandBoard.priceWorkbench = {
+  eyebrow: 'Primary Price Workbench',
+  title: 'Finland reserve price lens',
+  description: 'Keep the primary reserve price in focus while staging summary and comparison surfaces for the later page recomposition.',
+  selector: {
+    label: 'Primary series',
+    helper: 'Choose the lead reserve price series for the workbench.',
+    empty: 'No primary price series available.',
+  },
+  summary: {
+    title: 'Summary Strip',
+    latestLabel: 'Latest',
+    highLabel: 'High',
+    lowLabel: 'Low',
+    meanLabel: 'Mean',
+    spreadLabel: 'Spread vs Spot',
+    volatilityLabel: 'Volatility',
+    volatilityValues: {
+      high: 'High',
+      medium: 'Medium',
+      low: 'Low',
+      no_data: 'No Data',
+    },
+    empty: 'Summary metrics will appear after the price summary wiring lands.',
+  },
+  comparison: {
+    title: 'Comparison Rail',
+    description: 'Stage adjacent comparison slots for reserve volume and Finland spot context.',
+    empty: 'Comparison series will appear here once the page connects the rail request.',
+  },
+};
+
+translations.zh.finlandBoard.priceWorkbench = {
+  eyebrow: '\u4e3b\u4ef7\u683c\u5de5\u4f5c\u53f0',
+  title: '\u82ac\u5170\u50a8\u5907\u4ef7\u683c\u89c2\u5bdf\u53f0',
+  description: '\u5148\u805a\u7126\u4e3b\u4ef7\u683c\u5e8f\u5217\uff0c\u540c\u65f6\u4e3a\u540e\u7eed\u9875\u9762\u91cd\u7ec4\u9884\u7559\u6982\u89c8\u4e0e\u5bf9\u6bd4\u4f4d\u3002',
+  selector: {
+    label: '\u4e3b\u5e8f\u5217',
+    helper: '\u9009\u62e9\u5f53\u524d\u5de5\u4f5c\u53f0\u7684\u4e3b\u50a8\u5907\u4ef7\u683c\u5b57\u6bb5\u3002',
+    empty: '\u6682\u65e0\u53ef\u9009\u7684\u4e3b\u4ef7\u683c\u5e8f\u5217\u3002',
+  },
+  summary: {
+    title: '\u6982\u89c8\u6761',
+    latestLabel: '\u6700\u65b0',
+    highLabel: '\u6700\u9ad8',
+    lowLabel: '\u6700\u4f4e',
+    meanLabel: '\u5747\u503c',
+    spreadLabel: '\u8f83\u73b0\u8d27\u4ef7\u5dee',
+    volatilityLabel: '\u6ce2\u52a8\u6027',
+    volatilityValues: {
+      high: '\u9ad8',
+      medium: '\u4e2d',
+      low: '\u4f4e',
+      no_data: '\u65e0\u6570\u636e',
+    },
+    empty: '\u5f85\u4e3b\u4ef7\u683c\u6982\u89c8\u63a5\u7ebf\u540e\uff0c\u8fd9\u91cc\u4f1a\u663e\u793a\u6307\u6807\u3002',
+  },
+  comparison: {
+    title: '\u5bf9\u6bd4\u8f68\u9053',
+    description: '\u4e3a\u50a8\u5907\u4f53\u91cf\u4e0e\u82ac\u5170\u73b0\u8d27\u4e0a\u4e0b\u6587\u9884\u7559\u5bf9\u6bd4\u4f4d\u3002',
+    empty: '\u7b49\u5f85\u9875\u9762\u63a5\u5165\u5bf9\u6bd4\u8f68\u9053\u8bf7\u6c42\u540e\u5728\u6b64\u663e\u793a\u3002',
+  },
+};

@@ -14,6 +14,7 @@ import {
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
+  buildFinlandPrimaryPriceOptions,
   buildFinlandBoardSelectedFields,
   buildFinlandPrimaryPriceSummary,
   buildFinlandBoardTableUrl,
@@ -140,7 +141,7 @@ test('Finland primary price helpers expose the default field and a stable summar
       lowValue: 10,
       meanValue: 20,
       spreadVsSpotLatest: -40,
-      volatilityLabel: 'high',
+      volatilityBand: 'high',
     },
   );
 
@@ -155,7 +156,7 @@ test('Finland primary price helpers expose the default field and a stable summar
       lowValue: null,
       meanValue: null,
       spreadVsSpotLatest: null,
-      volatilityLabel: 'no_data',
+      volatilityBand: 'no_data',
     },
   );
 });
@@ -188,8 +189,31 @@ test('buildFinlandPrimaryPriceSummary aligns latest spread to the latest valid p
       lowValue: 12,
       meanValue: 18.5,
       spreadVsSpotLatest: null,
-      volatilityLabel: 'medium',
+      volatilityBand: 'medium',
     },
+  );
+});
+
+test('buildFinlandPrimaryPriceOptions keeps reserve price choices domain-aware per board view', () => {
+  const fieldCatalogItems = [
+    { field_key: 'fcr_n_price_eur_mw', label: 'FCR-N Capacity Price', unit: 'EUR/MW', category: 'capacity' },
+    { field_key: 'afrr_cap_up_eur_mw', label: 'aFRR Capacity Up Price', unit: 'EUR/MW', category: 'capacity' },
+    { field_key: 'afrr_act_up_eur_mwh', label: 'aFRR Activation Up Price', unit: 'EUR/MWh', category: 'activation' },
+    { field_key: 'spot_price_fi_eur_mwh', label: 'Finland Spot Price', unit: 'EUR/MWh', category: 'spot' },
+    { field_key: 'fcr_n_volume_mw', label: 'FCR-N Volume', unit: 'MW', category: 'capacity' },
+  ];
+
+  assert.deepEqual(
+    buildFinlandPrimaryPriceOptions(fieldCatalogItems, { boardView: 'capacity_hourly' }).map((item) => item.field_key),
+    ['fcr_n_price_eur_mw', 'afrr_cap_up_eur_mw'],
+  );
+  assert.deepEqual(
+    buildFinlandPrimaryPriceOptions(fieldCatalogItems, { boardView: 'activation_15m' }).map((item) => item.field_key),
+    ['afrr_act_up_eur_mwh'],
+  );
+  assert.deepEqual(
+    buildFinlandPrimaryPriceOptions(fieldCatalogItems, { boardView: 'field_dictionary' }).map((item) => item.field_key),
+    ['fcr_n_price_eur_mw', 'afrr_act_up_eur_mwh', 'afrr_cap_up_eur_mw'],
   );
 });
 
@@ -518,6 +542,21 @@ test('Finland translations include table, chart, and detail shell copy owned by 
   assert.ok(translations.zh.finlandBoard.task7);
 });
 
+test('Finland translations include primary price workbench copy in both languages', () => {
+  assert.equal(translations.en.finlandBoard.priceWorkbench.eyebrow, 'Primary Price Workbench');
+  assert.equal(translations.en.finlandBoard.priceWorkbench.selector.label, 'Primary series');
+  assert.equal(translations.en.finlandBoard.priceWorkbench.summary.latestLabel, 'Latest');
+  assert.equal(translations.en.finlandBoard.priceWorkbench.comparison.title, 'Comparison Rail');
+  assert.equal(translations.en.finlandBoard.priceWorkbench.summary.volatilityValues.high, 'High');
+  assert.equal(translations.en.finlandBoard.priceWorkbench.summary.volatilityValues.no_data, 'No Data');
+
+  assert.equal(translations.zh.finlandBoard.priceWorkbench.eyebrow, '主价格工作台');
+  assert.equal(translations.zh.finlandBoard.priceWorkbench.selector.label, '主序列');
+  assert.equal(translations.zh.finlandBoard.priceWorkbench.summary.latestLabel, '最新');
+  assert.equal(translations.zh.finlandBoard.priceWorkbench.summary.volatilityValues.medium, '中');
+  assert.equal(translations.zh.finlandBoard.priceWorkbench.comparison.title, '对比轨道');
+});
+
 test('FinlandPage reads Task 7 labels from translation-backed copy instead of inline literals', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
 
@@ -526,6 +565,41 @@ test('FinlandPage reads Task 7 labels from translation-backed copy instead of in
   assert.doesNotMatch(source, /Field Dictionary/);
   assert.doesNotMatch(source, /Current view:/);
   assert.doesNotMatch(source, /No field catalog rows available\./);
+});
+
+test('FinlandPage references the primary price workbench and translation-backed workbench copy', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+
+  assert.match(source, /FinlandPrimaryPriceWorkbench/);
+  assert.match(source, /priceWorkbench/);
+  assert.match(source, /buildFinlandPrimaryPriceOptions/);
+  assert.match(source, /buildFinlandPrimaryPriceSummary/);
+  assert.match(source, /buildFinlandComparisonRailRequest/);
+  assert.match(source, /selectedFieldKey=\{effectivePrimaryFieldKey\}/);
+  assert.match(source, /summary=\{primaryPriceSummary\}/);
+  assert.match(source, /comparisonItems=\{comparisonItems\}/);
+});
+
+test('Finland primary price workbench scaffolds exist as focused components', () => {
+  const selectorSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPrimaryPriceSelector.jsx'), 'utf8');
+  const summarySource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPriceSummaryStrip.jsx'), 'utf8');
+  const railSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandComparisonRail.jsx'), 'utf8');
+  const workbenchSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPrimaryPriceWorkbench.jsx'), 'utf8');
+
+  assert.match(selectorSource, /copy/);
+  assert.match(selectorSource, /option\.field_key/);
+  assert.match(selectorSource, /onChange\?\.\(option\.field_key\)/);
+  assert.match(summarySource, /copy/);
+  assert.match(summarySource, /volatilityBand/);
+  assert.match(summarySource, /volatilityValues/);
+  assert.match(railSource, /copy/);
+  assert.match(railSource, /item\.description \|\| item\.unit \|\| item\.field_key/);
+  assert.match(workbenchSource, /FinlandPrimaryPriceSelector/);
+  assert.match(workbenchSource, /FinlandPriceSummaryStrip/);
+  assert.match(workbenchSource, /FinlandComparisonRail/);
+  assert.match(workbenchSource, /copy\.selector/);
+  assert.match(workbenchSource, /copy\.summary/);
+  assert.match(workbenchSource, /copy\.comparison/);
 });
 
 test('Finland board components expose overview and workbench shell structure with page-owned header metrics', () => {

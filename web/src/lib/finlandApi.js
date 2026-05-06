@@ -6,6 +6,13 @@ const NON_SELECTABLE_FIELD_CATEGORIES = new Set(['time']);
 const NON_SELECTABLE_GRANULARITIES = new Set(['display']);
 const FINLAND_DEFAULT_PRIMARY_PRICE_FIELD = 'fcr_n_price_eur_mw';
 const FINLAND_SPOT_PRICE_FIELD = 'spot_price_fi_eur_mwh';
+const FINLAND_RESERVE_PRICE_CATEGORIES = new Set(['capacity', 'activation']);
+const FINLAND_BOARD_VIEW_CATEGORY_MAP = {
+  capacity_hourly: 'capacity',
+  daily_capacity: 'capacity',
+  activation_15m: 'activation',
+  daily_activation: 'activation',
+};
 const FINLAND_PRICE_SUPPORT_FIELD_MAP = new Map([
   ['fcr_n_price_eur_mw', 'fcr_n_volume_mw'],
   ['fcr_d_up_price_eur_mw', 'fcr_d_up_volume_mw'],
@@ -105,6 +112,39 @@ export function getDefaultFinlandPrimaryPriceField() {
   return FINLAND_DEFAULT_PRIMARY_PRICE_FIELD;
 }
 
+export function buildFinlandPrimaryPriceOptions(fieldCatalogItems = [], { boardView } = {}) {
+  const preferredCategory = FINLAND_BOARD_VIEW_CATEGORY_MAP[boardView] || null;
+  const reservePriceItems = fieldCatalogItems.filter((item) => {
+    if (!item?.field_key || !item?.label || !item?.unit) {
+      return false;
+    }
+
+    if (!FINLAND_RESERVE_PRICE_CATEGORIES.has(item.category)) {
+      return false;
+    }
+
+    if (!item.unit.startsWith('EUR/')) {
+      return false;
+    }
+
+    if (preferredCategory && item.category !== preferredCategory) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return reservePriceItems.sort((left, right) => {
+    if (left.field_key === FINLAND_DEFAULT_PRIMARY_PRICE_FIELD) {
+      return -1;
+    }
+    if (right.field_key === FINLAND_DEFAULT_PRIMARY_PRICE_FIELD) {
+      return 1;
+    }
+    return left.label.localeCompare(right.label);
+  });
+}
+
 export function buildFinlandPrimaryPriceSummary({
   primaryFieldKey = FINLAND_DEFAULT_PRIMARY_PRICE_FIELD,
   tableRows = [],
@@ -131,7 +171,7 @@ export function buildFinlandPrimaryPriceSummary({
       lowValue: null,
       meanValue: null,
       spreadVsSpotLatest: null,
-      volatilityLabel: 'no_data',
+      volatilityBand: 'no_data',
     };
   }
 
@@ -148,7 +188,7 @@ export function buildFinlandPrimaryPriceSummary({
       latestValue !== null && latestAlignedSpotValue !== null
         ? latestValue - latestAlignedSpotValue
         : null,
-    volatilityLabel: getFinlandVolatilityLabel(primaryValues),
+    volatilityBand: getFinlandVolatilityLabel(primaryValues),
   };
 }
 

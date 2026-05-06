@@ -5,6 +5,7 @@ import FinlandDataTable from '../components/finland/FinlandDataTable';
 import FinlandFieldDetailPanel from '../components/finland/FinlandFieldDetailPanel';
 import FinlandLinkedChart from '../components/finland/FinlandLinkedChart';
 import FinlandOverviewCards from '../components/finland/FinlandOverviewCards';
+import FinlandPrimaryPriceWorkbench from '../components/finland/FinlandPrimaryPriceWorkbench';
 import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
 import { fetchJson } from '../lib/apiClient';
 import {
@@ -15,8 +16,12 @@ import {
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
+  buildFinlandComparisonRailRequest,
+  buildFinlandPrimaryPriceOptions,
+  buildFinlandPrimaryPriceSummary,
   buildFinlandBoardSelectedFields,
   buildFinlandBoardTableUrl,
+  getDefaultFinlandPrimaryPriceField,
   getFinlandBoardOverviewCards,
   getFinlandBoardTableColumns,
   getFinlandBoardTableRows,
@@ -36,24 +41,6 @@ function readPreferredLang() {
   } catch {
     return 'zh';
   }
-}
-
-function readPath(source, path, fallback = null) {
-  return path.split('.').reduce((value, key) => value?.[key], source) ?? fallback;
-}
-
-function formatCoverageWindow(overviewPayload, readinessPayload, copy) {
-  const start = readPath(overviewPayload, 'window.start')
-    || readPath(overviewPayload, 'data.window.start')
-    || readPath(readinessPayload, 'coverage.start');
-  const end = readPath(overviewPayload, 'window.end')
-    || readPath(overviewPayload, 'data.window.end')
-    || readPath(readinessPayload, 'coverage.end');
-
-  if (start && end) {
-    return `${start} -> ${end}`;
-  }
-  return start || end || copy.notAvailable;
 }
 
 function buildHeaderMetrics(copy, overviewPayload, readinessPayload) {
@@ -108,6 +95,39 @@ export default function FinlandPage() {
     () => buildFinlandBoardDictionaryRows(fieldCatalogItems),
     [fieldCatalogItems],
   );
+  const defaultPrimaryFieldKey = useMemo(
+    () => getDefaultFinlandPrimaryPriceField(),
+    [],
+  );
+  const primaryPriceOptions = useMemo(
+    () => buildFinlandPrimaryPriceOptions(fieldCatalogItems, { boardView: activeBoardView }),
+    [activeBoardView, fieldCatalogItems],
+  );
+  const effectivePrimaryFieldKey = selectedFieldIds[0] || defaultPrimaryFieldKey;
+  const primaryPriceSummary = useMemo(
+    () => buildFinlandPrimaryPriceSummary({
+      primaryFieldKey: effectivePrimaryFieldKey,
+      tableRows,
+    }),
+    [effectivePrimaryFieldKey, tableRows],
+  );
+  const comparisonItems = useMemo(() => {
+    const request = buildFinlandComparisonRailRequest({
+      primaryFieldKey: effectivePrimaryFieldKey,
+      granularity: tablePayload?.granularity,
+    });
+    const fieldCatalogByKey = new Map(fieldCatalogItems.map((item) => [item.field_key, item]));
+
+    return request.fields
+      .filter((fieldKey) => fieldKey !== effectivePrimaryFieldKey)
+      .map((fieldKey) => fieldCatalogByKey.get(fieldKey))
+      .filter(Boolean)
+      .map((item) => ({
+        ...item,
+        id: item.field_key,
+        description: item.methodology_note || item.source_name || item.unit || item.field_key,
+      }));
+  }, [effectivePrimaryFieldKey, fieldCatalogItems, tablePayload]);
   const selectedFields = useMemo(
     () => buildFinlandBoardSelectedFields({ selectedFieldIds, tablePayload, fieldCatalogItems }),
     [selectedFieldIds, tablePayload, fieldCatalogItems],
@@ -242,7 +262,7 @@ export default function FinlandPage() {
               fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
             ]
             : [
-              Promise.resolve(tablePayload),
+              Promise.resolve(null),
               fetchJson(buildFinlandBoardFieldCatalogUrl(API_BASE)),
             ],
         );
@@ -329,6 +349,15 @@ export default function FinlandPage() {
           onDailyModeChange={setDailyMode}
           dictionaryRows={dictionaryRows}
           onDictionaryJump={handleDictionaryJump}
+        />
+
+        <FinlandPrimaryPriceWorkbench
+          copy={copy.priceWorkbench}
+          priceOptions={primaryPriceOptions}
+          selectedFieldKey={effectivePrimaryFieldKey}
+          onSelectField={(fieldKey) => setSelectedFieldIds(fieldKey ? [fieldKey] : [])}
+          summary={primaryPriceSummary}
+          comparisonItems={comparisonItems}
         />
 
         {TABULAR_TABS.has(activeTab) ? (
