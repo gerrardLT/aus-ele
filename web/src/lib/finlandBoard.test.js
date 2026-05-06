@@ -9,12 +9,15 @@ import {
   FINLAND_PRIMARY_BOARD_TABS,
   buildFinlandBoardChartUrl,
   buildFinlandBoardChartRequest,
+  buildFinlandComparisonRailRequest,
   buildFinlandBoardDictionaryRows,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
   buildFinlandBoardReadinessUrl,
   buildFinlandBoardSelectedFields,
+  buildFinlandPrimaryPriceSummary,
   buildFinlandBoardTableUrl,
+  getDefaultFinlandPrimaryPriceField,
   getFinlandDictionaryTargetView,
   getFinlandBoardOverviewCards,
   getFinlandBoardTableColumns,
@@ -99,6 +102,137 @@ test('buildFinlandBoardChartUrl omits a trailing query marker when all params ar
   assert.equal(
     buildFinlandBoardChartUrl('http://127.0.0.1:8085/api'),
     'http://127.0.0.1:8085/api/finland/board/chart',
+  );
+});
+
+test('Finland primary price helpers expose the default field and a stable summary contract', () => {
+  assert.equal(getDefaultFinlandPrimaryPriceField(), 'fcr_n_price_eur_mw');
+
+  assert.deepEqual(
+    buildFinlandPrimaryPriceSummary({
+      primaryFieldKey: 'fcr_n_price_eur_mw',
+      tableRows: [
+        {
+          timestamp_helsinki: '2026-05-01T00:00:00+03:00',
+          fcr_n_price_eur_mw: null,
+          spot_price_fi_eur_mwh: 48,
+        },
+        {
+          timestamp_helsinki: '2026-05-01T01:00:00+03:00',
+          fcr_n_price_eur_mw: 10,
+          spot_price_fi_eur_mwh: 50,
+        },
+        {
+          timestamp_helsinki: '2026-05-01T02:00:00+03:00',
+          fcr_n_price_eur_mw: 20,
+          spot_price_fi_eur_mwh: 55,
+        },
+        {
+          timestamp_helsinki: '2026-05-01T03:00:00+03:00',
+          fcr_n_price_eur_mw: 30,
+          spot_price_fi_eur_mwh: 70,
+        },
+      ],
+    }),
+    {
+      latestValue: 30,
+      highValue: 30,
+      lowValue: 10,
+      meanValue: 20,
+      spreadVsSpotLatest: -40,
+      volatilityLabel: 'high',
+    },
+  );
+
+  assert.deepEqual(
+    buildFinlandPrimaryPriceSummary({
+      primaryFieldKey: 'fcr_n_price_eur_mw',
+      tableRows: [{ fcr_n_price_eur_mw: null, spot_price_fi_eur_mwh: null }],
+    }),
+    {
+      latestValue: null,
+      highValue: null,
+      lowValue: null,
+      meanValue: null,
+      spreadVsSpotLatest: null,
+      volatilityLabel: 'no_data',
+    },
+  );
+});
+
+test('buildFinlandPrimaryPriceSummary aligns latest spread to the latest valid primary row', () => {
+  assert.deepEqual(
+    buildFinlandPrimaryPriceSummary({
+      primaryFieldKey: 'fcr_n_price_eur_mw',
+      tableRows: [
+        {
+          timestamp_helsinki: '2026-05-01T01:00:00+03:00',
+          fcr_n_price_eur_mw: 12,
+          spot_price_fi_eur_mwh: 50,
+        },
+        {
+          timestamp_helsinki: '2026-05-01T02:00:00+03:00',
+          fcr_n_price_eur_mw: 25,
+          spot_price_fi_eur_mwh: null,
+        },
+        {
+          timestamp_helsinki: '2026-05-01T03:00:00+03:00',
+          fcr_n_price_eur_mw: null,
+          spot_price_fi_eur_mwh: 80,
+        },
+      ],
+    }),
+    {
+      latestValue: 25,
+      highValue: 25,
+      lowValue: 12,
+      meanValue: 18.5,
+      spreadVsSpotLatest: null,
+      volatilityLabel: 'medium',
+    },
+  );
+});
+
+test('buildFinlandComparisonRailRequest maps reserve prices onto volume support fields and spot context', () => {
+  assert.deepEqual(
+    buildFinlandComparisonRailRequest({
+      primaryFieldKey: 'fcr_n_price_eur_mw',
+      granularity: '1h',
+    }),
+    {
+      fields: ['fcr_n_price_eur_mw', 'fcr_n_volume_mw', 'spot_price_fi_eur_mwh'],
+      mode: 'compare',
+      granularity: '1h',
+      limitPoints: 240,
+    },
+  );
+
+  assert.deepEqual(
+    buildFinlandComparisonRailRequest({
+      primaryFieldKey: 'afrr_cap_up_eur_mw',
+      granularity: 'day',
+      limitPoints: 96,
+    }),
+    {
+      fields: ['afrr_cap_up_eur_mw', 'afrr_cap_up_volume_mw', 'spot_price_fi_eur_mwh'],
+      mode: 'compare',
+      granularity: 'day',
+      limitPoints: 96,
+    },
+  );
+
+  assert.deepEqual(
+    buildFinlandComparisonRailRequest({
+      primaryFieldKey: 'unknown_price_field',
+      granularity: '1h',
+      limitPoints: 48,
+    }),
+    {
+      fields: ['unknown_price_field', 'spot_price_fi_eur_mwh'],
+      mode: 'compare',
+      granularity: '1h',
+      limitPoints: 48,
+    },
   );
 });
 
