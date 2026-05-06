@@ -439,8 +439,7 @@ test('FinlandPage uses board overview and readiness helpers with workspace shell
   assert.match(source, /FinlandOverviewCards/);
   assert.match(source, /FinlandWorkbenchTabs/);
   assert.match(source, /FinlandDataTable/);
-  assert.match(source, /FinlandLinkedChart/);
-  assert.match(source, /FinlandFieldDetailPanel/);
+  assert.match(source, /FinlandPrimaryPriceWorkbench/);
   assert.match(source, /Promise\.all\(\s*\[/);
   assert.match(source, /headerMetrics=/);
 });
@@ -471,20 +470,25 @@ test('FinlandPage wires dictionary jumps back into primary tabs and field select
   assert.doesNotMatch(source, /setActiveTab\(preferredView/);
 });
 
-test('FinlandPage tracks selected fields and wires real board payloads into the linked analysis shell', () => {
+test('FinlandPage promotes a dedicated primary field state into the workbench shell', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
 
+  assert.match(source, /const \[primaryFieldKey,\s*setPrimaryFieldKey\] = useState\(\(\) => getDefaultFinlandPrimaryPriceField\(\)\)/);
+  assert.match(source, /const primaryPriceOptions = useMemo\(/);
+  assert.match(source, /const primaryPriceSummary = useMemo\(/);
+  assert.match(source, /const mainChartRequest = useMemo\(/);
+  assert.match(source, /const comparisonChartRequest = useMemo\(/);
+  assert.match(source, /const primarySelectedField = useMemo\(/);
   assert.match(source, /const \[selectedFieldIds,\s*setSelectedFieldIds\] = useState\(\[\]\)/);
-  assert.match(source, /const selectedFields = useMemo\(/);
-  assert.match(source, /const chartRequest = useMemo\(/);
   assert.match(source, /const overviewCards = useMemo\(/);
   assert.match(source, /const tableColumns = useMemo\(/);
   assert.match(source, /const tableRows = useMemo\(/);
-  assert.match(source, /const selectedFields = useMemo\(/);
   assert.match(source, /<FinlandOverviewCards cards=\{overviewCards\} copy=\{copy\} \/>/);
   assert.match(source, /<FinlandDataTable[\s\S]*columns=\{tableColumns\}[\s\S]*rows=\{tableRows\}[\s\S]*selectedFieldIds=\{selectedFieldIds\}[\s\S]*onSelectField=\{setSelectedFieldIds\}/);
-  assert.match(source, /<FinlandLinkedChart[\s\S]*chartRequest=\{chartRequest\}[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{copy\.linkedChart\}/);
-  assert.match(source, /<FinlandFieldDetailPanel[\s\S]*selectedFields=\{selectedFields\}[\s\S]*copy=\{\{[\s\S]*copy\.fieldDetailPanel/);
+  assert.match(source, /<FinlandPrimaryPriceWorkbench[\s\S]*selectedFieldKey=\{effectivePrimaryFieldKey\}[\s\S]*onSelectField=\{setPrimaryFieldKey\}/);
+  assert.match(source, /mainChartRequest=\{mainChartRequest\}/);
+  assert.match(source, /comparisonChartRequest=\{comparisonChartRequest\}/);
+  assert.match(source, /selectedField=\{primarySelectedField\}/);
   assert.doesNotMatch(source, /buildOverviewCards/);
   assert.doesNotMatch(source, /buildFieldDescriptors/);
 });
@@ -580,6 +584,16 @@ test('FinlandPage references the primary price workbench and translation-backed 
   assert.match(source, /comparisonItems=\{comparisonItems\}/);
 });
 
+test('FinlandPage renders the primary workbench before the verification table', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+  const workbenchIndex = source.indexOf('<FinlandPrimaryPriceWorkbench');
+  const tableIndex = source.indexOf('<FinlandDataTable');
+
+  assert.equal(workbenchIndex > -1, true);
+  assert.equal(tableIndex > -1, true);
+  assert.equal(workbenchIndex < tableIndex, true);
+});
+
 test('Finland primary price workbench scaffolds exist as focused components', () => {
   const selectorSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPrimaryPriceSelector.jsx'), 'utf8');
   const summarySource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPriceSummaryStrip.jsx'), 'utf8');
@@ -593,10 +607,15 @@ test('Finland primary price workbench scaffolds exist as focused components', ()
   assert.match(summarySource, /volatilityBand/);
   assert.match(summarySource, /volatilityValues/);
   assert.match(railSource, /copy/);
+  assert.match(railSource, /buildFinlandBoardChartUrl/);
+  assert.match(railSource, /ResponsiveContainer/);
+  assert.match(railSource, /seriesCards/);
   assert.match(railSource, /item\.description \|\| item\.unit \|\| item\.field_key/);
   assert.match(workbenchSource, /FinlandPrimaryPriceSelector/);
   assert.match(workbenchSource, /FinlandPriceSummaryStrip/);
   assert.match(workbenchSource, /FinlandComparisonRail/);
+  assert.match(workbenchSource, /FinlandLinkedChart/);
+  assert.match(workbenchSource, /FinlandFieldDetailPanel/);
   assert.match(workbenchSource, /copy\.selector/);
   assert.match(workbenchSource, /copy\.summary/);
   assert.match(workbenchSource, /copy\.comparison/);

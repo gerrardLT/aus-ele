@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import PageWorkspaceNav from '../components/PageWorkspaceNav';
 import FinlandBoardHeader from '../components/finland/FinlandBoardHeader';
 import FinlandDataTable from '../components/finland/FinlandDataTable';
-import FinlandFieldDetailPanel from '../components/finland/FinlandFieldDetailPanel';
-import FinlandLinkedChart from '../components/finland/FinlandLinkedChart';
 import FinlandOverviewCards from '../components/finland/FinlandOverviewCards';
 import FinlandPrimaryPriceWorkbench from '../components/finland/FinlandPrimaryPriceWorkbench';
 import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
@@ -11,7 +9,6 @@ import { fetchJson } from '../lib/apiClient';
 import {
   FINLAND_DAILY_BOARD_VIEWS,
   FINLAND_PRIMARY_BOARD_TABS,
-  buildFinlandBoardChartRequest,
   buildFinlandBoardDictionaryRows,
   buildFinlandBoardFieldCatalogUrl,
   buildFinlandBoardOverviewUrl,
@@ -59,6 +56,7 @@ export default function FinlandPage() {
   const [fieldCatalogPayload, setFieldCatalogPayload] = useState(null);
   const [activeTab, setActiveTab] = useState('capacity_hourly');
   const [dailyMode, setDailyMode] = useState('daily_capacity');
+  const [primaryFieldKey, setPrimaryFieldKey] = useState(() => getDefaultFinlandPrimaryPriceField());
   const [selectedFieldIds, setSelectedFieldIds] = useState([]);
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [boardLoading, setBoardLoading] = useState(true);
@@ -95,15 +93,11 @@ export default function FinlandPage() {
     () => buildFinlandBoardDictionaryRows(fieldCatalogItems),
     [fieldCatalogItems],
   );
-  const defaultPrimaryFieldKey = useMemo(
-    () => getDefaultFinlandPrimaryPriceField(),
-    [],
-  );
   const primaryPriceOptions = useMemo(
     () => buildFinlandPrimaryPriceOptions(fieldCatalogItems, { boardView: activeBoardView }),
     [activeBoardView, fieldCatalogItems],
   );
-  const effectivePrimaryFieldKey = selectedFieldIds[0] || defaultPrimaryFieldKey;
+  const effectivePrimaryFieldKey = primaryFieldKey;
   const primaryPriceSummary = useMemo(
     () => buildFinlandPrimaryPriceSummary({
       primaryFieldKey: effectivePrimaryFieldKey,
@@ -128,13 +122,28 @@ export default function FinlandPage() {
         description: item.methodology_note || item.source_name || item.unit || item.field_key,
       }));
   }, [effectivePrimaryFieldKey, fieldCatalogItems, tablePayload]);
-  const selectedFields = useMemo(
-    () => buildFinlandBoardSelectedFields({ selectedFieldIds, tablePayload, fieldCatalogItems }),
-    [selectedFieldIds, tablePayload, fieldCatalogItems],
+  const comparisonChartRequest = useMemo(
+    () => buildFinlandComparisonRailRequest({
+      primaryFieldKey: effectivePrimaryFieldKey,
+      granularity: tablePayload?.granularity,
+    }),
+    [effectivePrimaryFieldKey, tablePayload],
   );
-  const chartRequest = useMemo(
-    () => buildFinlandBoardChartRequest({ selectedFields, viewGranularity: tablePayload?.granularity }),
-    [selectedFields, tablePayload],
+  const primarySelectedField = useMemo(() => {
+    const [field] = buildFinlandBoardSelectedFields({
+      selectedFieldIds: [effectivePrimaryFieldKey],
+      tablePayload,
+      fieldCatalogItems,
+    });
+    return field || null;
+  }, [effectivePrimaryFieldKey, fieldCatalogItems, tablePayload]);
+  const mainChartRequest = useMemo(
+    () => ({
+      fields: [effectivePrimaryFieldKey],
+      mode: 'single',
+      granularity: tablePayload?.granularity || '1h',
+    }),
+    [effectivePrimaryFieldKey, tablePayload],
   );
   const workbenchCopy = useMemo(
     () => ({
@@ -293,6 +302,20 @@ export default function FinlandPage() {
     };
   }, [activeBoardView, activeTab]);
 
+  useEffect(() => {
+    if (!primaryPriceOptions.length) {
+      return;
+    }
+
+    const hasCurrentOption = primaryPriceOptions.some((item) => item.field_key === primaryFieldKey);
+    if (hasCurrentOption) {
+      return;
+    }
+
+    const defaultField = primaryPriceOptions.find((item) => item.field_key === getDefaultFinlandPrimaryPriceField());
+    setPrimaryFieldKey(defaultField?.field_key || primaryPriceOptions[0].field_key);
+  }, [primaryFieldKey, primaryPriceOptions]);
+
   const handleDictionaryJump = (fieldKey, preferredView) => {
     if (FINLAND_DAILY_BOARD_VIEWS.includes(preferredView)) {
       setDailyMode(preferredView);
@@ -352,12 +375,18 @@ export default function FinlandPage() {
         />
 
         <FinlandPrimaryPriceWorkbench
+          apiBase={API_BASE}
           copy={copy.priceWorkbench}
           priceOptions={primaryPriceOptions}
           selectedFieldKey={effectivePrimaryFieldKey}
-          onSelectField={(fieldKey) => setSelectedFieldIds(fieldKey ? [fieldKey] : [])}
+          onSelectField={setPrimaryFieldKey}
           summary={primaryPriceSummary}
           comparisonItems={comparisonItems}
+          mainChartRequest={mainChartRequest}
+          comparisonChartRequest={comparisonChartRequest}
+          selectedField={primarySelectedField}
+          mainChartCopy={copy.linkedChart}
+          fieldDetailCopy={{ ...copy.fieldDetailPanel, notAvailable: copy.notAvailable }}
         />
 
         {TABULAR_TABS.has(activeTab) ? (
@@ -372,21 +401,6 @@ export default function FinlandPage() {
               description: `${copy.task7.tableDescriptionPrefix} ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
             }}
           />
-        ) : null}
-
-        {activeTab === 'analysis' ? (
-          <section className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
-            <FinlandLinkedChart
-              apiBase={API_BASE}
-              chartRequest={chartRequest}
-              selectedFields={selectedFields}
-              copy={copy.linkedChart}
-            />
-            <FinlandFieldDetailPanel
-              selectedFields={selectedFields}
-              copy={{ ...copy.fieldDetailPanel, notAvailable: copy.notAvailable }}
-            />
-          </section>
         ) : null}
       </div>
     </main>
