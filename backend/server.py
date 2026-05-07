@@ -8,6 +8,8 @@ import os
 import sqlite3
 import sys
 import threading
+import copy
+import math
 import uvicorn
 from contextlib import asynccontextmanager
 import logging
@@ -139,6 +141,10 @@ install_trace_log_record_factory(
     trace_id_supplier=get_current_trace_id,
     span_id_supplier=get_current_span_id,
 )
+
+_REGIME_LAYER_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
+_REGIME_LAYER_CACHE_LOCK = threading.Lock()
+_REGIME_LAYER_CACHE_TTL_SECONDS = 300
 install_json_log_formatter_if_enabled()
 install_structured_log_sink_if_configured()
 
@@ -540,6 +546,29 @@ def _scope_analysis_payload(payload: dict, *, organization_id: str | None, works
 
 def _market_data_version() -> str:
     return db.get_last_update_time() or "no_last_update"
+
+
+def _get_cached_regime_layer_payload(*, market: str, region: str) -> dict:
+    cache_key = (market, region, _market_data_version())
+    now_monotonic = time.monotonic()
+
+    with _REGIME_LAYER_CACHE_LOCK:
+        cached_entry = _REGIME_LAYER_CACHE.get(cache_key)
+        if cached_entry and (now_monotonic - cached_entry[0]) <= _REGIME_LAYER_CACHE_TTL_SECONDS:
+            return copy.deepcopy(cached_entry[1])
+
+        expired_keys = [
+            key for key, (cached_at, _) in _REGIME_LAYER_CACHE.items()
+            if (now_monotonic - cached_at) > _REGIME_LAYER_CACHE_TTL_SECONDS
+        ]
+        for expired_key in expired_keys:
+            _REGIME_LAYER_CACHE.pop(expired_key, None)
+
+    payload = _build_regime_layer_payload(market=market, region=region)
+    payload_snapshot = copy.deepcopy(payload)
+    with _REGIME_LAYER_CACHE_LOCK:
+        _REGIME_LAYER_CACHE[cache_key] = (now_monotonic, payload_snapshot)
+    return copy.deepcopy(payload_snapshot)
 
 
 def _region_timezone(region: str) -> str:
@@ -1217,7 +1246,7 @@ def _attach_regime_layer(payload: dict, *, market: str, region: str) -> dict:
         _sync_baseline_forecast_regime_context()
         return payload
     try:
-        payload["regime_layer"] = _build_regime_layer_payload(market=market, region=region)
+        payload["regime_layer"] = _get_cached_regime_layer_payload(market=market, region=region)
     except Exception as exc:
         logger.warning("Regime layer unavailable for market=%s region=%s: %s", market, region, exc)
         payload["regime_layer"] = _build_unavailable_regime_layer_payload(market=market, region=region)
@@ -1393,6 +1422,58 @@ def _downsample_price_rows(rows, limit: int):
         return _uniform_downsample_price_rows(rows, limit)
 
 
+def _price_trend_sampling_stride(total_rows: int, limit: int | None) -> int | None:
+    if limit is None or limit <= 0 or total_rows <= limit:
+        return None
+    if limit == 1:
+        return total_rows
+    return max(1, math.ceil((total_rows - 1) / float(limit - 1)))
+
+
+def _fetch_sampled_price_trend_data(
+    cursor,
+    *,
+    table_name: str,
+    where_clause: str,
+    params: tuple,
+    total_rows: int,
+    limit: int | None,
+) -> list[dict]:
+    stride = _price_trend_sampling_stride(total_rows, limit)
+    if stride is None:
+        cursor.execute(
+            f"""
+            SELECT settlement_date, rrp_aud_mwh
+            FROM {table_name}
+            WHERE {where_clause}
+            ORDER BY settlement_date ASC
+            """,
+            params,
+        )
+        rows = cursor.fetchall()
+        return _downsample_price_rows(rows, limit)
+
+    cursor.execute(
+        f"""
+        WITH filtered AS (
+            SELECT
+                settlement_date,
+                rrp_aud_mwh,
+                ROW_NUMBER() OVER (ORDER BY settlement_date ASC) AS rn
+            FROM {table_name}
+            WHERE {where_clause}
+        )
+        SELECT settlement_date, rrp_aud_mwh
+        FROM filtered
+        WHERE rn = 1 OR rn = ? OR ((rn - 1) % ? = 0)
+        ORDER BY settlement_date ASC
+        """,
+        (*params, total_rows, stride),
+    )
+    rows = cursor.fetchall()
+    return [{"time": row[0], "price": round(row[1], 2)} for row in rows]
+
+
 def _cors_allow_origins() -> list[str]:
     raw_value = os.environ.get("AUS_ELE_CORS_ALLOW_ORIGINS", "").strip()
     if not raw_value:
@@ -1416,6 +1497,22 @@ def _scheduler_now() -> datetime.datetime:
 
 def _scheduler_enabled() -> bool:
     return _env_flag("AUS_ELE_ENABLE_SCHEDULER", True)
+
+
+def _scheduler_cron_hour(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(23, value))
+
+
+def _scheduler_cron_minute(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(59, value))
 
 
 def _job_worker_enabled() -> bool:
@@ -1840,11 +1937,25 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AEMO NEM API server with built-in Scheduler...")
     if _scheduler_enabled():
         scheduler = AsyncIOScheduler(timezone=_scheduler_timezone())
-        scheduler.add_job(enqueue_market_sync_job, 'cron', hour=2, minute=0, id="market-daily-sync")
+        market_sync_hour = _scheduler_cron_hour("AUS_ELE_MARKET_SYNC_HOUR", 1)
+        market_sync_minute = _scheduler_cron_minute("AUS_ELE_MARKET_SYNC_MINUTE", 20)
+        fingrid_hourly_minute = _scheduler_cron_minute("AUS_ELE_FINGRID_HOURLY_SYNC_MINUTE", 45)
+        fingrid_daily_hour = _scheduler_cron_hour("AUS_ELE_FINGRID_DAILY_SYNC_HOUR", 4)
+        fingrid_daily_minute = _scheduler_cron_minute("AUS_ELE_FINGRID_DAILY_SYNC_MINUTE", 10)
+        scheduler.add_job(
+            enqueue_market_sync_job,
+            'cron',
+            hour=market_sync_hour,
+            minute=market_sync_minute,
+            id="market-daily-sync",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=60 * 60,
+        )
         scheduler.add_job(
             enqueue_fingrid_hourly_sync_job,
             'cron',
-            minute=10,
+            minute=fingrid_hourly_minute,
             id="fingrid-hourly-sync",
             max_instances=1,
             coalesce=True,
@@ -1853,8 +1964,8 @@ async def lifespan(app: FastAPI):
         scheduler.add_job(
             enqueue_fingrid_daily_sync_job,
             'cron',
-            hour=3,
-            minute=25,
+            hour=fingrid_daily_hour,
+            minute=fingrid_daily_minute,
             id="fingrid-daily-sync",
             max_instances=1,
             coalesce=True,
@@ -1862,7 +1973,15 @@ async def lifespan(app: FastAPI):
         )
         scheduler.start()
         app.state.scheduler = scheduler
-        logger.info("Internal scheduler enabled with timezone %s", _scheduler_timezone().key)
+        logger.info(
+            "Internal scheduler enabled with timezone %s (market=%02d:%02d, fingrid-hourly=:%02d, fingrid-daily=%02d:%02d)",
+            _scheduler_timezone().key,
+            market_sync_hour,
+            market_sync_minute,
+            fingrid_hourly_minute,
+            fingrid_daily_hour,
+            fingrid_daily_minute,
+        )
     else:
         logger.info("Internal scheduler disabled by AUS_ELE_ENABLE_SCHEDULER")
 
@@ -5619,18 +5738,14 @@ def get_price_trend(
                     DEFAULT_RESPONSE_CACHE_TTL_SECONDS,
                 )
 
-            # Fetch the time-series data
-            query_data = f"""
-                SELECT settlement_date, rrp_aud_mwh
-                FROM {table_name}
-                WHERE {where_clause}
-                ORDER BY settlement_date ASC
-            """
-            
-            cursor.execute(query_data, tuple(params))
-            rows = cursor.fetchall()
-            
-            data = _downsample_price_rows(rows, limit)
+            data = _fetch_sampled_price_trend_data(
+                cursor,
+                table_name=table_name,
+                where_clause=where_clause,
+                params=tuple(params),
+                total_rows=total_rows,
+                limit=limit,
+            )
             
             # Calculate all statistics in a single highly optimized SQL query
             # This turns 6 separate full table scans into just 1

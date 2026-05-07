@@ -119,6 +119,35 @@ class ResultMetadataTests(unittest.TestCase):
 
 
 class ApiMetadataIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        server._REGIME_LAYER_CACHE.clear()
+
+    @mock.patch("server._market_data_version", return_value="2026-05-07T20:00:00Z")
+    @mock.patch("server._build_regime_layer_payload")
+    def test_attach_regime_layer_reuses_cached_payload_for_same_market_region_and_data_version(
+        self,
+        mock_regime_layer,
+        mock_market_data_version,
+    ):
+        mock_regime_layer.return_value = {
+            "primary_regime": {"regime": "scarcity", "score": 64.0, "confidence": 0.73},
+            "active_regimes": [{"regime": "scarcity", "score": 64.0, "confidence": 0.73}],
+            "regime_score_map": {"scarcity": 64.0},
+            "drivers": [],
+            "transition_hints": [],
+            "metadata": {"dataset_family": "regime_layer"},
+        }
+
+        server._REGIME_LAYER_CACHE.clear()
+
+        first = server._attach_regime_layer({}, market="NEM", region="NSW1")
+        second = server._attach_regime_layer({}, market="NEM", region="NSW1")
+
+        self.assertEqual(first["regime_compact"]["primary_regime"]["regime"], "scarcity")
+        self.assertEqual(second["regime_compact"]["primary_regime"]["regime"], "scarcity")
+        mock_regime_layer.assert_called_once_with(market="NEM", region="NSW1")
+        self.assertEqual(mock_market_data_version.call_count, 2)
+
     @mock.patch("server.db.get_last_update_time", return_value="2026-04-27 00:10:00")
     @mock.patch("server._build_regime_layer_payload")
     @mock.patch("server._store_response_cache", side_effect=lambda scope, payload, response_payload, ttl_seconds: response_payload)

@@ -4,9 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     restart: unless-stopped
+    mem_limit: 1200m
     environment:
       AUS_ELE_DB_PATH: /app/data/aemo_data.db
-      AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_ENABLE_SCHEDULER:-true}
+      AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_ENABLE_SCHEDULER:-false}
+      AUS_ELE_ENABLE_JOB_WORKER: ${AUS_ELE_ENABLE_JOB_WORKER:-false}
       AUS_ELE_CORS_ALLOW_ORIGINS: ${AUS_ELE_CORS_ALLOW_ORIGINS:-http://localhost:${WEB_HOST_PORT:-18080},http://127.0.0.1:${WEB_HOST_PORT:-18080}}
       AUS_ELE_CORS_ALLOW_CREDENTIALS: ${AUS_ELE_CORS_ALLOW_CREDENTIALS:-false}
       REDIS_URL: redis://redis:6379/0
@@ -19,8 +21,37 @@ services:
     volumes:
       - ./data:/app/data
       - ./output:/app/output
+      - ./data_lake:/app/data_lake
+      - ./logs:/app/logs
     ports:
       - "${API_HOST_PORT:-18085}:8085"
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    mem_limit: 1536m
+    environment:
+      AUS_ELE_DB_PATH: /app/data/aemo_data.db
+      AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_WORKER_ENABLE_SCHEDULER:-true}
+      AUS_ELE_ENABLE_JOB_WORKER: ${AUS_ELE_WORKER_ENABLE_JOB_WORKER:-true}
+      AUS_ELE_CORS_ALLOW_ORIGINS: ${AUS_ELE_CORS_ALLOW_ORIGINS:-http://localhost:${WEB_HOST_PORT:-18080},http://127.0.0.1:${WEB_HOST_PORT:-18080}}
+      AUS_ELE_CORS_ALLOW_CREDENTIALS: ${AUS_ELE_CORS_ALLOW_CREDENTIALS:-false}
+      REDIS_URL: redis://redis:6379/0
+      FINGRID_API_KEY: ${FINGRID_API_KEY:-}
+      FINGRID_BASE_URL: ${FINGRID_BASE_URL:-https://data.fingrid.fi/api}
+      FINGRID_REQUEST_INTERVAL_SECONDS: ${FINGRID_REQUEST_INTERVAL_SECONDS:-6.5}
+      FINGRID_TIMEOUT_SECONDS: ${FINGRID_TIMEOUT_SECONDS:-30}
+      FINGRID_DEFAULT_BACKFILL_START: ${FINGRID_DEFAULT_BACKFILL_START:-2014-01-01T00:00:00Z}
+      FINGRID_DEFAULT_INCREMENTAL_LOOKBACK_DAYS: ${FINGRID_DEFAULT_INCREMENTAL_LOOKBACK_DAYS:-30}
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./data_lake:/app/data_lake
+      - ./logs:/app/logs
     depends_on:
       - redis
 
@@ -32,6 +63,7 @@ services:
         VITE_API_BASE: ${VITE_API_BASE:-/api}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
     restart: unless-stopped
+    mem_limit: 384m
     ports:
       - "${WEB_HOST_PORT:-18080}:80"
     depends_on:
@@ -40,6 +72,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: 256m
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data

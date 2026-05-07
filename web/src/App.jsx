@@ -5,6 +5,7 @@ import PriceChart from './components/PriceChart';
 import SummaryStats from './components/SummaryStats';
 import RegimeCompactPanel from './components/RegimeCompactPanel';
 import DataQualityBadge from './components/DataQualityBadge';
+import DeferredSection from './components/DeferredSection';
 import PageSection from './components/PageSection';
 import PageWorkspaceNav from './components/PageWorkspaceNav';
 import { fetchJson } from './lib/apiClient';
@@ -256,7 +257,7 @@ function App() {
     if (!selectedYear) return;
 
     setLoading(true);
-    let url = `${API_BASE}/price-trend?year=${selectedYear}&region=${selectedRegion}&limit=1500`;
+    let url = `${API_BASE}/price-trend?year=${selectedYear}&region=${selectedRegion}&limit=720`;
     if (selectedMonth !== 'ALL') {
       url += `&month=${selectedMonth}`;
     }
@@ -752,15 +753,19 @@ function App() {
                 description={t.appShell.recommendedPathLabel || `${t.header.title1} ${t.header.title2}`}
               >
                 <div id="sec-forecast" className="col-span-12 scroll-mt-24">
-                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                    <GridForecast
-                      apiBase={API_BASE}
-                      region={selectedRegion}
-                      locale={lang}
-                      t={t.forecast}
-                      regimeCompactCopy={t.regime_compact}
-                    />
-                  </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <GridForecast
+                        apiBase={API_BASE}
+                        region={selectedRegion}
+                        locale={lang}
+                        t={t.forecast}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
 
                 <div id="sec-negative" className="col-span-12 mt-16 pt-12 border-t border-[var(--color-border)] scroll-mt-24">
@@ -779,99 +784,123 @@ function App() {
                 </div>
 
                 <div id="sec-arbitrage" className="col-span-12 scroll-mt-24">
-                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                    <PeakAnalysis
-                      year={selectedYear}
-                      region={selectedRegion}
-                      lang={lang}
-                      month={selectedMonth}
-                      quarter={selectedQuarter}
-                      dayType={selectedDayType}
-                      eventOverlay={eventOverlay}
-                      apiBase={API_BASE}
-                      t={{...t.peak_analysis, loadingMsg: t.loading_states.peak}}
-                      regimeCompactCopy={t.regime_compact}
-                    />
-                  </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <PeakAnalysis
+                        year={selectedYear}
+                        region={selectedRegion}
+                        lang={lang}
+                        month={selectedMonth}
+                        quarter={selectedQuarter}
+                        dayType={selectedDayType}
+                        eventOverlay={eventOverlay}
+                        apiBase={API_BASE}
+                        t={{...t.peak_analysis, loadingMsg: t.loading_states.peak}}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
 
                 <div id="sec-fcas" className="col-span-12 scroll-mt-24">
-                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                  <FcasAnalysis
-                    year={selectedYear}
-                    region={selectedRegion}
-                    lang={lang}
-                    month={selectedMonth}
-                    quarter={selectedQuarter}
-                    dayType={selectedDayType}
-                    eventOverlay={eventOverlay}
-                    apiBase={API_BASE}
-                    t={{...t.fcas, ...t.peak_analysis, loadingMsg: t.loading_states.fcas}}
-                    regimeCompactCopy={t.regime_compact}
-                  />
-                  </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <FcasAnalysis
+                        year={selectedYear}
+                        region={selectedRegion}
+                        lang={lang}
+                        month={selectedMonth}
+                        quarter={selectedQuarter}
+                        dayType={selectedDayType}
+                        eventOverlay={eventOverlay}
+                        apiBase={API_BASE}
+                        t={{...t.fcas, ...t.peak_analysis, loadingMsg: t.loading_states.fcas}}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
 
                 <div id="sec-simulator" className="col-span-12 scroll-mt-24">
-                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                  <BessSimulator
-                  year={selectedYear}
-                  region={selectedRegion}
-                  lang={lang}
-                  apiBase={API_BASE}
-                  scopeNote={simulatorScopeNote}
-                  t={{...t.simulator, loadingMsg: t.loading_states.simulator}}
-                  regimeCompactCopy={t.regime_compact}
-                  />
-                  </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <BessSimulator
+                        year={selectedYear}
+                        region={selectedRegion}
+                        lang={lang}
+                        apiBase={API_BASE}
+                        scopeNote={simulatorScopeNote}
+                        t={{...t.simulator, loadingMsg: t.loading_states.simulator}}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
 
                 <div id="sec-stacking" className="col-span-12 scroll-mt-24">
-                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                  <RevenueStacking
-                  year={selectedYear}
-                  region={selectedRegion}
-                  lang={lang}
-                  month={selectedMonth}
-                  quarter={selectedQuarter}
-                  dayType={selectedDayType}
-                  eventOverlay={eventOverlay}
-                  apiBase={API_BASE}
-                  t={{...t.stacking, ...t.peak_analysis, loadingMsg: t.loading_states.stacking}}
-                  regimeCompactCopy={t.regime_compact}
-                  />
-                  </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <RevenueStacking
+                        year={selectedYear}
+                        region={selectedRegion}
+                        lang={lang}
+                        month={selectedMonth}
+                        quarter={selectedQuarter}
+                        dayType={selectedDayType}
+                        eventOverlay={eventOverlay}
+                        apiBase={API_BASE}
+                        t={{...t.stacking, ...t.peak_analysis, loadingMsg: t.loading_states.stacking}}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
 
                 <div id="sec-charging" className="col-span-12 scroll-mt-24">
-                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                  <ChargingWindow
-                  year={selectedYear}
-                  region={selectedRegion}
-                  lang={lang}
-                  eventOverlay={eventOverlay}
-                  apiBase={API_BASE}
-                  t={{...t.charging, ...t.peak_analysis, loadingMsg: t.loading_states.charging}}
-                  regimeCompactCopy={t.regime_compact}
-                  />
-                  </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <ChargingWindow
+                        year={selectedYear}
+                        region={selectedRegion}
+                        lang={lang}
+                        eventOverlay={eventOverlay}
+                        apiBase={API_BASE}
+                        t={{...t.charging, ...t.peak_analysis, loadingMsg: t.loading_states.charging}}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
 
                 <div id="sec-cycle" className="col-span-12 scroll-mt-24">
-                      <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                  <CycleCost
-                  year={selectedYear}
-                  region={selectedRegion}
-                  lang={lang}
-                  month={selectedMonth}
-                  quarter={selectedQuarter}
-                  dayType={selectedDayType}
-                  eventOverlay={eventOverlay}
-                  apiBase={API_BASE}
-                  t={{...t.cycleCost, ...t.peak_analysis, loadingMsg: t.loading_states.cycleCost}}
-                  regimeCompactCopy={t.regime_compact}
-                  />
-                  </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <CycleCost
+                        year={selectedYear}
+                        region={selectedRegion}
+                        lang={lang}
+                        month={selectedMonth}
+                        quarter={selectedQuarter}
+                        dayType={selectedDayType}
+                        eventOverlay={eventOverlay}
+                        apiBase={API_BASE}
+                        t={{...t.cycleCost, ...t.peak_analysis, loadingMsg: t.loading_states.cycleCost}}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
               </PageSection>
 
@@ -881,16 +910,20 @@ function App() {
                 description={t.appShell.investmentScopeNote || investmentScopeNote}
               >
                 <div id="sec-investment" className="col-span-12 scroll-mt-24">
-                <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
-                  <InvestmentAnalysis
-                  year={selectedYear}
-                  region={selectedRegion}
-                  lang={lang}
-                  scopeNote={investmentScopeNote}
-                  t={t}
-                  regimeCompactCopy={t.regime_compact}
-                  />
-                </Suspense>
+                  <DeferredSection
+                    fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}
+                  >
+                    <Suspense fallback={<SectionFallback label={translations[lang]?.status?.loadingSection || t.status.loading} />}>
+                      <InvestmentAnalysis
+                        year={selectedYear}
+                        region={selectedRegion}
+                        lang={lang}
+                        scopeNote={investmentScopeNote}
+                        t={t}
+                        regimeCompactCopy={t.regime_compact}
+                      />
+                    </Suspense>
+                  </DeferredSection>
                 </div>
               </PageSection>
 
