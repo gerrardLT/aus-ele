@@ -11,7 +11,7 @@ import { fetchJson } from '../../lib/apiClient';
 import { buildFinlandBoardChartUrl } from '../../lib/finlandApi';
 import { useMeasuredElement } from '../../lib/useMeasuredElement';
 
-const SERIES_COLORS = ['#5eead4', '#f59e0b', '#38bdf8', '#fb7185'];
+const SERIES_COLORS = ['#355f9c', '#8b6a1f', '#2d7b72', '#9c5266'];
 
 function FinlandLinkedChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) {
@@ -19,7 +19,7 @@ function FinlandLinkedChartTooltip({ active, payload, label }) {
   }
 
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-sm shadow-lg">
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm shadow-lg">
       <div className="font-medium text-[var(--color-text)]">{label}</div>
       <div className="mt-2 grid gap-1">
         {payload.map((entry) => (
@@ -103,22 +103,22 @@ export default function FinlandLinkedChart({
   const chartData = useMemo(() => buildChartData(payload?.series), [payload]);
 
   return (
-    <section className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5">
+    <section className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5 lg:p-6">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
         {copy.eyebrow}
       </div>
-      <div className="mt-3 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[linear-gradient(160deg,rgba(15,23,42,0.86),rgba(18,24,38,0.92))]">
+      <div className="mt-3 overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--color-border)_82%,var(--color-primary)_18%)] bg-[var(--color-panel)] shadow-[0_12px_28px_color-mix(in_oklab,var(--color-primary)_7%,transparent)]">
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
           <h3 className="text-base font-semibold text-[var(--color-text)]">
             {copy.title}
           </h3>
-          <span className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-2 py-1 text-[11px] font-semibold text-cyan-200">
+          <span className="rounded-full border border-[color:color-mix(in_oklab,var(--color-primary)_28%,var(--color-border))] bg-[color:color-mix(in_oklab,var(--color-primary)_10%,var(--color-surface))] px-2 py-1 text-[11px] font-semibold text-[var(--color-primary)]">
             {selectedFields.length} {copy.selectionCountSuffix}
           </span>
         </div>
         <div className="grid gap-4 p-4">
           {!hasSelection ? (
-            <div className="grid h-52 place-items-center rounded-md border border-dashed border-cyan-300/25 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.65),rgba(15,23,42,0.92))] text-center">
+            <div className="grid h-52 place-items-center rounded-md border border-dashed border-[color:color-mix(in_oklab,var(--color-primary)_24%,var(--color-border))] bg-[color:color-mix(in_oklab,var(--color-surface)_92%,var(--color-primary)_8%)] text-center">
               <div className="grid max-w-md gap-2">
                 <div className="text-base font-semibold text-[var(--color-text)]">
                   {copy.emptyTitle}
@@ -131,7 +131,7 @@ export default function FinlandLinkedChart({
           ) : null}
 
           {hasSelection && loading ? (
-            <div className="grid h-52 place-items-center rounded-md border border-dashed border-cyan-300/25 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.65),rgba(15,23,42,0.92))] text-sm text-[var(--color-muted)]">
+            <div className="grid h-52 place-items-center rounded-md border border-dashed border-[color:color-mix(in_oklab,var(--color-primary)_24%,var(--color-border))] bg-[color:color-mix(in_oklab,var(--color-surface)_92%,var(--color-primary)_8%)] text-sm text-[var(--color-muted)]">
               {copy.loading}
             </div>
           ) : null}
@@ -146,13 +146,13 @@ export default function FinlandLinkedChart({
             <>
               <div
                 ref={chartFrameRef}
-                className="h-72 min-w-0 rounded-md border border-cyan-300/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_55%),linear-gradient(180deg,rgba(15,23,42,0.72),rgba(15,23,42,0.94))] p-3"
+                className="h-80 min-w-0 rounded-md border border-[color:color-mix(in_oklab,var(--color-primary)_16%,var(--color-border))] bg-[color:color-mix(in_oklab,var(--color-surface)_96%,var(--color-primary)_4%)] p-3"
               >
                 {chartFrameSize.width > 0 && chartFrameSize.height > 0 ? (
                   <LineChart width={chartFrameSize.width} height={chartFrameSize.height} data={chartData}>
-                    <CartesianGrid stroke="rgba(148,163,184,0.16)" strokeDasharray="3 3" />
-                    <XAxis dataKey="timestamp" minTickGap={36} stroke="rgba(148,163,184,0.72)" />
-                    <YAxis stroke="rgba(148,163,184,0.72)" />
+                    <CartesianGrid stroke="rgba(148, 163, 184, 0.18)" strokeDasharray="3 3" />
+                    <XAxis dataKey="timestamp" minTickGap={36} stroke="rgba(102, 112, 133, 0.84)" />
+                    <YAxis stroke="rgba(102, 112, 133, 0.84)" />
                     <Tooltip content={<FinlandLinkedChartTooltip />} />
                     {payload.series.map((series, index) => (
                       <Line

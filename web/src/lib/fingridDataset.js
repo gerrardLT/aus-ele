@@ -235,6 +235,38 @@ export function formatFingridValue(value, unit) {
   return `${Number(value).toFixed(2)} ${unit}`;
 }
 
+export function buildYearlyChangeSeries(series = []) {
+  if (!Array.isArray(series) || series.length < 2) {
+    return [];
+  }
+
+  const changes = [];
+  for (let index = 1; index < series.length; index += 1) {
+    const previousValue = Number(series[index - 1]?.value);
+    const currentValue = Number(series[index]?.value);
+    if (!Number.isFinite(previousValue) || !Number.isFinite(currentValue)) {
+      continue;
+    }
+
+    const deltaValue = Number((currentValue - previousValue).toFixed(4));
+    const deltaPct = previousValue === 0
+      ? null
+      : Number((((currentValue - previousValue) / previousValue) * 100).toFixed(2));
+
+    changes.push({
+      timestamp: series[index]?.timestamp,
+      year: String(series[index]?.timestamp || '').slice(0, 4) || '--',
+      value: deltaValue,
+      delta_value: deltaValue,
+      delta_pct: deltaPct,
+      previous_value: previousValue,
+      current_value: currentValue,
+    });
+  }
+
+  return changes;
+}
+
 export function buildHourlyProfile(series = []) {
   const buckets = new Map();
   for (const point of series) {

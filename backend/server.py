@@ -28,7 +28,7 @@ import grid_events
 import grid_forecast
 from fingrid import catalog as fingrid_catalog
 from fingrid import service as fingrid_service
-from fingrid.export import build_fingrid_csv
+from fingrid.export import build_fingrid_csv, build_fingrid_multi_dataset_workbook
 from network_fees import get_default_fee, get_window_sizes, get_all_fees, get_settlement_interval
 from collections import defaultdict
 from result_metadata import build_result_metadata
@@ -5403,6 +5403,67 @@ def export_fingrid_dataset_csv(
         content=csv_text,
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="fingrid-{dataset_id}.csv"'},
+    )
+
+
+@app.get("/api/fingrid/export")
+def export_all_fingrid_datasets_csv(
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    tz: str = Query("Europe/Helsinki"),
+    aggregation: str = Query("raw", pattern="^(raw|hour|1h|2h|4h|day|week|month)$"),
+    limit: Optional[int] = Query(None),
+    access_scope: Optional[dict] = None,
+):
+    if access_scope:
+        _assert_scope_allows_internal_query(access_scope, market="FINGRID")
+
+    export_sheets: list[dict] = []
+    for dataset in fingrid_catalog.list_dataset_configs():
+        dataset_id = str(dataset["dataset_id"])
+        payload = fingrid_service.get_dataset_series_payload(
+            db,
+            dataset_id=dataset_id,
+            start=start,
+            end=end,
+            aggregation=aggregation,
+            tz=tz,
+            limit=limit,
+        )
+        dataset_meta = payload.get("dataset") or dataset
+        metadata_json = dataset_meta.get("metadata_json") or {}
+        sheet_rows = []
+        for row in payload.get("series", []):
+            sheet_rows.append(
+                {
+                    "dataset_id": dataset_id,
+                    "dataset_name": dataset_meta.get("name"),
+                    "product": metadata_json.get("product"),
+                    "signal": metadata_json.get("signal"),
+                    "timestamp": row.get("timestamp"),
+                    "timestamp_utc": row.get("timestamp_utc"),
+                    "bucket_start": row.get("bucket_start"),
+                    "bucket_end": row.get("bucket_end"),
+                    "value": row.get("value"),
+                    "avg_value": row.get("avg_value"),
+                    "peak_value": row.get("peak_value"),
+                    "trough_value": row.get("trough_value"),
+                    "sample_count": row.get("sample_count"),
+                    "unit": row.get("unit") or dataset_meta.get("unit"),
+                }
+            )
+        export_sheets.append(
+            {
+                "name": f"{dataset_id}_{metadata_json.get('product') or dataset_meta.get('name') or dataset_id}",
+                "rows": sheet_rows,
+            }
+        )
+
+    workbook_bytes = build_fingrid_multi_dataset_workbook(export_sheets)
+    return Response(
+        content=workbook_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="fingrid-all-markets.xlsx"'},
     )
 
 

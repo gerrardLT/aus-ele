@@ -8,7 +8,7 @@ import { fetchJson } from '../../lib/apiClient';
 import { buildFinlandBoardChartUrl } from '../../lib/finlandApi';
 import { useMeasuredElement } from '../../lib/useMeasuredElement';
 
-const SERIES_COLORS = ['#d4b26a', '#57d3bc', '#7db3ff'];
+const SERIES_COLORS = ['#8b6a1f', '#2d7b72', '#355f9c'];
 
 function buildSeriesCards(series = []) {
   return series.map((item) => {
@@ -47,7 +47,7 @@ function CompactTooltip({ active, payload, label }) {
   }
 
   return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs shadow-lg">
       <div className="font-medium text-[var(--color-text)]">{label}</div>
       <div className="mt-1 text-[var(--color-muted)]">{formatValue(payload[0]?.value)}</div>
     </div>
@@ -112,22 +112,22 @@ export default function FinlandComparisonRail({
   return (
     <section className="grid gap-3">
       <div className="grid gap-1">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-100/72">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-primary)]/78">
           {copy.title}
         </div>
-        <p className="max-w-3xl text-sm leading-6 text-slate-300/78">
+        <p className="max-w-3xl text-sm leading-6 text-[var(--color-muted)]">
           {copy.description}
         </p>
       </div>
 
       {loading ? (
-        <div className="grid min-h-[9rem] place-items-center rounded-lg border border-[var(--color-border)] bg-[rgba(11,19,31,0.82)] text-sm text-[var(--color-muted)]">
+        <div className="grid min-h-[9rem] place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-muted)]">
           {copy.loading || copy.empty}
         </div>
       ) : null}
 
       {!loading && error ? (
-        <div className="rounded-lg border border-[var(--color-error)]/35 bg-[rgba(11,19,31,0.82)] px-4 py-5 text-sm text-[var(--color-error)]">
+        <div className="rounded-lg border border-[var(--color-error)]/35 bg-[var(--color-surface)] px-4 py-5 text-sm text-[var(--color-error)]">
           {error}
         </div>
       ) : null}
@@ -150,7 +150,7 @@ export default function FinlandComparisonRail({
             {items.map((item) => (
               <article
                 key={item.field_key || item.id}
-                className="rounded-lg border border-[var(--color-border)] bg-[rgba(11,19,31,0.78)] p-4"
+                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
               >
                 <div className="text-sm font-semibold text-[var(--color-text)]">{item.label}</div>
                 <div className="mt-2 text-sm text-[var(--color-muted)]">
@@ -171,7 +171,7 @@ function CompactSeriesCard({ item, color }) {
   const [chartFrameRef, chartFrameSize] = useMeasuredElement();
 
   return (
-    <article className="grid min-w-0 gap-3 rounded-lg border border-[color:color-mix(in_oklab,var(--color-border)_82%,#d4b26a_18%)] bg-[rgba(11,19,31,0.78)] p-4">
+    <article className="grid min-w-0 gap-3 rounded-lg border border-[color:color-mix(in_oklab,var(--color-border)_86%,var(--color-primary)_14%)] bg-[color:color-mix(in_oklab,var(--color-surface)_95%,var(--color-primary)_5%)] p-4">
       <div className="grid gap-1">
         <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
           {item.label}

@@ -17,7 +17,8 @@ test('DataQualityBadge renders data grade and metadata helpers', () => {
 
 test('PageSection spans the full 12-column content grid', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/PageSection.jsx'), 'utf8');
-  assert.match(source, /className="col-span-12 grid gap-4 border-t border-\[var\(--color-border\)\] pt-8 scroll-mt-24"/);
+  assert.match(source, /fullWidthInGrid \? 'col-span-12 ' : ''/);
+  assert.match(source, /grid gap-4 border-t border-\[var\(--color-border\)\] pt-8 scroll-mt-24/);
 });
 
 test('App main workbench keeps metadata badge plus loading and retry branches', () => {
@@ -34,28 +35,27 @@ test('App avoids rendering a duplicate primary market title below workspace nav'
   assert.doesNotMatch(source, /<h1 className="text-2xl font-bold leading-tight md:text-3xl">\s*\{t\.header\.title1\}\s*\{t\.header\.title2\}\s*<\/h1>/);
 });
 
-test('App consolidates top-level sync and language controls into workspace nav', () => {
+test('App keeps only language controls in workspace nav actions area', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  assert.match(source, /actions=\{/);
-  assert.match(source, /handleSync/);
+  assert.doesNotMatch(source, /actions=\{/);
+  assert.doesNotMatch(source, /handleSync/);
   assert.doesNotMatch(source, /<motion\.header/);
   assert.doesNotMatch(source, /onClick=\{\(\) => setLang\(lang === 'zh' \? 'en' : 'zh'\)\}/);
 });
 
-test('Fingrid page surfaces metadata badge and Finland empty-state context', () => {
+test('Fingrid page keeps a single header and focuses on charts plus passive status context', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FingridPage.jsx'), 'utf8');
   assert.match(source, /<DataQualityBadge metadata=\{statusMetadata\} lang=\{lang\} \/>/);
   assert.match(source, /marketModelCopy\.noSignals/);
-  assert.match(source, /copy\.stageContext/);
-  assert.match(source, /copy\.stageTimeSeries/);
-  assert.match(source, /copy\.stageOperations/);
-  assert.match(source, /copy\.marketPulseTitle/);
-  assert.match(source, /PageWorkspaceNav/);
   assert.match(source, /PageSection/);
-  assert.match(source, /id="stage-context"/);
-  assert.match(source, /id="stage-time-series"/);
-  assert.match(source, /id="stage-operations"/);
+  assert.match(source, /id="price-trend"/);
+  assert.match(source, /id="market-supporting-signals"/);
   assert.match(source, /setError\(String\(err\)\)/);
+  assert.doesNotMatch(source, /PageWorkspaceNav/);
+  assert.doesNotMatch(source, /copy\.stageContext/);
+  assert.doesNotMatch(source, /copy\.stageTimeSeries/);
+  assert.doesNotMatch(source, /copy\.stageOperations/);
+  assert.doesNotMatch(source, /copy\.marketPulseTitle/);
 });
 
 test('Fingrid series chart preserves loading, error, and empty-data states', () => {
@@ -205,9 +205,9 @@ test('App centralizes section navigation and month label copy', () => {
   assert.match(source, /translations\[lang\]\?\.status\?\.loadingSection/);
   assert.match(source, /aria-label=\{sectionNavCopy\.sectionNavigation\}/);
   assert.match(source, /aria-label=\{t\.appShell\.backToTop\}/);
-  assert.match(source, /title=\{t\.appShell\.syncTrigger\}/);
   assert.match(source, /languageAriaLabel=\{t\.appShell\.toggleLanguage\}/);
   assert.match(source, /aria-label=\{t\.status\.retry\}/);
+  assert.doesNotMatch(source, /syncTrigger/);
   assert.equal(source.includes("const sectionNavCopy = lang === 'zh'"), false);
   assert.equal(source.includes("const monthLabels = lang === 'zh'"), false);
   assert.equal(source.includes('Loading section...'), false);
@@ -493,6 +493,6 @@ test('Fingrid header and page centralize metadata and loading fallback copy', ()
   assert.equal(headerSource.includes("|| '317'"), false);
   assert.equal(headerSource.includes("|| 'EUR/MW'"), false);
   assert.equal(headerSource.includes("|| '1h'"), false);
-  assert.match(pageSource, /copy\.statusValues\.loading/);
+  assert.match(pageSource, /loading=\{loading\}/);
   assert.equal(pageSource.includes("|| 'loading'"), false);
 });

@@ -14,7 +14,7 @@ export default function FinlandOverviewCards({ cards = [], copy }) {
       {cards.map((card) => (
         <article
           key={card.field_key || card.id}
-          className="rounded-lg border border-[var(--color-border)] bg-[linear-gradient(180deg,rgba(11,17,28,0.98),rgba(17,27,44,0.86))] p-4 shadow-[0_14px_32px_rgba(3,7,18,0.18)]"
+          className="rounded-lg border border-[var(--color-border)] bg-[color:color-mix(in_oklab,var(--color-surface)_94%,var(--color-primary)_6%)] p-4 shadow-[0_10px_24px_color-mix(in_oklab,var(--color-primary)_5%,transparent)]"
         >
           <div className="flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
             <span>{card.label}</span>

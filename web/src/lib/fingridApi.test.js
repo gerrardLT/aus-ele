@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildFingridAllMarketsExportUrl,
   buildFingridSeriesUrl,
   buildFingridSummaryUrl,
   buildFingridSyncUrl,
@@ -27,6 +28,21 @@ test('buildFingridSeriesUrl encodes dataset and query controls', () => {
 test('buildFingridSummaryUrl and buildFingridSyncUrl include dataset id', () => {
   assert.match(buildFingridSummaryUrl('http://127.0.0.1:8085/api', { datasetId: '317' }), /datasets\/317\/summary/);
   assert.match(buildFingridSyncUrl('http://127.0.0.1:8085/api', '317'), /datasets\/317\/sync/);
+});
+
+test('buildFingridAllMarketsExportUrl keeps the current time controls for portfolio export', () => {
+  const url = buildFingridAllMarketsExportUrl('http://127.0.0.1:8085/api', {
+    start: '2026-01-01T00:00:00Z',
+    end: '2026-01-31T23:59:59Z',
+    tz: 'Europe/Helsinki',
+    aggregation: 'day',
+    limit: 5000,
+  });
+
+  assert.match(url, /fingrid\/export/);
+  assert.match(url, /aggregation=day/);
+  assert.match(url, /tz=Europe%2FHelsinki/);
+  assert.match(url, /limit=5000/);
 });
 
 test('buildFingridSeriesUrl omits the limit parameter when limit is null', () => {

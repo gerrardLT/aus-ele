@@ -25,7 +25,7 @@ export default function FinlandPrimaryPriceSelector({
                 type="button"
                 onClick={() => onChange?.(option.field_key)}
                 aria-pressed={isActive}
-                className={`min-h-[40px] rounded-full border px-4 py-2 text-sm transition-colors ${
+                className={`min-h-[44px] rounded-full border px-4 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--color-primary)_36%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-panel)] ${
                   isActive
                     ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
                     : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)]'

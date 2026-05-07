@@ -89,6 +89,35 @@ class FingridServiceSyncTests(unittest.TestCase):
         status = self.db.fetch_fingrid_sync_state("317")
         self.assertEqual(status["sync_status"], "ok")
         self.assertEqual(status["last_synced_timestamp_utc"], "2026-01-01T01:00:00Z")
+        self.assertEqual(status["last_cursor"], "2026-01-01T01:00:00Z")
+
+    def test_backfill_sync_updates_cursor_while_running(self):
+        client = FakeFingridClient([
+            [],
+            [
+                {
+                    "startTime": "2026-02-01T00:00:00Z",
+                    "endTime": "2026-02-01T01:00:00Z",
+                    "value": 13.0,
+                }
+            ],
+        ])
+
+        result = sync_dataset(
+            self.db,
+            dataset_id="317",
+            mode="backfill",
+            start="2026-01-01T00:00:00Z",
+            end="2026-03-01T00:00:00Z",
+            client=client,
+            ingested_at="2026-04-23T00:00:00Z",
+        )
+
+        self.assertEqual(result["windows_synced"], 2)
+        status = self.db.fetch_fingrid_sync_state("317")
+        self.assertEqual(status["sync_status"], "ok")
+        self.assertEqual(status["last_cursor"], "2026-02-01T00:00:00Z")
+        self.assertEqual(status["last_synced_timestamp_utc"], "2026-02-01T00:00:00Z")
 
     def test_sync_failure_marks_dataset_state_as_error(self):
         client = FailingFingridClient(RuntimeError("403 blocked by upstream"))

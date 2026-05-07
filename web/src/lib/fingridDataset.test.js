@@ -5,6 +5,7 @@ import {
   downsampleSeriesForChart,
   buildFingridTimeWindow,
   buildPresetWindow,
+  buildYearlyChangeSeries,
   getCustomDateRangeValidationCode,
   buildHourlyProfile,
   formatFingridValue,
@@ -138,4 +139,33 @@ test('downsampleSeriesForChart aggregates interior buckets instead of keeping on
 
 test('formatFingridValue appends the dataset unit', () => {
   assert.equal(formatFingridValue(12.3456, 'EUR/MW'), '12.35 EUR/MW');
+});
+
+test('buildYearlyChangeSeries derives absolute and percent year-over-year change', () => {
+  const changes = buildYearlyChangeSeries([
+    { timestamp: '2024-01-01T00:00:00+02:00', value: 100 },
+    { timestamp: '2025-01-01T00:00:00+02:00', value: 130 },
+    { timestamp: '2026-01-01T00:00:00+02:00', value: 104 },
+  ]);
+
+  assert.deepEqual(changes, [
+    {
+      timestamp: '2025-01-01T00:00:00+02:00',
+      year: '2025',
+      value: 30,
+      delta_value: 30,
+      delta_pct: 30,
+      previous_value: 100,
+      current_value: 130,
+    },
+    {
+      timestamp: '2026-01-01T00:00:00+02:00',
+      year: '2026',
+      value: -26,
+      delta_value: -26,
+      delta_pct: -20,
+      previous_value: 130,
+      current_value: 104,
+    },
+  ]);
 });

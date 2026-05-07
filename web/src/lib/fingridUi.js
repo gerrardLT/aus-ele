@@ -3,6 +3,12 @@ const DEFAULT_UNIT = 'EUR/MW';
 const COPY = {
   zh: {
     brand: 'Fingrid \u82ac\u5170\u7535\u7f51',
+    workspaceLinks: {
+      home: '\u9996\u9875',
+      finland: '\u82ac\u5170\u770b\u677f',
+      fingrid: 'Fingrid',
+      developer: '\u5f00\u53d1\u8005\u95e8\u6237',
+    },
     navToAemo: '\u6fb3\u6d32\u5e02\u573a',
     datasetFallback: '\u82ac\u5170\u6570\u636e\u96c6 317',
     defaultDatasetId: '317',
@@ -23,7 +29,34 @@ const COPY = {
     sync: '\u540c\u6b65',
     syncing: '\u540c\u6b65\u4e2d...',
     exportCsv: '\u5bfc\u51fa CSV',
+    exportAllMarketsCsv: '\u5bfc\u51fa\u5168\u90e8\u5e02\u573a Excel',
+    controlsTitle: '\u7b5b\u9009\u4e0e\u5bfc\u51fa',
+    datasetSelectorLabel: '\u6570\u636e\u96c6',
+    datasetContextTitle: '\u5f53\u524d\u6570\u636e\u96c6\u8bf4\u660e',
+    datasetGroups: {
+      hourly_prices: '\u5c0f\u65f6\u4ef7\u683c',
+      hourly_volumes: '\u5c0f\u65f6\u91c7\u8d2d\u91cf',
+      yearly_plans: '\u5e74\u5ea6\u5e02\u573a\u8ba1\u5212',
+      balancing: '\u5931\u8861\u7535\u4ef7',
+      other: '\u5176\u4ed6',
+    },
+    datasetSignalLabels: {
+      capacity_price: '\u5bb9\u91cf\u4ef7\u683c',
+      procured_volume: '\u91c7\u8d2d\u91cf',
+      yearly_plan: '\u5e74\u5ea6\u9884\u7559\u8ba1\u5212',
+      settlement_price: '\u7ed3\u7b97\u4ef7\u683c',
+    },
+    datasetFrequencyLabels: {
+      '1h': '\u5c0f\u65f6',
+      '1h+': '\u5c0f\u65f6 / \u51c6\u5b9e\u65f6',
+      '1y': '\u5e74\u5ea6',
+    },
+    hourlyDatasetNotice: '\u8fd9\u7c7b\u6570\u636e\u96c6\u662f\u8fde\u7eed\u66f4\u65b0\u7684\u5c0f\u65f6\u6216\u51c6\u5b9e\u65f6\u4fe1\u53f7\uff0c\u9002\u5408\u7528\u65f6\u5e8f\u56fe\u89c2\u5bdf\u8fd1\u671f\u6ce2\u52a8\u3002',
+    yearlyDatasetNotice: '\u8fd9\u7c7b\u6570\u636e\u96c6\u662f\u5e74\u5ea6\u8ba1\u5212\u6216\u4f4e\u9891\u4fe1\u53f7\uff0c\u4e0d\u4f1a\u50cf\u5c0f\u65f6\u4ef7\u683c\u90a3\u6837\u5f62\u6210\u8fde\u7eed\u5bc6\u96c6\u66f2\u7ebf\uff0c\u67d0\u4e9b\u7a97\u53e3\u663e\u793a\u65e0\u6570\u636e\u662f\u6b63\u5e38\u7684\u3002',
+    yearlyDatasetAutoWindowNotice: '\u5207\u5230\u8fd9\u7c7b\u5e74\u5ea6\u8ba1\u5212\u6570\u636e\u65f6\uff0c\u9875\u9762\u4f1a\u81ea\u52a8\u5207\u6362\u5230\u66f4\u5408\u9002\u7684\u5168\u91cf\u89c6\u7a97\uff0c\u907f\u514d 30 \u5929\u5185\u770b\u8d77\u6765\u50cf\u201c\u65e0\u6570\u636e\u201d\u3002',
+    datasetExplanationTemplate: '\u4ea7\u54c1\uff1a{product} | \u4fe1\u53f7\uff1a{signal} | \u9891\u7387\uff1a{frequency} | \u5355\u4f4d\uff1a{unit}',
     toggleLanguage: 'EN',
+    toggleLanguageAriaLabel: '\u5207\u6362 Fingrid \u9875\u9762\u8bed\u8a00',
     startDate: '\u5f00\u59cb\u65e5\u671f',
     endDate: '\u7ed3\u675f\u65e5\u671f',
     latest: '\u6700\u65b0\u503c',
@@ -44,6 +77,28 @@ const COPY = {
     yearlyAverage: '\u5e74\u5747\u4ef7',
     hourlyProfile: '\u5c0f\u65f6\u753b\u50cf',
     syncStatus: '\u540c\u6b65\u72b6\u6001',
+    yearlyPlanBoardTitle: '\u5e74\u5ea6\u8ba1\u5212\u770b\u677f',
+    yearlyPlanBoardDescription: '\u8fd9\u4e2a\u89c6\u56fe\u53ea\u8bfb\u53d6 Fingrid \u5e74\u5ea6\u9884\u7559\u8ba1\u5212\uff0c\u4e0d\u518d\u548c\u5c0f\u65f6\u5e02\u573a\u56fe\u8868\u6df7\u5728\u4e00\u8d77\u3002',
+    yearlyPlanLatest: '\u6700\u65b0\u5e74\u5ea6\u8ba1\u5212',
+    yearlyPlanMax: '\u8ba1\u5212\u5cf0\u503c',
+    yearlyPlanMin: '\u8ba1\u5212\u4f4e\u503c',
+    yearlyPlanPoints: '\u5e74\u5ea6\u70b9\u4f4d',
+    yearlyPlanSeriesTitle: '\u5e74\u5ea6\u8ba1\u5212\u5bf9\u6bd4',
+    yearlyPlanStatusTitle: '\u5e74\u5ea6\u72b6\u6001\u4e0e\u8986\u76d6',
+    yearlyPlanStatusNote: '\u5e74\u5ea6\u8ba1\u5212\u662f\u4f4e\u9891\u4fe1\u53f7\uff0c\u4e3b\u8981\u770b\u5e74\u5bf9\u5e74\u53d8\u5316\u4e0e\u6570\u636e\u8986\u76d6\uff0c\u4e0d\u9700\u8981\u6309\u5c0f\u65f6\u6ce2\u52a8\u53bb\u8bfb\u3002',
+    yearlyPlanEmpty: '\u5f53\u524d\u5e74\u5ea6\u89c6\u7a97\u6682\u65e0\u8ba1\u5212\u6570\u636e\u3002',
+    yearlyPlanOverviewTitle: '\u5e74\u5ea6\u6982\u89c8',
+    yearlyPlanOverviewDescription: '\u5c06\u5e74\u5ea6\u5e02\u573a\u8ba1\u5212\u89c6\u4e3a\u4f4e\u9891\u7b56\u7565\u8d44\u4ea7\uff0c\u5148\u770b\u898f\u6a21\uff0c\u518d\u770b\u5e74\u5bf9\u5e74\u53d8\u5316\u3002',
+    yearlyPlanCurrentYear: '\u5f53\u524d\u5e74\u5ea6',
+    yearlyPlanPreviousYear: '\u4e0a\u4e00\u5e74\u5ea6',
+    yearlyPlanYearOverYear: '\u540c\u6bd4\u53d8\u5316',
+    yearlyPlanCoverageSpan: '\u8986\u76d6\u8de8\u5ea6',
+    yearlyPlanYearsLabel: '\u5df2\u8986\u76d6\u5e74\u4efd',
+    yearlyPlanDeltaUp: '\u589e\u52a0',
+    yearlyPlanDeltaDown: '\u56de\u843d',
+    yearlyPlanDeltaFlat: '\u57fa\u672c\u6301\u5e73',
+    yearlyPlanHighlightsTitle: '\u5e74\u5ea6\u53d8\u5316\u8981\u70b9',
+    yearlyPlanHighlightsEmpty: '\u5f53\u524d\u5e74\u5ea6\u7ef4\u5ea6\u6570\u636e\u70b9\u8fd8\u4e0d\u591f\uff0c\u6682\u65e0\u53ef\u8bfb\u7684\u5e74\u5bf9\u5e74\u8981\u70b9\u3002',
     statusFields: {
       status: '\u72b6\u6001',
       lastSuccess: '\u6700\u8fd1\u6210\u529f',
@@ -107,6 +162,12 @@ const COPY = {
   },
   en: {
     brand: 'Fingrid Finland',
+    workspaceLinks: {
+      home: 'Home',
+      finland: 'Finland Board',
+      fingrid: 'Fingrid',
+      developer: 'Developer Portal',
+    },
     navToAemo: 'Australia Market',
     datasetFallback: 'Dataset 317',
     defaultDatasetId: '317',
@@ -127,7 +188,34 @@ const COPY = {
     sync: 'Sync',
     syncing: 'Syncing...',
     exportCsv: 'Export CSV',
+    exportAllMarketsCsv: 'Export All Markets Excel',
+    controlsTitle: 'Filters and Export',
+    datasetSelectorLabel: 'Dataset',
+    datasetContextTitle: 'Current Dataset Context',
+    datasetGroups: {
+      hourly_prices: 'Hourly Prices',
+      hourly_volumes: 'Hourly Procured Volumes',
+      yearly_plans: 'Yearly Reserve Plans',
+      balancing: 'Imbalance',
+      other: 'Other',
+    },
+    datasetSignalLabels: {
+      capacity_price: 'capacity price',
+      procured_volume: 'procured volume',
+      yearly_plan: 'yearly reserve plan',
+      settlement_price: 'settlement price',
+    },
+    datasetFrequencyLabels: {
+      '1h': 'hourly',
+      '1h+': 'hourly / near-real-time',
+      '1y': 'yearly',
+    },
+    hourlyDatasetNotice: 'This dataset behaves like a continuous hourly or near-real-time signal, so the time-series chart is the right primary view.',
+    yearlyDatasetNotice: 'This dataset is a low-frequency yearly-plan signal. It will not form a dense continuous curve like hourly prices, so empty windows are expected in some ranges.',
+    yearlyDatasetAutoWindowNotice: 'When this yearly-plan dataset is selected, the page automatically switches to a wider window so it does not look empty inside a short 30-day range.',
+    datasetExplanationTemplate: 'Product: {product} | Signal: {signal} | Frequency: {frequency} | Unit: {unit}',
     toggleLanguage: '\u4e2d\u6587',
+    toggleLanguageAriaLabel: 'Toggle Fingrid page language',
     startDate: 'Start date',
     endDate: 'End date',
     latest: 'Latest',
@@ -148,6 +236,28 @@ const COPY = {
     yearlyAverage: 'Yearly Average',
     hourlyProfile: 'Hourly Profile',
     syncStatus: 'Sync Status',
+    yearlyPlanBoardTitle: 'Yearly Plan Board',
+    yearlyPlanBoardDescription: 'This view is reserved for Fingrid yearly reserve plans and no longer shares the same reading path as the hourly market board.',
+    yearlyPlanLatest: 'Latest plan',
+    yearlyPlanMax: 'Plan peak',
+    yearlyPlanMin: 'Plan trough',
+    yearlyPlanPoints: 'Year points',
+    yearlyPlanSeriesTitle: 'Yearly plan comparison',
+    yearlyPlanStatusTitle: 'Yearly status and coverage',
+    yearlyPlanStatusNote: 'Yearly plans are low-frequency signals. The right reading mode is year-over-year comparison and coverage health, not intraday fluctuation.',
+    yearlyPlanEmpty: 'No yearly plan data is available in the current window.',
+    yearlyPlanOverviewTitle: 'Yearly Overview',
+    yearlyPlanOverviewDescription: 'Read the yearly reserve plan as a low-frequency strategy surface: size first, then year-over-year change.',
+    yearlyPlanCurrentYear: 'Current year',
+    yearlyPlanPreviousYear: 'Previous year',
+    yearlyPlanYearOverYear: 'Year over year',
+    yearlyPlanCoverageSpan: 'Coverage span',
+    yearlyPlanYearsLabel: 'Years covered',
+    yearlyPlanDeltaUp: 'Increase',
+    yearlyPlanDeltaDown: 'Decline',
+    yearlyPlanDeltaFlat: 'Stable',
+    yearlyPlanHighlightsTitle: 'Year-over-year highlights',
+    yearlyPlanHighlightsEmpty: 'There are not enough yearly points yet to generate a meaningful year-over-year readout.',
     statusFields: {
       status: 'Status',
       lastSuccess: 'Last success',
@@ -238,11 +348,48 @@ export function buildFingridRequestLimit({ preset = '30d', aggregation = 'day' }
 export function localizeFingridDataset(dataset = {}, lang = 'en') {
   const copy = getFingridCopy(lang);
   const datasetId = String(dataset.dataset_id || '');
+  const metadata = dataset.metadata_json || {};
+  const signal = metadata.signal || dataset.value_kind || 'unknown';
+  const marketLayer = metadata.market_layer || 'other';
+  const groupKey = marketLayer === 'yearly'
+    ? 'yearly_plans'
+    : signal === 'capacity_price'
+      ? 'hourly_prices'
+      : signal === 'procured_volume'
+        ? 'hourly_volumes'
+        : signal === 'settlement_price'
+          ? 'balancing'
+          : 'other';
+  const frequencyLabel = copy.datasetFrequencyLabels[dataset.frequency] || dataset.frequency || copy.defaultFrequency;
+  const signalLabel = copy.datasetSignalLabels[signal] || signal;
+  const productLabel = metadata.product || dataset.name || copy.datasetFallback;
+  const explanation = copy.datasetExplanationTemplate
+    .replace('{product}', productLabel)
+    .replace('{signal}', signalLabel)
+    .replace('{frequency}', frequencyLabel)
+    .replace('{unit}', dataset.unit || copy.defaultUnit);
   return {
     ...dataset,
     name: copy.datasetNames[datasetId] || dataset.name || copy.datasetFallback,
     description: copy.datasetDescriptions[datasetId] || dataset.description || '',
+    groupKey,
+    frequencyLabel,
+    signalLabel,
+    productLabel,
+    explanation,
   };
+}
+
+export function groupFingridDatasets(datasets = []) {
+  const groups = new Map();
+  for (const dataset of datasets) {
+    const key = dataset.groupKey || 'other';
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(dataset);
+  }
+  return [...groups.entries()].map(([key, items]) => ({ key, items }));
 }
 
 export function buildFingridSummaryCards({

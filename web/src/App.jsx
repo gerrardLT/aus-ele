@@ -113,7 +113,6 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [showToc, setShowToc] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [showMonthFilter, setShowMonthFilter] = useState(true);
@@ -251,23 +250,6 @@ function App() {
       // Ignore localStorage write failures in restricted environments.
     }
   }, [lang]);
-
-  const handleSync = async () => {
-    setIsSyncing(true);
-    try {
-      const res = await fetch(`${API_BASE}/sync_data`, { method: 'POST' });
-      if (res.ok) {
-         // Simple alert for now as per requirement
-         alert(lang === 'zh' ? '数据同步已在后台启动，可能需要几分钟。' : 'Data sync started in background. This may take a few minutes.');
-      } else {
-         alert(lang === 'zh' ? '更新失败，请检查服务日志。' : 'Update failed. Please check server logs.');
-      }
-    } catch(e) {
-      console.error(e);
-      alert(lang === 'zh' ? '触发更新时发生错误。' : 'Error triggering update.');
-    }
-    setTimeout(() => setIsSyncing(false), 2000);
-  };
 
   // Fetch metrics when year or region changes
   useEffect(() => {
@@ -538,19 +520,6 @@ function App() {
             onToggleLanguage={() => setLang(lang === 'zh' ? 'en' : 'zh')}
             title={t.appShell.recommendedPathLabel || `${t.header.title1} ${t.header.title2}`}
             meta={lastUpdate ? <span>{lastUpdate}</span> : null}
-            actions={
-              <button
-                onClick={handleSync}
-                disabled={isSyncing}
-                title={t.appShell.syncTrigger}
-                className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded border border-[var(--color-border)] px-3 py-1.5 text-sm transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
-              >
-                <svg className={isSyncing ? "h-4 w-4 animate-spin" : "h-4 w-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span>{isSyncing ? (t.nav.syncing || 'Syncing') : (t.nav.sync || 'Sync')}</span>
-              </button>
-            }
           />
         </div>
 

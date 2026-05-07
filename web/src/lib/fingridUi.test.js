@@ -63,3 +63,23 @@ test('localizeFingridDataset provides Chinese copy for dataset 317', () => {
   assert.match(localized.name, /FCR-N/);
   assert.match(localized.description, /芬兰/);
 });
+
+test('localizeFingridDataset groups yearly market plans into the yearly_plans board', () => {
+  const localized = localizeFingridDataset(
+    {
+      dataset_id: '288',
+      name: 'FCR-N reserve plans in the yearly market',
+      frequency: '1y',
+      unit: 'MW',
+      metadata_json: {
+        market_layer: 'yearly',
+        signal: 'yearly_plan',
+        product: 'FCR-N',
+      },
+    },
+    'en',
+  );
+
+  assert.equal(localized.groupKey, 'yearly_plans');
+  assert.match(localized.explanation, /Frequency: yearly/);
+});

@@ -175,14 +175,14 @@ test('translations expose readable Chinese labels for high-visibility dashboard 
   assert.equal(translations.zh.cycleCost.ccTitle, '循环成本 vs 盈利性分析');
 });
 
-test('App uses readable localized labels for nav, sync, and month reset controls', () => {
+test('App uses readable localized labels for nav and month reset controls without manual sync UI', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
 
   assert.match(source, /t\.nav\.fingrid/);
   assert.match(source, /t\.nav\.developerPortal/);
-  assert.match(source, /t\.nav\.sync/);
-  assert.match(source, /t\.nav\.syncing/);
   assert.match(source, /t\.filters\.resetFilters/);
+  assert.doesNotMatch(source, /t\.nav\.sync/);
+  assert.doesNotMatch(source, /t\.nav\.syncing/);
   assert.equal(source.includes('閼侯剙鍙'), false);
   assert.equal(source.includes('瀵偓閸欐垼'), false);
   assert.equal(source.includes('闁插秶鐤'), false);

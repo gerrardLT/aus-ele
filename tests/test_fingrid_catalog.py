@@ -25,6 +25,15 @@ class FingridCatalogTests(unittest.TestCase):
         self.assertEqual(dataset["unit"], "EUR/MWh")
         self.assertEqual(dataset["metadata_json"]["product"], "Imbalance")
 
+    def test_hourly_backfill_defaults_match_real_post_2020_coverage(self):
+        self.assertEqual(get_dataset_config("281")["default_backfill_start"], "2022-01-01T00:00:00Z")
+        self.assertEqual(get_dataset_config("283")["default_backfill_start"], "2021-04-01T00:00:00Z")
+        self.assertEqual(get_dataset_config("315")["default_backfill_start"], "2020-01-01T00:00:00Z")
+        self.assertEqual(get_dataset_config("316")["default_backfill_start"], "2020-01-01T00:00:00Z")
+        self.assertEqual(get_dataset_config("317")["default_backfill_start"], "2020-01-01T00:00:00Z")
+        self.assertEqual(get_dataset_config("318")["default_backfill_start"], "2021-01-01T00:00:00Z")
+        self.assertEqual(get_dataset_config("319")["default_backfill_start"], "2022-01-01T00:00:00Z")
+
     def test_normalize_fingrid_row_accepts_start_time_shape(self):
         dataset = get_dataset_config("317")
         row = normalize_fingrid_row(

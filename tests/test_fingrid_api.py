@@ -3,6 +3,9 @@ import inspect
 import sys
 import tempfile
 import unittest
+import zipfile
+import io
+import xml.etree.ElementTree as ET
 from unittest import mock
 
 from fastapi import BackgroundTasks, HTTPException
@@ -140,6 +143,86 @@ class FingridApiTests(unittest.TestCase):
     def test_export_route_uses_no_default_limit_when_query_param_is_missing(self):
         signature = inspect.signature(server.export_fingrid_dataset_csv)
         self.assertIsNone(signature.parameters["limit"].default.default)
+
+    def test_all_markets_export_route_uses_no_default_limit_when_query_param_is_missing(self):
+        signature = inspect.signature(server.export_all_fingrid_datasets_csv)
+        self.assertIsNone(signature.parameters["limit"].default.default)
+
+    def test_all_markets_export_route_builds_xlsx_with_one_sheet_per_dataset(self):
+        payloads = {
+            "317": {
+                "dataset": {
+                    "dataset_id": "317",
+                    "name": "FCR-N hourly market prices",
+                    "unit": "EUR/MW",
+                    "metadata_json": {"product": "FCR-N", "signal": "capacity_price"},
+                },
+                "series": [
+                    {
+                        "timestamp": "2026-01-01T00:00:00+02:00",
+                        "timestamp_utc": "2025-12-31T22:00:00Z",
+                        "bucket_start": "2026-01-01T00:00:00+02:00",
+                        "bucket_end": "2026-01-01T01:00:00+02:00",
+                        "value": 12.3,
+                        "avg_value": 12.3,
+                        "peak_value": 12.3,
+                        "trough_value": 12.3,
+                        "sample_count": 1,
+                        "unit": "EUR/MW",
+                    }
+                ],
+            },
+            "319": {
+                "dataset": {
+                    "dataset_id": "319",
+                    "name": "Imbalance price",
+                    "unit": "EUR/MWh",
+                    "metadata_json": {"product": "Imbalance", "signal": "settlement_price"},
+                },
+                "series": [
+                    {
+                        "timestamp": "2026-01-01T00:00:00+02:00",
+                        "timestamp_utc": "2025-12-31T22:00:00Z",
+                        "bucket_start": "2026-01-01T00:00:00+02:00",
+                        "bucket_end": "2026-01-01T01:00:00+02:00",
+                        "value": 101.2,
+                        "avg_value": 101.2,
+                        "peak_value": 101.2,
+                        "trough_value": 101.2,
+                        "sample_count": 1,
+                        "unit": "EUR/MWh",
+                    }
+                ],
+            },
+        }
+
+        with mock.patch(
+            "server.fingrid_catalog.list_dataset_configs",
+            return_value=[{"dataset_id": "317"}, {"dataset_id": "319"}],
+        ):
+            with mock.patch(
+                "server.fingrid_service.get_dataset_series_payload",
+                side_effect=lambda *args, **kwargs: payloads[kwargs["dataset_id"]],
+            ):
+                response = server.export_all_fingrid_datasets_csv(
+                    start="2026-01-01T00:00:00Z",
+                    end="2026-01-02T00:00:00Z",
+                    aggregation="day",
+                )
+
+        self.assertEqual(
+            response.media_type,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn('attachment; filename="fingrid-all-markets.xlsx"', response.headers["Content-Disposition"])
+
+        archive = zipfile.ZipFile(io.BytesIO(response.body))
+        workbook_xml = archive.read("xl/workbook.xml")
+        root = ET.fromstring(workbook_xml)
+        ns = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        sheet_names = [sheet.attrib["name"] for sheet in root.findall("main:sheets/main:sheet", ns)]
+
+        self.assertEqual(sheet_names, ["317_FCR-N", "319_Imbalance"])
 
     def test_fingrid_status_route_rejects_internal_scope_violation(self):
         scope = {

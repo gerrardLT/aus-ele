@@ -33,6 +33,16 @@ export function buildFingridExportUrl(apiBase, { datasetId, start, end, tz, aggr
   return `${apiBase}/fingrid/datasets/${datasetId}/export?${params.toString()}`;
 }
 
+export function buildFingridAllMarketsExportUrl(apiBase, { start, end, tz, aggregation, limit }) {
+  const params = new URLSearchParams();
+  if (start) params.set('start', start);
+  if (end) params.set('end', end);
+  if (tz) params.set('tz', tz);
+  if (aggregation) params.set('aggregation', aggregation);
+  if (limit) params.set('limit', String(limit));
+  return `${apiBase}/fingrid/export?${params.toString()}`;
+}
+
 export function normalizeFingridDatasetList(payload = {}) {
   return Array.isArray(payload.datasets) ? payload.datasets : [];
 }

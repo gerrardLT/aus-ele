@@ -27,7 +27,7 @@ export default function FinlandWorkbenchTabs({
               aria-selected={isActive}
               aria-controls={`finland-tab-panel-${tab.id}`}
               onClick={() => onTabChange(tab.id)}
-              className={`min-h-[40px] rounded-full border px-4 py-2 text-sm transition-colors ${
+              className={`min-h-[44px] rounded-full border px-4 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--color-primary)_36%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-panel)] ${
                 isActive
                   ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
                   : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-text)]'
@@ -68,7 +68,7 @@ export default function FinlandWorkbenchTabs({
                     type="button"
                     aria-pressed={isActive}
                     onClick={() => onDailyModeChange?.(mode.id)}
-                    className={`min-w-[9rem] rounded-full px-4 py-2 text-sm transition ${
+                    className={`min-h-[44px] min-w-[9rem] rounded-full px-4 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--color-primary)_36%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-panel)] ${
                       isActive
                         ? 'bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-text)]'
@@ -106,7 +106,7 @@ export default function FinlandWorkbenchTabs({
                       <button
                         type="button"
                         onClick={() => onDictionaryJump?.(row.field_key, row.preferredView)}
-                        className="rounded-full border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text)] transition hover:border-[var(--color-inverted)] hover:text-[var(--color-inverted)]"
+                        className="min-h-[44px] rounded-full border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text)] transition hover:border-[var(--color-inverted)] hover:text-[var(--color-inverted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--color-primary)_36%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-panel)]"
                       >
                         {panelCopy.dictionaryJumpLabel}
                       </button>

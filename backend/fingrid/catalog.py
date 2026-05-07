@@ -11,7 +11,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/281",
         "api_path": "/datasets/281/data",
         "series_key": "fcrd_down_hourly_procured_volume",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2022-01-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
         "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {
@@ -33,7 +33,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/283",
         "api_path": "/datasets/283/data",
         "series_key": "fcrd_down_hourly_market_price",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2021-04-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
         "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {
@@ -55,7 +55,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/288",
         "api_path": "/datasets/288/data",
         "series_key": "fcrn_yearly_market_plan",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2021-01-01T00:00:00Z",
         "default_incremental_lookback_days": 365,
         "supported_aggregations": ["raw", "day", "week", "month"],
         "metadata_json": {
@@ -77,7 +77,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/290",
         "api_path": "/datasets/290/data",
         "series_key": "fcrd_up_yearly_market_plan",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2020-01-01T00:00:00Z",
         "default_incremental_lookback_days": 365,
         "supported_aggregations": ["raw", "day", "week", "month"],
         "metadata_json": {
@@ -99,7 +99,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/315",
         "api_path": "/datasets/315/data",
         "series_key": "fcrd_up_hourly_procured_volume",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2020-01-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
         "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {
@@ -121,7 +121,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/316",
         "api_path": "/datasets/316/data",
         "series_key": "fcrn_hourly_procured_volume",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2020-01-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
         "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {
@@ -143,7 +143,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/317",
         "api_path": "/datasets/317/data",
         "series_key": "fcrn_hourly_market_price",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2020-01-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
         "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {
@@ -165,7 +165,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/318",
         "api_path": "/datasets/318/data",
         "series_key": "fcrd_up_hourly_market_price",
-        "default_backfill_start": "2014-01-01T00:00:00Z",
+        "default_backfill_start": "2021-01-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
         "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {
@@ -187,7 +187,7 @@ FINGRID_DATASETS = {
         "source_url": "https://data.fingrid.fi/en/datasets/319",
         "api_path": "/datasets/319/data",
         "series_key": "imbalance_price",
-        "default_backfill_start": "2025-01-01T00:00:00Z",
+        "default_backfill_start": "2022-01-01T00:00:00Z",
         "default_incremental_lookback_days": 30,
         "supported_aggregations": ["raw", "1h", "2h", "4h", "day", "week", "month"],
         "metadata_json": {

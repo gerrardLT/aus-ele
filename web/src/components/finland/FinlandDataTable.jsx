@@ -31,7 +31,7 @@ export default function FinlandDataTable({
 
   return (
     <section className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[color:color-mix(in_oklab,var(--color-panel)_86%,transparent)]">
-      <div className="border-b border-[var(--color-border)] bg-[linear-gradient(135deg,rgba(148,163,184,0.08),rgba(212,178,106,0.08),transparent)] px-5 py-4">
+      <div className="border-b border-[var(--color-border)] bg-[linear-gradient(135deg,rgba(148,163,184,0.08),rgba(53,95,156,0.08),transparent)] px-5 py-4">
         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">
           {copy.eyebrow}
         </div>
@@ -45,7 +45,7 @@ export default function FinlandDataTable({
 
       {columns.length ? (
         <div className="max-h-[28rem] overflow-auto">
-          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+          <table className="min-w-full border-separate border-spacing-0 text-left text-sm tabular-nums">
             <thead className="sticky top-0 z-20">
               <tr className="bg-[var(--color-surface)]/95 text-[var(--color-muted)] backdrop-blur">
                 {columns.map((column, index) => {
@@ -65,7 +65,7 @@ export default function FinlandDataTable({
                           type="button"
                           onClick={() => toggleField(column.field_key)}
                           aria-pressed={isSelected}
-                          className={`grid w-full gap-2 text-left transition ${
+                          className={`grid min-h-[44px] w-full gap-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--color-primary)_36%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)] ${
                             isSelected ? 'text-[var(--color-text)]' : 'text-[var(--color-muted)] hover:text-[var(--color-text)]'
                           }`}
                         >
@@ -75,7 +75,7 @@ export default function FinlandDataTable({
                             <span
                               className={`rounded-full border px-2 py-1 ${
                                 isSelected
-                                  ? 'border-amber-300/60 bg-amber-300/15 text-amber-200'
+                                  ? 'border-[color:color-mix(in_oklab,var(--color-primary)_28%,var(--color-border))] bg-[color:color-mix(in_oklab,var(--color-primary)_12%,var(--color-surface))] text-[var(--color-primary)]'
                                   : 'border-[var(--color-border)] text-[var(--color-muted)]'
                               }`}
                             >

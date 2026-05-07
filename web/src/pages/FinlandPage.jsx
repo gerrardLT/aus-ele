@@ -4,6 +4,7 @@ import FinlandBoardHeader from '../components/finland/FinlandBoardHeader';
 import FinlandDataTable from '../components/finland/FinlandDataTable';
 import FinlandOverviewCards from '../components/finland/FinlandOverviewCards';
 import FinlandPrimaryPriceWorkbench from '../components/finland/FinlandPrimaryPriceWorkbench';
+import FinlandSeriesGallery from '../components/finland/FinlandSeriesGallery';
 import FinlandWorkbenchTabs from '../components/finland/FinlandWorkbenchTabs';
 import { fetchJson } from '../lib/apiClient';
 import { getApiBase } from '../lib/apiBase';
@@ -332,11 +333,12 @@ export default function FinlandPage() {
     const nextActiveTab = normalizeFinlandDictionaryJumpTarget(preferredView);
     setActiveTab(nextActiveTab);
     setSelectedFieldIds([fieldKey]);
+    setPrimaryFieldKey(fieldKey);
   };
 
   return (
     <main className="min-h-screen bg-[var(--color-background)] px-6 py-8 text-[var(--color-text)]">
-      <div className="mx-auto grid max-w-7xl gap-6">
+      <div className="mx-auto grid grid-cols-1 max-w-7xl gap-6">
         <PageWorkspaceNav
           brand={copy.brand}
           title={copy.title}
@@ -399,17 +401,30 @@ export default function FinlandPage() {
         />
 
         {TABULAR_TABS.has(activeTab) ? (
-          <FinlandDataTable
-            columns={tableColumns}
-            rows={tableRows}
-            selectedFieldIds={selectedFieldIds}
-            onSelectField={setSelectedFieldIds}
-            copy={{
-              ...copy.tableShell,
-              notAvailable: copy.notAvailable,
-              description: `${copy.task7.tableDescriptionPrefix} ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
-            }}
-          />
+          <>
+            <FinlandSeriesGallery
+              columns={tableColumns}
+              rows={tableRows}
+              selectedFieldIds={selectedFieldIds}
+              onPromoteField={(fieldKey) => {
+                setSelectedFieldIds([fieldKey]);
+                setPrimaryFieldKey(fieldKey);
+              }}
+              copy={copy.chartGallery}
+            />
+
+            <FinlandDataTable
+              columns={tableColumns}
+              rows={tableRows}
+              selectedFieldIds={selectedFieldIds}
+              onSelectField={setSelectedFieldIds}
+              copy={{
+                ...copy.tableShell,
+                notAvailable: copy.notAvailable,
+                description: `${copy.task7.tableDescriptionPrefix} ${tabs.find((tab) => tab.id === activeTab)?.label || activeBoardView} (${resolvedBoardView})`,
+              }}
+            />
+          </>
         ) : null}
       </div>
     </main>

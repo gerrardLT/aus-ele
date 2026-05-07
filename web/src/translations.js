@@ -1215,6 +1215,18 @@ translations.en.finlandBoard.priceWorkbench = {
   },
 };
 
+translations.en.finlandBoard.chartGallery = {
+  eyebrow: 'Chart Matrix',
+  title: 'Current board view as charts',
+  description: 'Every selectable field in the current board view is promoted into a visual card first, so you can scan the full market structure before dropping into the raw table.',
+  countSuffix: 'series',
+  actionHint: 'Promote to main chart',
+  highLabel: 'High',
+  lowLabel: 'Low',
+  fallback: '--',
+  empty: 'No chartable board fields are available in the current view.',
+};
+
 translations.zh.finlandBoard.priceWorkbench = {
   eyebrow: '\u4e3b\u4ef7\u683c\u5de5\u4f5c\u53f0',
   title: '\u82ac\u5170\u50a8\u5907\u4ef7\u683c\u89c2\u5bdf\u53f0',
@@ -1245,4 +1257,16 @@ translations.zh.finlandBoard.priceWorkbench = {
     description: '\u4e3a\u50a8\u5907\u4f53\u91cf\u4e0e\u82ac\u5170\u73b0\u8d27\u4e0a\u4e0b\u6587\u9884\u7559\u5bf9\u6bd4\u4f4d\u3002',
     empty: '\u7b49\u5f85\u9875\u9762\u63a5\u5165\u5bf9\u6bd4\u8f68\u9053\u8bf7\u6c42\u540e\u5728\u6b64\u663e\u793a\u3002',
   },
+};
+
+translations.zh.finlandBoard.chartGallery = {
+  eyebrow: '\u56fe\u8868\u77e9\u9635',
+  title: '\u5f53\u524d\u89c6\u56fe\u5168\u90e8\u5148\u770b\u56fe',
+  description: '\u5f53\u524d board \u89c6\u56fe\u4e2d\u6240\u6709\u53ef\u9009\u5b57\u6bb5\u90fd\u4f1a\u5148\u53d8\u6210\u56fe\u8868\u5361\u7247\uff0c\u8ba9\u4f60\u5148\u626b\u63cf\u5168\u5c40\u7ed3\u6784\uff0c\u518d\u5411\u4e0b\u770b\u539f\u59cb\u8868\u683c\u3002',
+  countSuffix: '\u6761\u5e8f\u5217',
+  actionHint: '\u8bbe\u4e3a\u4e3b\u56fe',
+  highLabel: '\u6700\u9ad8',
+  lowLabel: '\u6700\u4f4e',
+  fallback: '--',
+  empty: '\u5f53\u524d\u89c6\u56fe\u6682\u65e0\u53ef\u7ed8\u5236\u7684\u5b57\u6bb5\u3002',
 };

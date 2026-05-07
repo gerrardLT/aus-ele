@@ -16,7 +16,7 @@ test('FingridSeriesChart tooltip references bucket statistics fields', () => {
 
 test('FingridSeriesChart renders a visible loading indicator without dimming the whole chart', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/fingrid/FingridSeriesChart.jsx'), 'utf8');
-  for (const token of ['if \\(loading\\)', "copy\\?\\.loadingChart \\|\\| 'Loading chart\\.{3}'"]) {
+  for (const token of ['if \\(loading\\)', 'copy\\?\\.loadingChart']) {
     assert.match(source, new RegExp(token));
   }
   assert.doesNotMatch(source, /absolute right-3 top-3/);

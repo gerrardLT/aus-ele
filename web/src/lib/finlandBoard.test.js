@@ -454,6 +454,7 @@ test('FinlandPage uses board overview and readiness helpers with workspace shell
   assert.match(source, /fetchJson/);
   assert.match(source, /buildFinlandBoardOverviewUrl/);
   assert.match(source, /buildFinlandBoardReadinessUrl/);
+  assert.match(source, /className="mx-auto grid grid-cols-1 max-w-7xl gap-6"/);
   assert.match(source, /PageWorkspaceNav/);
   assert.match(source, /FinlandBoardHeader/);
   assert.match(source, /FinlandOverviewCards/);
@@ -503,7 +504,9 @@ test('FinlandPage promotes a dedicated primary field state into the workbench sh
   assert.match(source, /const overviewCards = useMemo\(/);
   assert.match(source, /const tableColumns = useMemo\(/);
   assert.match(source, /const tableRows = useMemo\(/);
+  assert.match(source, /FinlandSeriesGallery/);
   assert.match(source, /<FinlandOverviewCards cards=\{overviewCards\} copy=\{copy\} \/>/);
+  assert.match(source, /<FinlandSeriesGallery[\s\S]*columns=\{tableColumns\}[\s\S]*rows=\{tableRows\}/);
   assert.match(source, /<FinlandDataTable[\s\S]*columns=\{tableColumns\}[\s\S]*rows=\{tableRows\}[\s\S]*selectedFieldIds=\{selectedFieldIds\}[\s\S]*onSelectField=\{setSelectedFieldIds\}/);
   assert.match(source, /<FinlandPrimaryPriceWorkbench[\s\S]*selectedFieldKey=\{effectivePrimaryFieldKey\}[\s\S]*onSelectField=\{setPrimaryFieldKey\}/);
   assert.match(source, /mainChartRequest=\{mainChartRequest\}/);
@@ -606,11 +609,14 @@ test('FinlandPage references the primary price workbench and translation-backed 
 
 test('FinlandPage renders the primary workbench before the verification table', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+  const galleryIndex = source.indexOf('<FinlandSeriesGallery');
   const workbenchIndex = source.indexOf('<FinlandPrimaryPriceWorkbench');
   const tableIndex = source.indexOf('<FinlandDataTable');
 
+  assert.equal(galleryIndex > -1, true);
   assert.equal(workbenchIndex > -1, true);
   assert.equal(tableIndex > -1, true);
+  assert.equal(galleryIndex < tableIndex, true);
   assert.equal(workbenchIndex < tableIndex, true);
 });
 
@@ -642,6 +648,17 @@ test('Finland primary price workbench scaffolds exist as focused components', ()
   assert.match(workbenchSource, /copy\.comparison/);
 });
 
+test('finland primary workbench keeps the linked chart as the visual anchor', () => {
+  const workbenchSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPrimaryPriceWorkbench.jsx'), 'utf8');
+  const chartIndex = workbenchSource.indexOf('<FinlandLinkedChart');
+  const selectorIndex = workbenchSource.indexOf('<FinlandPrimaryPriceSelector');
+
+  assert.equal(chartIndex > -1, true);
+  assert.equal(selectorIndex > -1, true);
+  assert.equal(chartIndex < selectorIndex, true);
+  assert.match(workbenchSource, /xl:grid-cols-\[minmax\(0,1\.85fr\)_minmax\(18rem,0\.95fr\)\]/);
+});
+
 test('Finland board components expose overview and workbench shell structure with page-owned header metrics', () => {
   const headerSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandBoardHeader.jsx'), 'utf8');
   const cardsSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandOverviewCards.jsx'), 'utf8');
@@ -656,6 +673,66 @@ test('Finland board components expose overview and workbench shell structure wit
   assert.match(tabsSource, /tabs\.map/);
   assert.match(tabsSource, /aria-selected/);
   assert.match(tabsSource, /panelCopy\./);
+});
+
+test('finland board theme exposes semantic surface aliases for workspace pages', () => {
+  const themeSource = fs.readFileSync(path.resolve(__dirname, '../index.css'), 'utf8');
+
+  assert.match(themeSource, /--color-background:/);
+  assert.match(themeSource, /--color-panel:/);
+  assert.match(themeSource, /--color-surface:/);
+  assert.match(themeSource, /--color-surface-hover:/);
+});
+
+test('finland board typography avoids the default inter-playfair pairing', () => {
+  const themeSource = fs.readFileSync(path.resolve(__dirname, '../index.css'), 'utf8');
+
+  assert.match(themeSource, /Archivo/);
+  assert.match(themeSource, /Source Serif 4/);
+  assert.doesNotMatch(themeSource, /Inter/);
+  assert.doesNotMatch(themeSource, /Playfair Display/);
+});
+
+test('finland board controls expose focus-visible feedback and touch-safe sizes', () => {
+  const navSource = fs.readFileSync(path.resolve(__dirname, '../components/PageWorkspaceNav.jsx'), 'utf8');
+  const tabsSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandWorkbenchTabs.jsx'), 'utf8');
+  const selectorSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPrimaryPriceSelector.jsx'), 'utf8');
+  const tableSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandDataTable.jsx'), 'utf8');
+
+  assert.match(navSource, /min-h-\[44px\]/);
+  assert.match(navSource, /focus-visible:/);
+  assert.match(tabsSource, /min-h-\[44px\]/);
+  assert.match(tabsSource, /focus-visible:/);
+  assert.match(selectorSource, /min-h-\[44px\]/);
+  assert.match(selectorSource, /focus-visible:/);
+  assert.match(tableSource, /tabular-nums/);
+});
+
+test('finland chart-first gallery turns current board columns into visual cards', () => {
+  const gallerySource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandSeriesGallery.jsx'), 'utf8');
+  const translationsSource = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
+
+  assert.match(gallerySource, /isFinlandBoardSelectableColumn/);
+  assert.match(gallerySource, /LineChart/);
+  assert.match(gallerySource, /columns = \[\]/);
+  assert.match(gallerySource, /rows = \[\]/);
+  assert.match(gallerySource, /selectedFieldIds/);
+  assert.match(gallerySource, /onPromoteField/);
+  assert.match(gallerySource, /tabular-nums/);
+  assert.match(translationsSource, /chartGallery/);
+});
+
+test('finland board hero and workbench avoid hard-coded dark cinematic gradients', () => {
+  const headerSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandBoardHeader.jsx'), 'utf8');
+  const workbenchSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandPrimaryPriceWorkbench.jsx'), 'utf8');
+  const cardsSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandOverviewCards.jsx'), 'utf8');
+  const comparisonSource = fs.readFileSync(path.resolve(__dirname, '../components/finland/FinlandComparisonRail.jsx'), 'utf8');
+
+  assert.doesNotMatch(headerSource, /linear-gradient\(135deg,rgba\(9,14,28,0\.96\),rgba\(15,32,47,0\.92\)_42%,rgba\(110,43,22,0\.78\)\)/);
+  assert.doesNotMatch(headerSource, /radial-gradient\(circle_at_top_right,rgba\(251,191,36,0\.24\),transparent_30%\)/);
+  assert.doesNotMatch(workbenchSource, /linear-gradient\(180deg,rgba\(9,15,25,0\.96\),rgba\(11,20,29,0\.94\)\)/);
+  assert.doesNotMatch(cardsSource, /linear-gradient\(180deg,rgba\(11,17,28,0\.98\),rgba\(17,27,44,0\.86\)\)/);
+  assert.doesNotMatch(comparisonSource, /rgba\(11,19,31,0\.82\)|rgba\(11,19,31,0\.78\)/);
 });
 
 test('app shell and translations include Finland navigation entry and localized board copy', () => {

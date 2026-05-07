@@ -105,8 +105,22 @@ def sync_dataset(
             db.upsert_fingrid_timeseries(normalized_rows)
             windows_synced += 1
             records_upserted += len(normalized_rows)
+            last_window_cursor = _format_utc(window_end)
             if normalized_rows:
                 last_timestamp_utc = normalized_rows[-1]["timestamp_utc"]
+                last_window_cursor = last_timestamp_utc
+
+            db.upsert_fingrid_sync_state(
+                dataset_id=dataset_id,
+                last_success_at=previous_state.get("last_success_at"),
+                last_attempt_at=_format_utc(datetime.now(timezone.utc)),
+                last_cursor=last_window_cursor,
+                last_synced_timestamp_utc=last_timestamp_utc or previous_state.get("last_synced_timestamp_utc"),
+                sync_status="running",
+                last_error=None,
+                backfill_started_at=backfill_started_at,
+                backfill_completed_at=backfill_completed_at,
+            )
 
         completed_at = datetime.now(timezone.utc)
         db.upsert_fingrid_sync_state(
