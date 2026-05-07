@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchJson } from '../lib/apiClient';
 import { getApiBase } from '../lib/apiBase';
 import {
+  buildFingridAllMarketsExportUrl,
   buildFingridExportUrl,
   buildFingridSeriesUrl,
   buildFingridStatusUrl,
   buildFingridSummaryUrl,
-  buildFingridSyncUrl,
   normalizeFingridDatasetList,
 } from '../lib/fingridApi';
 import { buildFingridTimeWindow, getCustomDateRangeValidationCode } from '../lib/fingridDataset';
@@ -15,14 +15,10 @@ import {
   getFingridCopy,
   localizeFingridDataset,
 } from '../lib/fingridUi';
-import DataQualityBadge from '../components/DataQualityBadge';
-import FingridDistributionPanel from '../components/fingrid/FingridDistributionPanel';
-import FingridHeader from '../components/fingrid/FingridHeader';
-import FingridSeriesChart from '../components/fingrid/FingridSeriesChart';
-import FingridStatusPanel from '../components/fingrid/FingridStatusPanel';
-import FingridSummaryCards from '../components/fingrid/FingridSummaryCards';
-import PageSection from '../components/PageSection';
 import PageWorkspaceNav from '../components/PageWorkspaceNav';
+import FingridHeader from '../components/fingrid/FingridHeader';
+import FingridHourlyBoard from '../components/fingrid/FingridHourlyBoard';
+import FingridYearlyPlanBoard from '../components/fingrid/FingridYearlyPlanBoard';
 
 const API_BASE = getApiBase();
 const LANG_STORAGE_KEY = 'app_lang';
@@ -59,7 +55,6 @@ export default function FingridPage() {
   const [summaryPayload, setSummaryPayload] = useState(null);
   const [statusPayload, setStatusPayload] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const statusRefreshKeyRef = useRef('');
@@ -79,10 +74,21 @@ export default function FingridPage() {
   const customDateRangeValidationMessage = customDateRangeValidationCode
     ? copy.validation[customDateRangeValidationCode]
     : null;
-  const syncInProgress = syncing || statusPayload?.status?.sync_status === 'running';
   const marketModelCopy = copy.marketModel || {};
+  const workspaceLinkCopy = copy.workspaceLinks || {};
   const statusMetadata = statusPayload?.metadata || statusPayload?.status_metadata || statusPayload?.status?.metadata || null;
-  const statusLoadingLabel = copy.statusValues.loading;
+  const selectedDataset = useMemo(
+    () => localizedDatasets.find((item) => item.dataset_id === datasetId) || null,
+    [localizedDatasets, datasetId],
+  );
+  const presetOptions = useMemo(
+    () => (selectedDataset?.groupKey === 'yearly_plans' ? ['1y', 'all', 'custom'] : ['7d', '30d', '90d', '1y', 'all', 'custom']),
+    [selectedDataset],
+  );
+  const aggregationOptions = useMemo(
+    () => selectedDataset?.supported_aggregations || ['raw', '1h', '2h', '4h', 'day', 'week', 'month'],
+    [selectedDataset],
+  );
 
   useEffect(() => {
     try {
@@ -117,6 +123,31 @@ export default function FingridPage() {
       setDatasetId(localizedDatasets[0].dataset_id);
     }
   }, [localizedDatasets, datasetId]);
+
+  useEffect(() => {
+    if (!selectedDataset) {
+      return;
+    }
+
+    const supportedAggregations = new Set(selectedDataset.supported_aggregations || []);
+    if (!supportedAggregations.has(aggregation)) {
+      if (selectedDataset.groupKey === 'yearly_plans') {
+        setAggregation(supportedAggregations.has('month') ? 'month' : (selectedDataset.supported_aggregations?.[0] || 'month'));
+      } else {
+        setAggregation(supportedAggregations.has('day') ? 'day' : (selectedDataset.supported_aggregations?.[0] || 'day'));
+      }
+      return;
+    }
+
+    if (selectedDataset.groupKey === 'yearly_plans') {
+      if (preset !== 'all' && preset !== '1y' && preset !== 'custom') {
+        setPreset('1y');
+      }
+      if (aggregation === 'raw' || aggregation === '1h' || aggregation === '2h' || aggregation === '4h') {
+        setAggregation(supportedAggregations.has('month') ? 'month' : (selectedDataset.supported_aggregations?.[0] || 'month'));
+      }
+    }
+  }, [selectedDataset, aggregation, preset]);
 
   const timeWindow = useMemo(
     () => buildFingridTimeWindow({ preset, customStartDate, customEndDate, tz }),
@@ -203,132 +234,127 @@ export default function FingridPage() {
     ),
     [datasetId, timeWindow, tz, aggregation, requestLimit, customDateRangeValidationCode],
   );
-
-  const applyStatusPayload = (nextStatusPayload) => {
-    const nextRefreshKey = buildStatusRefreshKey(nextStatusPayload);
-    const previousRefreshKey = statusRefreshKeyRef.current;
-    statusRefreshKeyRef.current = nextRefreshKey;
-    setStatusPayload(nextStatusPayload);
-    if (previousRefreshKey && previousRefreshKey !== nextRefreshKey) {
-      setRefreshNonce((value) => value + 1);
-    }
-  };
-
-  const handleSync = async () => {
-    if (syncInProgress) {
-      return;
-    }
-
-    setSyncing(true);
-    setError(null);
-    try {
-      const syncResponse = await fetch(buildFingridSyncUrl(API_BASE, datasetId), { method: 'POST' });
-      const syncPayload = await syncResponse.json().catch(() => null);
-      if (syncResponse.status === 409) {
-        const statusData = await fetchJson(buildFingridStatusUrl(API_BASE, datasetId));
-        applyStatusPayload(statusData);
-        return;
-      }
-      if (!syncResponse.ok) {
-        throw new Error(syncPayload?.detail || `Fingrid sync request failed (${syncResponse.status})`);
-      }
-      const statusData = await fetchJson(buildFingridStatusUrl(API_BASE, datasetId));
-      applyStatusPayload(statusData);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setSyncing(false);
-    }
-  };
+  const exportAllHref = useMemo(
+    () => (
+      customDateRangeValidationCode
+        ? null
+        : buildFingridAllMarketsExportUrl(API_BASE, { ...timeWindow, tz, aggregation, limit: requestLimit })
+    ),
+    [timeWindow, tz, aggregation, requestLimit, customDateRangeValidationCode],
+  );
+  const isYearlyPlanBoard = selectedDataset?.groupKey === 'yearly_plans';
+  const workspaceLinks = [
+    { key: 'home', href: '/', label: workspaceLinkCopy.home || 'Home' },
+    { key: 'finland', href: '/finland', label: workspaceLinkCopy.finland || 'Finland Board' },
+    { key: 'fingrid', href: '/fingrid', label: workspaceLinkCopy.fingrid || 'Fingrid' },
+    { key: 'developer', href: '/developer', label: workspaceLinkCopy.developer || 'Developer Portal' },
+  ];
+  const toolbar = (
+    <FingridHeader
+      datasets={localizedDatasets}
+      datasetId={datasetId}
+      onDatasetChange={setDatasetId}
+      preset={preset}
+      onPresetChange={setPreset}
+      presetOptions={presetOptions}
+      aggregation={aggregation}
+      onAggregationChange={setAggregation}
+      aggregationOptions={aggregationOptions}
+      tz={tz}
+      onTimezoneChange={setTz}
+      statusPayload={statusPayload}
+      exportHref={exportHref}
+      exportAllHref={exportAllHref}
+      copy={copy}
+      customStartDate={customStartDate}
+      customEndDate={customEndDate}
+      onCustomStartDateChange={setCustomStartDate}
+      onCustomEndDateChange={setCustomEndDate}
+      validationMessage={customDateRangeValidationMessage}
+      toolbarOnly
+    />
+  );
 
   return (
-    <main className="min-h-screen bg-[var(--color-background)] px-6 py-8 text-[var(--color-text)]">
-      <div className="mx-auto grid max-w-7xl gap-6">
+    <main
+      className={`min-h-screen px-6 py-8 text-[var(--color-text)] ${
+        isYearlyPlanBoard
+          ? 'bg-[radial-gradient(circle_at_top_left,color-mix(in_srgb,var(--color-accent)_10%,transparent),transparent_28%),linear-gradient(180deg,color-mix(in_srgb,var(--color-panel)_55%,var(--color-background)),var(--color-background))]'
+          : 'bg-[radial-gradient(circle_at_top_right,color-mix(in_srgb,var(--color-accent)_8%,transparent),transparent_24%),linear-gradient(180deg,color-mix(in_srgb,var(--color-surface)_72%,var(--color-background)),var(--color-background))]'
+      }`}
+    >
+      <div className="mx-auto grid grid-cols-1 max-w-7xl gap-8">
         <PageWorkspaceNav
           brand={copy.brand}
-          subtitle={copy.marketPulseSubtitle}
+          title={null}
+          subtitle={null}
           current="fingrid"
-          links={[
-            { key: 'home', href: '/', label: copy.navToAemo },
-            { key: 'fingrid', href: '/fingrid', label: copy.brand },
-            { key: 'developer', href: '/developer', label: 'Developer Portal' },
-          ]}
+          links={workspaceLinks}
           languageLabel={copy.toggleLanguage}
-          languageAriaLabel={copy.toggleLanguage}
+          languageAriaLabel={copy.toggleLanguageAriaLabel}
           onToggleLanguage={() => setLang((current) => (current === 'zh' ? 'en' : 'zh'))}
-          title={copy.marketPulseTitle}
-          meta={<span>{loading ? statusLoadingLabel : copy.marketPulseReady}</span>}
+          compact
+          meta={null}
         />
 
-        <FingridHeader
-          datasets={localizedDatasets}
-          datasetId={datasetId}
-          onDatasetChange={setDatasetId}
-          preset={preset}
-          onPresetChange={setPreset}
-          aggregation={aggregation}
-          onAggregationChange={setAggregation}
-          tz={tz}
-          onTimezoneChange={setTz}
-          statusPayload={statusPayload}
-          syncing={syncInProgress}
-          onSync={handleSync}
-          exportHref={exportHref}
-          copy={copy}
-          onLanguageToggle={() => setLang((current) => (current === 'zh' ? 'en' : 'zh'))}
-          customStartDate={customStartDate}
-          customEndDate={customEndDate}
-          onCustomStartDateChange={setCustomStartDate}
-          onCustomEndDateChange={setCustomEndDate}
-          validationMessage={customDateRangeValidationMessage}
-        />
+        {isYearlyPlanBoard ? (
+          <>
+            <FingridYearlyPlanBoard
+              dataset={selectedDataset}
+              summaryPayload={summaryPayload}
+              seriesPayload={seriesPayload}
+              statusPayload={statusPayload}
+              statusMetadata={statusMetadata}
+              loading={loading}
+              error={error}
+              copy={copy}
+              lang={lang}
+              mode="hero"
+              controls={toolbar}
+            />
+            <FingridYearlyPlanBoard
+              dataset={selectedDataset}
+              summaryPayload={summaryPayload}
+              seriesPayload={seriesPayload}
+              statusPayload={statusPayload}
+              statusMetadata={statusMetadata}
+              loading={loading}
+              error={error}
+              copy={copy}
+              lang={lang}
+              mode="details"
+            />
+          </>
+        ) : (
+          <>
+            <FingridHourlyBoard
+              summaryPayload={summaryPayload}
+              seriesPayload={seriesPayload}
+              statusPayload={statusPayload}
+              statusMetadata={statusMetadata}
+              loading={loading}
+              error={error}
+              copy={copy}
+              lang={lang}
+              marketModelCopy={marketModelCopy}
+              mode="hero"
+              controls={toolbar}
+            />
 
-        <PageSection
-          id="stage-context"
-          title={copy.stageContext}
-          description={copy.stageContextDesc}
-        >
-          <div className="grid gap-4">
-            <DataQualityBadge metadata={statusMetadata} lang={lang} />
-            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">
-                {copy.marketPulseTitle}
-              </div>
-              <div className="mt-2 text-sm leading-6 text-[var(--color-text)]">
-                {marketModelCopy.description}
-              </div>
-              <div className="mt-3 text-sm text-[var(--color-muted)]">
-                {marketModelCopy.noSignals}
-              </div>
-            </div>
-          </div>
-        </PageSection>
-
-        <PageSection
-          id="stage-time-series"
-          title={copy.stageTimeSeries}
-          description={copy.stageTimeSeriesDesc}
-        >
-          <FingridSummaryCards
-            summaryPayload={summaryPayload}
-            seriesPayload={seriesPayload}
-            aggregation={aggregation}
-            loading={loading}
-            lang={lang}
-          />
-          <FingridSeriesChart payload={seriesPayload} loading={loading} error={error} copy={copy} />
-        </PageSection>
-
-        <PageSection
-          id="stage-operations"
-          title={copy.stageOperations}
-          description={copy.stageOperationsDesc}
-        >
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
-            <FingridDistributionPanel payload={summaryPayload} loading={loading} copy={copy} />
-            <FingridStatusPanel payload={statusPayload} loading={loading} error={error} copy={copy} lang={lang} />
-          </div>
-        </PageSection>
+            <FingridHourlyBoard
+              summaryPayload={summaryPayload}
+              seriesPayload={seriesPayload}
+              statusPayload={statusPayload}
+              statusMetadata={statusMetadata}
+              loading={loading}
+              error={error}
+              copy={copy}
+              lang={lang}
+              marketModelCopy={marketModelCopy}
+              mode="details"
+            />
+          </>
+        )}
       </div>
     </main>
   );
