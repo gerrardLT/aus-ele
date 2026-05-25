@@ -65,18 +65,18 @@ function ScoreStrip({ compact, copy }) {
 
 function RegimeCompactPanel({ compact, t }) {
   const copy = {
-    title: t?.title || 'Regime snapshot',
+    title: t?.title || 'Market State',
     subtitle: t?.subtitle || 'Current market state summary',
     available: t?.available || 'Available',
     unavailable: t?.unavailable || 'Unavailable',
-    primaryLabel: t?.primaryLabel || 'Primary regime',
+    primaryLabel: t?.primaryLabel || 'Primary state',
     scoreLabel: t?.scoreLabel || 'Score',
     confidenceLabel: t?.confidenceLabel || 'Confidence',
-    activeLabel: t?.activeLabel || 'Active regimes',
+    activeLabel: t?.activeLabel || 'States in play',
     driversLabel: t?.driversLabel || 'Top drivers',
-    transitionsLabel: t?.transitionsLabel || 'Transition hints',
+    transitionsLabel: t?.transitionsLabel || 'What may change next',
     unavailableMessage:
-      t?.unavailableMessage || 'Regime context is not available for the current dataset window.',
+      t?.unavailableMessage || 'Market-state context is not available for the current dataset window.',
     noDrivers: t?.noDrivers || 'No verified driver summary is available.',
     noTransitions: t?.noTransitions || 'No immediate transition hint is available.',
     unknown: t?.unknown || 'Unavailable',

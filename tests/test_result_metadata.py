@@ -189,6 +189,13 @@ class ApiMetadataIntegrationTests(unittest.TestCase):
             payload["metadata"]["freshness"]["last_updated_at"],
             "2026-04-27 00:10:00",
         )
+        self.assertEqual(payload["metadata"]["coverage_mode"], "full")
+        self.assertEqual(payload["metadata"]["regulatory_scope"], "NEM")
+        self.assertEqual(payload["metadata"]["result_type"], "market_state")
+        self.assertEqual(
+            payload["metadata"]["market_design_context"],
+            "NEM energy market truth with regime, event, reserve, and frequency-aware context.",
+        )
         self.assertEqual(payload["regime_layer"]["primary_regime"]["regime"], "scarcity")
         mock_regime_layer.assert_called_once_with(market="NEM", region="NSW1")
 
@@ -235,10 +242,50 @@ class ApiMetadataIntegrationTests(unittest.TestCase):
             payload["metadata"]["freshness"]["last_updated_at"],
             "2026-04-27 00:10:00",
         )
+        self.assertEqual(payload["metadata"]["coverage_mode"], "full")
+        self.assertEqual(payload["metadata"]["regulatory_scope"], "NEM")
+        self.assertEqual(payload["metadata"]["result_type"], "market_state")
         self.assertEqual(payload["regime_layer"]["primary_regime"]["regime"], "oversupply")
         self.assertEqual(payload["regime_compact"]["primary_regime"]["regime"], "oversupply")
         self.assertEqual(payload["regime_compact"]["availability_status"], "available")
         mock_regime_layer.assert_called_once_with(market="NEM", region="QLD1")
+
+    @mock.patch("server.db.get_last_update_time", return_value="2026-04-27 00:10:00")
+    @mock.patch("server._build_regime_layer_payload")
+    @mock.patch("server._fetch_response_cache")
+    def test_price_trend_metadata_marks_wem_as_core_only_market_state(self, mock_cache_get, mock_regime_layer, mock_updated_at):
+        mock_cache_get.return_value = {
+            "region": "WEM",
+            "year": 2026,
+            "month": None,
+            "total_points": 1,
+            "returned_points": 1,
+            "stats": {"min": 95.0, "max": 95.0, "avg": 95.0},
+            "advanced_stats": {
+                "neg_ratio": 0,
+                "neg_avg": 0,
+                "neg_min": 0,
+                "pos_avg": 95.0,
+                "pos_max": 95.0,
+                "days_below_100": 0,
+                "days_above_300": 0,
+            },
+            "hourly_distribution": [],
+            "data": [{"datetime": "2026-04-01 00:00:00", "price": 95.0}],
+        }
+        mock_regime_layer.return_value = server._build_unavailable_regime_layer_payload(market="WEM", region="WEM")
+
+        payload = server.get_price_trend(year=2026, region="WEM", limit=1500)
+
+        self.assertEqual(payload["metadata"]["data_grade"], "preview")
+        self.assertEqual(payload["metadata"]["coverage_mode"], "core-only")
+        self.assertEqual(payload["metadata"]["regulatory_scope"], "WEM")
+        self.assertEqual(payload["metadata"]["result_type"], "market_state")
+        self.assertEqual(payload["metadata"]["warnings"], ["preview_only", "core_only"])
+        self.assertEqual(
+            payload["metadata"]["market_design_context"],
+            "WEM co-optimised ESS preview view with independent market-design caveat and non-equivalent coverage.",
+        )
 
     @mock.patch("server.db.get_last_update_time", return_value="2026-04-27 00:10:00")
     @mock.patch("server._build_regime_layer_payload")

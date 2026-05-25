@@ -6,7 +6,6 @@ import {
 } from 'recharts';
 import { fetchJson } from '../lib/apiClient';
 import RegimeCompactInline from './RegimeCompactInline';
-import P3BessDecisionPanel from './P3BessDecisionPanel';
 
 const DEFAULT_PARAMS = {
   capacityMw: 100,
@@ -138,12 +137,12 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.3 }}
-      className="col-span-12 mt-16 pt-12 border-t-2 border-[var(--color-text)]"
+      className="col-span-12 mt-12 pt-8 border-t-2 border-[var(--color-text)]"
     >
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div>
-          <h2 className="text-3xl font-serif font-bold mb-1">{t.simTitle}</h2>
-          <p className="text-sm text-[var(--color-muted)] font-sans">{t.simSubtitle}</p>
+          <h2 className="text-2xl font-serif font-bold md:text-[1.75rem]">{t.simTitle}</h2>
+          <p className="text-xs leading-5 text-[var(--color-muted)] font-sans md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">{t.simSubtitle}</p>
         </div>
         <div className="text-xs text-[var(--color-muted)] tracking-widest uppercase font-bold">
           {t.eyebrow}
@@ -151,7 +150,7 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
       </div>
 
       {scopeNote && (
-        <div className="mb-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
+        <div className="mb-6 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">
           {scopeNote}
         </div>
       )}
@@ -163,16 +162,17 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
       ) : (
         <div className="grid grid-cols-1 gap-6">
           <RegimeCompactInline compact={peakPayload?.regime_compact} copy={regimeCompactCopy} />
-          <P3BessDecisionPanel
-            apiBase={apiBase}
-            year={year}
-            region={region}
-            params={params}
-            locale={lang}
-          />
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--color-muted)]">
+              {t.decisionReferenceTitle}
+            </div>
+            <div className="mt-2 text-xs leading-5 text-[var(--color-muted)]">
+              {t.decisionReferenceBody}
+            </div>
+          </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1 space-y-5">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-1 space-y-4">
             <div className="flex flex-col gap-1">
               <label className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
                 {t.pCapacity}
@@ -184,6 +184,7 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
                   min={1}
                   step={10}
                   onChange={(e) => updateParam('capacityMw', parseFloat(e.target.value) || 100)}
+                  aria-label={t.pCapacity || 'Power capacity (MW)'}
                   className="w-20 px-2 py-1 text-sm font-mono border border-[var(--color-border)] bg-transparent rounded focus:outline-none"
                 />
                 <span className="text-xs text-[var(--color-muted)]">{t.capacityMwUnit}</span>
@@ -195,6 +196,7 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
                   max={8}
                   step={1}
                   onChange={(e) => updateParam('durationH', parseFloat(e.target.value) || 2)}
+                  aria-label={t.durationHoursUnit || 'Duration (hours)'}
                   className="w-16 px-2 py-1 text-sm font-mono border border-[var(--color-border)] bg-transparent rounded focus:outline-none"
                 />
                 <span className="text-xs text-[var(--color-muted)]">{t.durationHoursUnit}</span>
@@ -214,6 +216,7 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
                   step={slider.step}
                   value={params[slider.key]}
                   onChange={(e) => updateParam(slider.key, parseFloat(e.target.value))}
+                  aria-label={slider.label}
                   className="w-full accent-[var(--color-text)] h-1.5 bg-[var(--color-border)] rounded-full appearance-none cursor-pointer"
                 />
                 <div className="flex justify-between text-[10px] text-[var(--color-muted)]">
@@ -246,7 +249,7 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
                 </div>
               )}
 
-              <div className="h-[400px]">
+              <div className="h-[360px] md:h-[380px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={waterfallData} margin={{ top: 20, right: 20, left: 10, bottom: 30 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />

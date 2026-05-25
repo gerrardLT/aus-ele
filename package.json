@@ -1,0 +1,28 @@
+{
+  "name": "aus-ele",
+  "version": "1.0.0",
+  "description": "Energy market analysis workspace for:",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gerrardLT/aus-ele.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/gerrardLT/aus-ele/issues"
+  },
+  "homepage": "https://github.com/gerrardLT/aus-ele#readme",
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@playwright/test": "^1.52.0"
+  }
+}

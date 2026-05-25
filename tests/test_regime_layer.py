@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+import sqlite3
 
 from fastapi.testclient import TestClient
 
@@ -67,6 +68,7 @@ class RegimeLayerTests(unittest.TestCase):
         self.assertEqual(payload["active_regimes"][0]["regime"], payload["primary_regime"]["regime"])
         scores = [item["score"] for item in payload["active_regimes"]]
         self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertEqual(payload["compact"]["top_drivers"][0]["driver_type"], "renewables_balance")
 
     @patch("server._fetch_recent_grid_state_rows", return_value=[{"state_type": "reserve_tightness", "severity": "high", "confidence": 0.9, "headline": "Reserve notice active"}])
     @patch("server._fetch_latest_nem_region_prices", return_value={})
@@ -130,6 +132,48 @@ class RegimeLayerTests(unittest.TestCase):
         self.assertGreaterEqual(payload["regime_score_map"]["scarcity"], 55)
         self.assertIn("scarcity", {item["regime"] for item in payload["active_regimes"]})
         self.assertTrue(any(driver["driver_type"] == "load_tightness" for driver in payload["drivers"]))
+
+    @patch("server._fetch_recent_grid_state_rows", return_value=[
+        {"state_type": "reserve_tightness", "severity": "high", "confidence": 0.9, "headline": "Reserve margin tight"},
+        {"state_type": "network_stress", "severity": "high", "confidence": 0.95, "headline": "Network outage cluster"},
+    ])
+    @patch("server._fetch_region_interconnector_flow_rows", return_value=_half_hour_rows([620.0, 610.0, 640.0, 635.0]))
+    @patch("server._fetch_latest_nem_region_prices", return_value={"NSW1": 145.0, "QLD1": 138.0, "VIC1": 141.0, "SA1": 140.0, "TAS1": 139.0})
+    @patch("server._fetch_wem_constraint_rows", return_value=[])
+    @patch("server._fetch_wem_reserve_shortfall_snapshot_rows", return_value=[])
+    @patch("server._fetch_rooftop_pv_actual_rows", return_value=_half_hour_rows([90.0, 85.0, 80.0, 78.0]))
+    @patch("server._fetch_dispatch_region_metric_rows")
+    @patch("server._fetch_operational_demand_actual_rows", return_value=_half_hour_rows([1000.0, 1080.0, 1170.0, 1290.0]))
+    @patch("server._fetch_settlement_rows", return_value=_half_hour_rows([125.0, 130.0, 135.0, 140.0]))
+    def test_build_regime_layer_identifies_scarcity_from_load_reserve_and_network_even_without_spike_prices(
+        self,
+        mock_settlement,
+        mock_load,
+        mock_dispatch_metric,
+        mock_rooftop,
+        mock_shortfall,
+        mock_constraint,
+        mock_latest_prices,
+        mock_interconnector_rows,
+        mock_states,
+    ):
+        def dispatch_side_effect(region, metric, limit=96):
+            if metric == "ss_wind_clearedmw":
+                return _half_hour_rows([120.0, 115.0, 105.0, 95.0])
+            if metric == "ss_solar_clearedmw":
+                return _half_hour_rows([55.0, 45.0, 35.0, 28.0])
+            return []
+
+        mock_dispatch_metric.side_effect = dispatch_side_effect
+
+        payload = server._build_regime_layer_payload(market="NEM", region="NSW1")
+
+        self.assertEqual(payload["primary_regime"]["regime"], "scarcity")
+        self.assertGreaterEqual(payload["regime_score_map"]["scarcity"], 55)
+        self.assertLess(payload["regime_score_map"]["negative_price"], 30)
+        self.assertTrue(any(driver["driver_type"] == "load_tightness" for driver in payload["drivers"]))
+        self.assertTrue(any(driver["driver_type"] == "reserve_tightness" for driver in payload["drivers"]))
+        self.assertTrue(any(driver["driver_type"] == "network_stress" for driver in payload["drivers"]))
 
     @patch("server._fetch_recent_grid_state_rows", return_value=[{"state_type": "network_stress", "severity": "high", "confidence": 0.95, "headline": "Constraint cluster active"}])
     @patch("server._fetch_region_interconnector_flow_rows", return_value=_half_hour_rows([120.0, 130.0, 110.0, 115.0]))
@@ -242,6 +286,25 @@ class RegimeLayerTests(unittest.TestCase):
         self.assertEqual(payload["compact"]["availability_status"], "unavailable")
         self.assertIsNone(payload["compact"]["primary_regime"])
 
+    @patch("server._fetch_recent_grid_state_rows", return_value=[])
+    @patch("server._fetch_latest_nem_region_prices", return_value={})
+    @patch("server._fetch_wem_constraint_rows", return_value=[])
+    @patch("server._fetch_wem_reserve_shortfall_snapshot_rows", return_value=[])
+    @patch("server._fetch_settlement_rows", return_value=_half_hour_rows([320.0, 340.0, 360.0, 380.0]))
+    def test_build_regime_layer_degrades_when_optional_nem_fundamentals_are_missing(
+        self,
+        mock_settlement,
+        mock_shortfall,
+        mock_constraint,
+        mock_latest_prices,
+        mock_states,
+    ):
+        payload = server._build_regime_layer_payload(market="NEM", region="NSW1")
+
+        self.assertIsNotNone(payload["primary_regime"])
+        self.assertEqual(payload["compact"]["availability_status"], "available")
+        self.assertNotIn("regime_layer_unavailable", payload["metadata"]["warnings"])
+
     def test_build_compact_regime_contract_deduplicates_top_drivers_and_transition_hints(self):
         compact = server._build_compact_regime_contract(
             {
@@ -270,8 +333,8 @@ class RegimeLayerTests(unittest.TestCase):
             compact["top_drivers"],
             [
                 {"headline": "Reserve margin is tight", "driver_type": "reserve_tightness"},
-                {"headline": "Spike interval ratio 12.5%", "driver_type": "price_shape"},
                 {"headline": "Regional spread signal 55.0", "driver_type": "regional_price_spread"},
+                {"headline": "Spike interval ratio 12.5%", "driver_type": "price_shape"},
             ],
         )
         self.assertEqual(
@@ -280,6 +343,31 @@ class RegimeLayerTests(unittest.TestCase):
                 "Reserve stress can escalate into broader scarcity if shortfalls persist.",
                 "Regional spread and network constraints are moving together.",
             ],
+        )
+
+    def test_build_compact_regime_contract_prioritizes_fundamental_drivers_over_price_shape(self):
+        compact = server._build_compact_regime_contract(
+            {
+                "primary_regime": {"regime": "negative_price", "score": 72.0, "confidence": 0.77},
+                "active_regimes": [
+                    {"regime": "negative_price", "score": 72.0, "confidence": 0.77},
+                    {"regime": "oversupply", "score": 66.0, "confidence": 0.71},
+                ],
+                "regime_score_map": {"negative_price": 72.0, "oversupply": 66.0},
+                "drivers": [
+                    {"headline": "Latest price -85.0 AUD/MWh", "driver_type": "price_level"},
+                    {"headline": "Negative-price interval ratio 42.00%", "driver_type": "price_shape"},
+                    {"headline": "Renewable/load ratio 1.18", "driver_type": "renewables_balance"},
+                    {"headline": "Reserve support signal 68.0", "driver_type": "reserve_tightness"},
+                ],
+                "transition_hints": [],
+                "metadata": {"warnings": []},
+            }
+        )
+
+        self.assertEqual(
+            [item["driver_type"] for item in compact["top_drivers"]],
+            ["reserve_tightness", "renewables_balance", "price_level"],
         )
 
 

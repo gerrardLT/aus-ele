@@ -8,7 +8,6 @@ export const translations = {
     header: {
       title1: '澳洲国家',
       title2: '电力市场',
-      description: '一个高保真、极简的研究工作台，用于观察澳洲电网的价格波动、负电价与异常结算特征。',
     },
     filters: {
       yearSelect: '年份选择 (YEAR)',
@@ -123,6 +122,8 @@ export const translations = {
     simulator: {
       simTitle: '储能全要素利润模拟器',
       simSubtitle: '瀑布图 - 从理论价差到真实利润的逐步扣减',
+      decisionReferenceTitle: '使用说明',
+      decisionReferenceBody: '这里用于观察参数变化如何影响收益结构，并帮助理解项目经济性。',
       pCapacity: '电池容量',
       pRte: '循环效率 (RTE)',
       pAux: '厂用电比例',
@@ -141,7 +142,7 @@ export const translations = {
       netPerMwh: '净利润/MWh',
       dailyRev: '日收入',
       annualRev: '年收入',
-      fullYearModelNote: '该模块使用全年代表性参数，不跟随 month / quarter / day_type 子时段筛选；事件与预测信号仅用于说明，不会自动注入模拟器收益结果。',
+      fullYearModelNote: '该模块使用全年代表性参数，月份、季度和日类型筛选不会直接改变模拟结果。',
     },
     stacking: {
       stackTitle: '收入叠加分析',
@@ -181,7 +182,7 @@ export const translations = {
     },
     investment: {
       title: '投资分析',
-      subtitle: '基于优化回看套利上限并叠加 capture rate 折减的保守现金流视图。',
+      subtitle: '基于历史表现与收益折减假设的保守现金流视图。',
       eyebrow: '储能现金流模型',
       parameters: '参数设置',
       runAnalysis: '运行分析',
@@ -252,18 +253,18 @@ export const translations = {
         fcas: 'FCAS',
         capacity: '容量',
       },
-      fullYearModelNote: '该模块使用全年现金流模型，不跟随 month / quarter / day_type 子时段筛选。',
+      fullYearModelNote: '该模块使用全年现金流模型，月份、季度和日类型筛选不会直接改变结果。',
       lazyVisible: '只有滚动到本模块后才会加载完整投资模型；修改参数后，请点击“运行分析”重新计算。',
       lazyHidden: '投资模型已改为懒加载，因此顶部筛选变化不会立刻触发这一类最重的请求。',
     },
     forecast: {
-      sectionLabel: '电网预测',
-      title: '澳洲电网预测',
-      subtitle: '基于官方市场与事件信号的前瞻性风险和机会预测。',
+      sectionLabel: '市场展望',
+      title: '市场展望',
+      subtitle: '基于官方市场数据和事件背景，查看短期到月内的市场变化。',
       horizon24h: '24 小时',
       horizon7d: '7 天',
       horizon30d: '30 天',
-      signalDesk: '信号总览',
+      signalDesk: '展望总览',
       marketContext: '市场上下文',
       horizonNotes: {
         '24h': '24 小时模式以预调度数据为主，用于识别最近的充放电机会窗口。',
@@ -291,9 +292,9 @@ export const translations = {
         predispatch_missing_fallback: '官方预调度数据不完整，因此已回退到历史加事件信号估计。',
       },
       disclaimer: '该模块仅用于市场监控和前瞻风险分析，不是投资级收益模型。',
-      loading: '正在生成电网预测...',
+      loading: '正在生成市场展望...',
       empty: '当前时段暂无可用预测结果。',
-      error: '电网预测加载失败。',
+      error: '市场展望加载失败。',
     },
     cta: {
       message: '生成完整事件深度分析报告。',
@@ -425,6 +426,8 @@ export const translations = {
     simulator: {
       simTitle: 'BESS P&L Simulator',
       simSubtitle: 'Waterfall - from gross spread to real profit, step by step',
+      decisionReferenceTitle: 'Decision Reference',
+      decisionReferenceBody: 'Use this view to see how parameter changes affect profit structure and project economics.',
       pCapacity: 'Battery Capacity',
       pRte: 'Round-Trip Efficiency',
       pAux: 'Auxiliary Load',
@@ -483,7 +486,7 @@ export const translations = {
     },
     investment: {
       title: 'Investment Analysis',
-      subtitle: 'Conservative cash-flow view using an optimized hindsight arbitrage upper bound with capture-rate haircut.',
+      subtitle: 'Conservative cash-flow view based on historical performance and revenue haircut assumptions.',
       eyebrow: 'BESS Cash Flow Model',
       parameters: 'Parameters',
       runAnalysis: 'Run Analysis',
@@ -561,11 +564,11 @@ export const translations = {
     forecast: {
       sectionLabel: 'Grid Forecast',
       title: 'Australian Grid Forecast',
-      subtitle: 'Forward-looking risk and opportunity forecast using official market and event signals.',
+      subtitle: 'Forward-looking market view using official market data and event context.',
       horizon24h: '24 Hours',
       horizon7d: '7 Days',
       horizon30d: '30 Days',
-      signalDesk: 'Signal Desk',
+      signalDesk: 'Forecast Summary',
       marketContext: 'Market Context',
       horizonNotes: {
         '24h': '24h mode is predispatch-led and highlights the next actionable charge and discharge windows.',
@@ -593,9 +596,9 @@ export const translations = {
         predispatch_missing_fallback: 'Official predispatch data was incomplete, so the forecast fell back to history plus event signals.',
       },
       disclaimer: 'This module is for market monitoring and forward risk framing only. It is not an investment-grade revenue model.',
-      loading: 'Generating grid forecast...',
-      empty: 'No forecast result is available for the selected horizon.',
-      error: 'Failed to load the grid forecast.',
+      loading: 'Generating market outlook...',
+      empty: 'No market outlook is available for the selected horizon.',
+      error: 'Failed to load the market outlook.',
     },
     cta: {
       message: 'Generate a comprehensive event analysis report.',
@@ -783,19 +786,19 @@ translations.en.developerPortal = {
 };
 
 translations.zh.regime_compact = {
-  title: '结构状态',
+  title: '市场状态',
   subtitle: '当前市场状态摘要',
   available: '可用',
   unavailable: '不可用',
-  primaryLabel: '主导结构',
+  primaryLabel: '主导状态',
   scoreLabel: '评分',
   confidenceLabel: '置信度',
-  activeLabel: '已激活状态',
+  activeLabel: '同步出现的状态',
   driversLabel: '主要驱动',
-  transitionsLabel: '结构迁移提示',
-  unavailableMessage: '当前数据窗口下暂时无法生成结构状态摘要。',
+  transitionsLabel: '后续变化提示',
+  unavailableMessage: '当前数据窗口下暂时无法生成市场状态摘要。',
   noDrivers: '当前没有可验证的驱动摘要。',
-  noTransitions: '当前没有明确的结构迁移提示。',
+  noTransitions: '当前没有明确的后续变化提示。',
   unknown: '不可用',
   regimeNames: {
     negative_price: '负电价',
@@ -808,19 +811,19 @@ translations.zh.regime_compact = {
 };
 
 translations.en.regime_compact = {
-  title: 'Regime Snapshot',
+  title: 'Market State',
   subtitle: 'Current market-state summary',
   available: 'Available',
   unavailable: 'Unavailable',
-  primaryLabel: 'Primary regime',
+  primaryLabel: 'Primary state',
   scoreLabel: 'Score',
   confidenceLabel: 'Confidence',
-  activeLabel: 'Active regimes',
+  activeLabel: 'States in play',
   driversLabel: 'Top drivers',
-  transitionsLabel: 'Transition hints',
-  unavailableMessage: 'Regime context is not available for the current dataset window.',
+  transitionsLabel: 'What may change next',
+  unavailableMessage: 'Market-state context is not available for the current dataset window.',
   noDrivers: 'No verified driver summary is available.',
-  noTransitions: 'No immediate transition hint is available.',
+  noTransitions: 'No immediate transition signal is available.',
   unknown: 'Unavailable',
   regimeNames: {
     negative_price: 'Negative price',
@@ -1270,3 +1273,162 @@ translations.zh.finlandBoard.chartGallery = {
   fallback: '--',
   empty: '\u5f53\u524d\u89c6\u56fe\u6682\u65e0\u53ef\u7ed8\u5236\u7684\u5b57\u6bb5\u3002',
 };
+
+translations.en.appShell = {
+  ...(translations.en.appShell || {}),
+  stageCurrentMarket: 'Current Market',
+  stage24hOutlook: 'Market Outlook',
+  stageBessDecision: 'Entry View',
+  currentMarketDescription: 'Review price structure, market-state shifts, event drivers, and data quality for the selected market.',
+  outlookDescription: 'Review near-term timing, spreads, and forward market conditions for the selected market.',
+  bessDecisionDescription: 'Review market-entry suitability, revenue structure, scenario range, and market-design limits for the selected market.',
+  primarySignalTitle: 'Current Market -> Market Outlook -> Entry View',
+  recommendedPathLabel: 'Review Australia in three steps: current market, outlook, and entry view.',
+  sectionNav: {
+    ...((translations.en.appShell || {}).sectionNav || {}),
+    sectionNavigation: 'Australia market entry chain',
+  },
+  stageGroups: {
+    marketStructureTitle: 'Intraday Structure',
+    marketStructureDescription: 'View intraday price patterns and market structure for the selected market.',
+    outlookSecondaryTitle: 'Timing Windows',
+    outlookSecondaryDescription: 'Review timing windows and spread changes for the selected period.',
+    bessSupportingTitle: 'Revenue And Reserve Support',
+    bessSupportingDescription: 'Compare energy and reserve revenue drivers for the selected market.',
+    bessCapitalTitle: 'Project Returns',
+    bessCapitalDescription: 'Review longer-term cash flow, return, and payback for the selected project setup.',
+    bessDiagnosticsTitle: 'More Tools',
+    bessDiagnosticsDescription: 'Use scenario tools, cycle cost, and exports when you need a closer look.',
+  },
+  openDetails: 'Open',
+  toggleLanguage: (translations.en.appShell || {}).toggleLanguage || 'Toggle language',
+  backToTop: (translations.en.appShell || {}).backToTop || 'Back to top',
+  previewOnly: 'Preview only',
+  tagCoverage: 'Coverage',
+  tagScope: 'Scope',
+  tagDesign: 'Design',
+  tagCapacity: 'Capacity',
+  capacityNotIncluded: 'Not included',
+  currentMarketTruthNemTitle: 'Current Market Snapshot',
+  currentMarketTruthNem: 'This view combines price, market state, reserve, and event context for the selected NEM market.',
+  currentMarketTruthWemTitle: 'WEM Market-Design Caveat',
+  currentMarketTruthWem: 'WEM follows a different market design. This view helps with direction and context, but it does not cover every value stream or capacity setting used in NEM comparisons.',
+};
+
+translations.zh.appShell = {
+  ...(translations.zh.appShell || {}),
+  stageCurrentMarket: '当前市场',
+  stage24hOutlook: '市场展望',
+  stageBessDecision: '进入判断',
+  currentMarketDescription: '查看所选市场的价格结构、市场状态变化、事件驱动和数据质量。',
+  outlookDescription: '查看短期时机、价差变化和后续市场环境。',
+  bessDecisionDescription: '查看所选市场是否适合进入，以及对应的收益结构、情景区间和制度边界。',
+  primarySignalTitle: '当前市场 -> 市场展望 -> 进入判断',
+  recommendedPathLabel: '按当前市场、机会展望和进入判断的顺序查看澳洲市场。',
+  sectionNav: {
+    ...((translations.zh.appShell || {}).sectionNav || {}),
+    sectionNavigation: '澳洲市场导航',
+  },
+  stageGroups: {
+    marketStructureTitle: '日内结构',
+    marketStructureDescription: '查看所选市场的日内价格形态和结构特征。',
+    outlookSecondaryTitle: '时机窗口',
+    outlookSecondaryDescription: '查看当前时段的价差窗口和充放电时机。',
+    bessSupportingTitle: '收益与备用支撑',
+    bessSupportingDescription: '比较能量收益与备用收益对整体判断的支持作用。',
+    bessCapitalTitle: '项目收益',
+    bessCapitalDescription: '查看项目的长期现金流、收益率和回本表现。',
+    bessDiagnosticsTitle: '更多工具',
+    bessDiagnosticsDescription: '如果需要进一步查看，可以继续使用情景工具、循环成本和导出功能。',
+  },
+  openDetails: '展开',
+  toggleLanguage: (translations.zh.appShell || {}).toggleLanguage || '切换语言',
+  backToTop: (translations.zh.appShell || {}).backToTop || '返回顶部',
+  previewOnly: '仅预览',
+  tagCoverage: '覆盖',
+  tagScope: '范围',
+  tagDesign: '制度',
+  tagCapacity: '容量',
+  capacityNotIncluded: '未纳入',
+  currentMarketTruthNemTitle: '当前市场快照',
+  currentMarketTruthNem: '这里会综合展示 NEM 市场的价格、市场状态、备用和事件信息，帮助判断当前市场状态。',
+  currentMarketTruthWemTitle: 'WEM 制度提醒',
+  currentMarketTruthWem: 'WEM 的市场设计与 NEM 不同。这里更适合用于方向判断和背景理解，暂不覆盖与 NEM 对比时的全部价值流和容量设置。',
+};
+
+translations.en.forecast = {
+  ...(translations.en.forecast || {}),
+  sectionLabel: 'Market Outlook',
+  title: 'Market Outlook',
+  subtitle: 'Use this section to review market conditions from the next day through the next month.',
+};
+
+translations.zh.forecast = {
+  ...(translations.zh.forecast || {}),
+  sectionLabel: '市场展望',
+  title: '市场展望',
+  subtitle: '用这一部分查看从次日到月内的市场变化与机会。',
+};
+
+translations.en.fcas = {
+  ...(translations.en.fcas || {}),
+  fcasTitle: 'Reserve Opportunity',
+  fcasSubtitle: 'Proxy reserve upside and FCAS context inside the BESS decision chain.',
+  fcasEyebrow: 'Opportunity / Proxy',
+  previewOnly: 'Preview only',
+  tagCoverage: 'Coverage',
+  tagScope: 'Scope',
+  tagCapacity: 'Capacity',
+  capacityNotIncluded: 'Not included',
+  fcasWemScopeCaveat: 'WEM reserve opportunity is useful for directional assessment, but it does not yet represent the full ancillary-service stack or capacity-revenue picture.',
+};
+
+translations.zh.fcas = {
+  ...(translations.zh.fcas || {}),
+  fcasTitle: '备用机会',
+  fcasSubtitle: '把 FCAS 与备用收益作为 BESS 决策链中的机会代理层来看。',
+  fcasEyebrow: '机会 / 代理',
+  previewOnly: '仅预览',
+  tagCoverage: '覆盖',
+  tagScope: '范围',
+  tagCapacity: '容量',
+  capacityNotIncluded: '未纳入',
+  fcasWemScopeCaveat: 'WEM 备用机会更适合用于方向判断，暂不代表完整的辅助服务收益结构，也不代表容量收入结论。',
+};
+
+translations.en.stacking = {
+  ...(translations.en.stacking || {}),
+  tagCoverage: 'Coverage',
+  tagScope: 'Scope',
+  tagCapacity: 'Capacity',
+  capacityNotIncluded: 'Not included',
+  stackWemScopeCaveat: 'WEM revenue stacking helps compare energy and reserve revenue drivers, but it does not yet represent a full-market or capacity-linked revenue conclusion.',
+};
+
+translations.zh.stacking = {
+  ...(translations.zh.stacking || {}),
+  tagCoverage: '覆盖',
+  tagScope: '范围',
+  tagCapacity: '容量',
+  capacityNotIncluded: '未纳入',
+  stackWemScopeCaveat: 'WEM 收益叠加可用于比较能量与备用收益驱动，但暂不代表完整市场或容量联动收入结论。',
+};
+
+translations.en.investment = {
+  ...(translations.en.investment || {}),
+  title: 'Market Entry Readiness',
+  subtitle: 'Turn market economics into project returns, revenue structure, scenario bounds, and entry context.',
+};
+
+translations.zh.investment = {
+  ...(translations.zh.investment || {}),
+  title: '市场进入准备度',
+  subtitle: '把市场经济性进一步整理成项目收益、收益结构、情景边界和进入判断。'
+};
+
+translations.en.reserveOpportunityTitle = 'Reserve Opportunity';
+translations.zh.reserveOpportunityTitle = '备用机会';
+translations.en.investmentReadinessTitle = 'Market Entry Readiness';
+translations.zh.investmentReadinessTitle = '市场进入准备度';
+translations.en.previewOnly = 'Preview only';
+translations.zh.previewOnly = '仅预览';

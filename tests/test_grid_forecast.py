@@ -80,6 +80,48 @@ def seed_forward_nem_long_actuals(db: DatabaseManager, region: str):
     db.batch_insert(rows)
 
 
+def seed_operational_demand_actuals(db: DatabaseManager, region: str, values: list[float]):
+    with db.get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS operational_demand_actual_hh (
+                region_id TEXT NOT NULL,
+                interval_datetime TEXT NOT NULL,
+                operational_demand REAL,
+                operational_demand_adjustment REAL,
+                wdr_estimate REAL,
+                lastchanged TEXT,
+                source_file TEXT NOT NULL,
+                PRIMARY KEY (region_id, interval_datetime)
+            )
+            """
+        )
+        base = dt.datetime(2026, 4, 14, 20, 0, 0)
+        for index, value in enumerate(values):
+            interval_dt = base + dt.timedelta(minutes=30 * index)
+            conn.execute(
+                """
+                INSERT INTO operational_demand_actual_hh (
+                    region_id,
+                    interval_datetime,
+                    operational_demand,
+                    operational_demand_adjustment,
+                    wdr_estimate,
+                    lastchanged,
+                    source_file
+                ) VALUES (?, ?, ?, 0, 0, ?, ?)
+                """,
+                (
+                    region,
+                    interval_dt.strftime("%Y/%m/%d %H:%M:%S"),
+                    value,
+                    interval_dt.strftime("%Y/%m/%d %H:%M:%S"),
+                    "test-operational-demand.csv",
+                ),
+            )
+        conn.commit()
+
+
 def seed_event_state(
     db: DatabaseManager,
     *,
@@ -104,6 +146,36 @@ def seed_event_state(
             "evidence_summary_json": [{"source": "test"}],
         }
     ])
+
+
+def seed_event_states(
+    db: DatabaseManager,
+    *,
+    region: str,
+    states: list[dict],
+    market: str = "NEM",
+):
+    payload = []
+    for idx, state in enumerate(states, start=1):
+        state_type = state["state_type"]
+        severity = state["severity"]
+        payload.append(
+            {
+                "state_id": f"{market.lower()}-{region.lower()}-{state_type}-{idx}",
+                "market": market,
+                "region": region,
+                "state_type": state_type,
+                "start_time": state.get("start_time", "2026-04-15 10:00:00"),
+                "end_time": state.get("end_time", "2026-04-15 18:00:00"),
+                "severity": severity,
+                "confidence": state.get("confidence", 0.9),
+                "headline": state.get("headline", f"{region} {state_type}"),
+                "impact_domains": state.get("impact_domains", ["grid_forecast"]),
+                "evidence_event_ids": state.get("evidence_event_ids", [idx]),
+                "evidence_summary_json": state.get("evidence_summary_json", [{"source": "test"}]),
+            }
+        )
+    db.replace_grid_event_states(market, payload)
 
 
 def seed_wem_slim_history(db: DatabaseManager):
@@ -513,6 +585,148 @@ class GridForecastEngineTests(unittest.TestCase):
         )
 
     @mock.patch("grid_forecast.fetch_nem_predispatch_window")
+    def test_nem_24h_forecast_prioritizes_supply_network_reserve_pressure_over_recent_price_shape(self, mock_p5):
+        import grid_forecast
+
+        mock_p5.return_value = [
+            {"time": "2026-04-15 12:00:00", "price": 135.0, "demand_mw": 12100.0},
+            {"time": "2026-04-15 18:00:00", "price": 185.0, "demand_mw": 13450.0},
+        ]
+        seed_recent_nem_history(self.db, region="NSW1")
+        seed_forward_nem_actuals(self.db, region="NSW1")
+        seed_event_states(
+            self.db,
+            region="NSW1",
+            states=[
+                {"state_type": "supply_shock", "severity": "high", "headline": "Major coal outage"},
+                {"state_type": "network_stress", "severity": "high", "headline": "Interconnector constraint cluster"},
+                {"state_type": "reserve_tightness", "severity": "medium", "headline": "Reserve margin tightening"},
+            ],
+        )
+
+        result = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="24h",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertGreaterEqual(result["summary"]["grid_stress_score"], 65)
+        self.assertGreaterEqual(result["summary"]["price_spike_risk_score"], 55)
+        self.assertGreaterEqual(result["summary"]["reserve_tightness_risk_score"], 55)
+        self.assertIn("supply_shock", result["summary"]["driver_tags"])
+        self.assertIn("network_stress", result["summary"]["driver_tags"])
+        self.assertIn("reserve_tightness", result["summary"]["driver_tags"])
+        self.assertGreaterEqual(result["market_context"]["major_generation_outage_score"], 70)
+        self.assertGreaterEqual(result["market_context"]["major_network_outage_score"], 70)
+        self.assertGreaterEqual(result["market_context"]["reserve_pressure_score"], 45)
+        self.assertGreaterEqual(result["market_context"]["weather_load_stress_score"], 60)
+        self.assertGreaterEqual(result["market_context"]["demand_level_vs_normal"], 0)
+        self.assertLess(result["market_context"]["recent_price_max_aud_mwh"], 100.0)
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window")
+    def test_nem_24h_forecast_keeps_negative_price_risk_low_without_negative_signals(self, mock_p5):
+        import grid_forecast
+
+        mock_p5.return_value = [
+            {"time": "2026-04-15 12:00:00", "price": 118.0, "demand_mw": 11800.0},
+            {"time": "2026-04-15 18:00:00", "price": 142.0, "demand_mw": 12150.0},
+        ]
+        seed_recent_nem_history(self.db, region="NSW1")
+
+        result = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="24h",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertLess(result["summary"]["negative_price_risk_score"], 15)
+        self.assertLess(result["summary"]["charge_window_score"], 20)
+        self.assertGreaterEqual(result["market_context"]["demand_level_vs_normal"], 0)
+        self.assertLess(result["market_context"]["demand_level_vs_normal"], 10)
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window")
+    def test_nem_24h_forecast_does_not_treat_low_confidence_events_as_full_strength_pressure(self, mock_p5):
+        import grid_forecast
+
+        mock_p5.return_value = [
+            {"time": "2026-04-15 12:00:00", "price": 128.0, "demand_mw": 11800.0},
+            {"time": "2026-04-15 18:00:00", "price": 148.0, "demand_mw": 12050.0},
+        ]
+        seed_recent_nem_history(self.db, region="NSW1")
+        seed_event_states(
+            self.db,
+            region="NSW1",
+            states=[
+                {
+                    "state_type": "supply_shock",
+                    "severity": "high",
+                    "confidence": 0.1,
+                    "headline": "Unverified unit outage chatter",
+                }
+            ],
+        )
+
+        result = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="24h",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertLess(result["market_context"]["major_generation_outage_score"], 25)
+        self.assertLess(result["summary"]["grid_stress_score"], 45)
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window")
+    def test_nem_24h_forecast_does_not_let_multiple_low_confidence_events_stack_into_high_pressure(self, mock_p5):
+        import grid_forecast
+
+        mock_p5.return_value = [
+            {"time": "2026-04-15 12:00:00", "price": 126.0, "demand_mw": 11820.0},
+            {"time": "2026-04-15 18:00:00", "price": 146.0, "demand_mw": 12020.0},
+        ]
+        seed_recent_nem_history(self.db, region="NSW1")
+        seed_event_states(
+            self.db,
+            region="NSW1",
+            states=[
+                {
+                    "state_type": "supply_shock",
+                    "severity": "high",
+                    "confidence": 0.1,
+                    "headline": "Rumored outage A",
+                },
+                {
+                    "state_type": "supply_shock",
+                    "severity": "high",
+                    "confidence": 0.1,
+                    "headline": "Rumored outage B",
+                },
+                {
+                    "state_type": "supply_shock",
+                    "severity": "high",
+                    "confidence": 0.1,
+                    "headline": "Rumored outage C",
+                },
+            ],
+        )
+
+        result = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="24h",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertLess(result["market_context"]["major_generation_outage_score"], 20)
+        self.assertLess(result["summary"]["grid_stress_score"], 40)
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window")
     def test_nem_long_horizon_switches_to_regime_outlook(self, mock_p5):
         import grid_forecast
 
@@ -583,6 +797,108 @@ class GridForecastEngineTests(unittest.TestCase):
             monthly["baseline_forecast"]["quantile_scaffold"]["band_width_aud_mwh"],
             weekly["baseline_forecast"]["quantile_scaffold"]["band_width_aud_mwh"],
         )
+        self.assertIn("interconnector_stress_score", weekly["market_context"])
+        self.assertIn("dominant_supply_availability_delta", monthly["market_context"])
+        self.assertIn("maintenance_concentration_score", monthly["market_context"])
+        self.assertIn("structural_load_growth_score", monthly["market_context"])
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window", return_value=[])
+    def test_nem_long_horizon_keeps_regime_outlook_under_outage_and_network_pressure_without_price_extremes(self, mock_p5):
+        import grid_forecast
+
+        seed_recent_nem_history(self.db, region="NSW1")
+        seed_forward_nem_long_actuals(self.db, region="NSW1")
+        seed_event_states(
+            self.db,
+            region="NSW1",
+            states=[
+                {"state_type": "supply_shock", "severity": "high", "headline": "Generator maintenance cluster"},
+                {"state_type": "network_stress", "severity": "medium", "headline": "Transmission outage risk"},
+                {"state_type": "reserve_tightness", "severity": "medium", "headline": "Reserve outlook tightening"},
+                {"state_type": "demand_weather_shock", "severity": "medium", "headline": "Industrial demand uplift"},
+            ],
+        )
+
+        weekly = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="7d",
+            as_of="2026-04-15 09:07:00",
+        )
+        monthly = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="30d",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertGreaterEqual(weekly["summary"]["grid_stress_score"], 55)
+        self.assertGreaterEqual(monthly["summary"]["grid_stress_score"], 55)
+        self.assertIn("supply_shock", weekly["summary"]["driver_tags"])
+        self.assertIn("network_stress", weekly["summary"]["driver_tags"])
+        self.assertIn("reserve_tightness", weekly["summary"]["driver_tags"])
+        self.assertGreaterEqual(weekly["market_context"]["major_generation_outage_score"], 70)
+        self.assertGreaterEqual(weekly["market_context"]["interconnector_stress_score"], 45)
+        self.assertGreaterEqual(monthly["market_context"]["maintenance_concentration_score"], 60)
+        self.assertGreaterEqual(monthly["market_context"]["structural_load_growth_score"], 40)
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window", return_value=[])
+    def test_nem_long_horizon_keeps_negative_price_risk_low_without_negative_price_signals(self, mock_p5):
+        import grid_forecast
+
+        seed_recent_nem_history(self.db, region="NSW1")
+
+        weekly = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="7d",
+            as_of="2026-04-15 09:07:00",
+        )
+        monthly = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="30d",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertLess(weekly["summary"]["negative_price_risk_score"], 5)
+        self.assertLess(monthly["summary"]["negative_price_risk_score"], 5)
+        self.assertLess(weekly["summary"]["charge_window_score"], 8)
+        self.assertLess(monthly["summary"]["charge_window_score"], 8)
+
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window", return_value=[])
+    def test_nem_long_horizon_uses_recent_load_baseline_for_demand_level_vs_normal(self, mock_p5):
+        import grid_forecast
+
+        seed_recent_nem_history(self.db, region="NSW1")
+        seed_operational_demand_actuals(self.db, region="NSW1", values=[9800.0, 9900.0, 10050.0, 12850.0])
+
+        weekly = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="7d",
+            as_of="2026-04-15 09:07:00",
+        )
+        monthly = grid_forecast.get_grid_forecast_response(
+            self.db,
+            market="NEM",
+            region="NSW1",
+            horizon="30d",
+            as_of="2026-04-15 09:07:00",
+        )
+
+        self.assertGreater(weekly["market_context"]["demand_level_vs_normal"], 20)
+        self.assertLess(weekly["market_context"]["demand_level_vs_normal"], 35)
+        self.assertAlmostEqual(
+            weekly["market_context"]["demand_level_vs_normal"],
+            monthly["market_context"]["demand_level_vs_normal"],
+            delta=0.1,
+        )
 
     def test_wem_forecast_returns_core_only_and_not_investment_grade(self):
         import grid_forecast
@@ -635,6 +951,9 @@ class GridForecastEngineTests(unittest.TestCase):
                 for bucket in result["baseline_forecast"]["evaluation"]["regime_error_attribution"]["regime_buckets"]
             },
         )
+        self.assertGreaterEqual(result["market_context"]["reserve_pressure_score"], 20)
+        self.assertGreaterEqual(result["market_context"]["interconnector_stress_score"], 0)
+        self.assertIn("wem_shortfall_signal", result["summary"]["driver_tags"])
 
     @mock.patch("grid_forecast.fetch_nem_predispatch_window")
     def test_nem_forecast_handles_missing_trading_price_tables_without_500(self, mock_p5):
@@ -802,6 +1121,17 @@ class GridForecastRouteTests(unittest.TestCase):
         self.assertEqual(result["baseline_forecast"]["regime_context"]["primary_regime"], "scarcity")
         self.assertEqual(result["regime_compact"]["primary_regime"]["regime"], "scarcity")
         self.assertEqual(result["metadata"]["dataset_family"], "forecast_layer")
+        self.assertEqual(result["coverage_mode"], "full")
+        self.assertEqual(result["regulatory_scope"], "NEM")
+        self.assertEqual(result["result_type"], "opportunity_outlook")
+        self.assertEqual(
+            result["market_design_context"],
+            "NEM forward opportunity outlook grounded in official price windows, regime persistence, and event overlays.",
+        )
+        self.assertEqual(
+            result["value_stream_coverage"],
+            ["energy_arbitrage", "negative_price_windows", "reserve_proxy"],
+        )
         self.assertIn("governance", result)
         self.assertEqual(result["governance"]["forecast_value_attribution"]["status"], "proxy_available")
         self.assertEqual(result["governance"]["forecast_value_attribution"]["method"], "backtest_error_proxy_v1")
@@ -836,6 +1166,25 @@ class GridForecastRouteTests(unittest.TestCase):
         self.assertEqual(result["governance"]["forecast_value_attribution"]["status"], "proxy_available")
         self.assertGreaterEqual(result["governance"]["forecast_value_attribution"]["overall_information_value_index"], 0.0)
         self.assertEqual(result["governance"]["disclaimer"]["usage_scope"], "research_and_operational_support_only")
+        self.assertEqual(result["result_type"], "opportunity_outlook")
+
+    @mock.patch("server._fetch_recent_grid_state_rows", return_value=[])
+    @mock.patch("server._fetch_latest_nem_region_prices", return_value={})
+    @mock.patch("grid_forecast.fetch_nem_predispatch_window", return_value=[])
+    def test_p2_forecast_layer_keeps_regime_compact_available_when_optional_p1_tables_are_missing(
+        self,
+        mock_p5,
+        mock_latest_prices,
+        mock_states,
+    ):
+        seed_recent_nem_history(self.db, region="NSW1")
+
+        with patched_server_db(self.db):
+            result = server.get_p2_forecast_layer(market="NEM", region="NSW1", horizon="7d", as_of="2026-04-15 09:07:00")
+
+        self.assertEqual(result["regime_compact"]["availability_status"], "available")
+        self.assertEqual(result["baseline_forecast"]["regime_context"]["availability_status"], "available")
+        self.assertEqual(result["metadata"]["result_type"], "opportunity_outlook")
 
 
 if __name__ == "__main__":

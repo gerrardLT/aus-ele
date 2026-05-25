@@ -139,12 +139,12 @@ export default function CycleCost({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.4 }}
-      className="col-span-12 mt-16 pt-12 border-t-2 border-[var(--color-text)]"
+      className="col-span-12 mt-12 pt-8 border-t-2 border-[var(--color-text)]"
     >
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div>
-          <h2 className="text-3xl font-serif font-bold mb-1">{t.ccTitle}</h2>
-          <p className="text-sm text-[var(--color-muted)] font-sans">
+          <h2 className="text-2xl font-serif font-bold md:text-[1.75rem]">{t.ccTitle}</h2>
+          <p className="text-xs leading-5 text-[var(--color-muted)] font-sans md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">
             {t.ccSubtitle}
           </p>
         </div>
@@ -154,7 +154,7 @@ export default function CycleCost({
       </div>
 
       {legacyFallback && (
-        <div className="mb-8 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="mb-6 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
           {t.ccLegacyFallback}
         </div>
       )}
@@ -167,8 +167,8 @@ export default function CycleCost({
         <div className="grid grid-cols-1 gap-6">
           <RegimeCompactInline compact={dailyData?.regime_compact} copy={regimeCompactCopy} />
 
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+            <div className="space-y-4">
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
                   {t.ccDegCost}
@@ -184,6 +184,7 @@ export default function CycleCost({
                 step={5}
                 value={degradationCost}
                 onChange={(e) => setDegradationCost(Number(e.target.value))}
+                aria-label={t.ccDegradation || 'Degradation cost'}
                 className="w-full accent-[var(--color-text)] h-1.5 bg-[var(--color-border)] rounded-full appearance-none cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-[var(--color-muted)]">
@@ -193,20 +194,20 @@ export default function CycleCost({
             </div>
 
             <div className="border border-green-500/30 bg-green-500/5 p-4 rounded">
-              <div className="text-xs tracking-widest uppercase font-bold text-green-600 mb-2">
+              <div className="text-xs tracking-widest uppercase font-bold text-green-800 mb-2">
                 {t.ccProfitable}
               </div>
-              <div className="text-3xl font-mono font-bold text-green-600">{metrics.profitableDays}</div>
+              <div className="text-3xl font-mono font-bold text-green-800">{metrics.profitableDays}</div>
               <div className="text-xs text-[var(--color-muted)] mt-1">
                 {t.ccDays} ({metrics.profitableRatio.toFixed(1)}%)
               </div>
             </div>
 
             <div className="border border-red-500/30 bg-red-500/5 p-4 rounded">
-              <div className="text-xs tracking-widest uppercase font-bold text-red-600 mb-2">
+              <div className="text-xs tracking-widest uppercase font-bold text-red-800 mb-2">
                 {t.ccNotWorth}
               </div>
-              <div className="text-3xl font-mono font-bold text-red-500">{metrics.unprofitableDays}</div>
+              <div className="text-3xl font-mono font-bold text-red-800">{metrics.unprofitableDays}</div>
               <div className="text-xs text-[var(--color-muted)] mt-1">
                 {t.ccDays} ({(100 - metrics.profitableRatio).toFixed(1)}%)
               </div>

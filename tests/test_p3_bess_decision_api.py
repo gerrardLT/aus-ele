@@ -133,6 +133,13 @@ class P3BessDecisionApiTests(unittest.TestCase):
         self.assertEqual(payload["market"], "NEM")
         self.assertEqual(payload["forecast_context"]["horizon"], "24h")
         self.assertEqual(payload["decision_summary"]["recommended_strategy"], "forecast_driven_dispatch")
+        self.assertIn("recommendation_summary", payload["decision_summary"])
+        self.assertIn("explanation_chain", payload["decision_summary"])
+        self.assertIn("risk_boundary", payload["decision_summary"])
+        self.assertEqual(payload["decision_summary"]["recommendation_summary"]["action"], "forecast_driven_dispatch")
+        self.assertEqual(len(payload["decision_summary"]["explanation_chain"]), 3)
+        self.assertEqual(payload["decision_summary"]["explanation_chain"][0]["step"], "Current Market")
+        self.assertEqual(payload["decision_summary"]["risk_boundary"]["usage_scope"], "decision-grade")
         self.assertIn("rule_based_dispatch", payload["strategy_bundle"])
         self.assertIn("forecast_driven_dispatch", payload["strategy_bundle"])
         self.assertIn("stochastic_dispatch", payload["strategy_bundle"])
@@ -164,6 +171,10 @@ class P3BessDecisionApiTests(unittest.TestCase):
         self.assertEqual(payload["source_backtest"]["cycle_summary"]["equivalent_cycles"], 2.0)
         self.assertEqual(payload["governance"]["lineage"]["source_id"], "p3_bess_decision_layer")
         self.assertEqual(payload["metadata"]["dataset_family"], "bess_decision_layer")
+        self.assertEqual(payload["metadata"]["data_grade"], "decision-grade")
+        self.assertEqual(payload["coverage_mode"], "decision-support")
+        self.assertEqual(payload["regulatory_scope"], "NEM")
+        self.assertEqual(payload["result_type"], "investment_conclusion")
 
     def test_p3_decision_route_propagates_missing_source_data(self):
         with mock.patch("server.run_bess_backtest", side_effect=server.HTTPException(status_code=404, detail="No backtest source data found")):

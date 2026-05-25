@@ -7,6 +7,32 @@ export default defineConfig({
     tailwindcss(),
     react()
   ],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.js'],
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return undefined;
+          }
+          if (id.includes('recharts')) {
+            return 'charts-vendor';
+          }
+          if (id.includes('react') || id.includes('scheduler')) {
+            return 'react-vendor';
+          }
+          if (id.includes('framer-motion')) {
+            return 'motion-vendor';
+          }
+          return 'vendor';
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {

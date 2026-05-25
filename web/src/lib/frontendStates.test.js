@@ -10,9 +10,12 @@ const __dirname = path.dirname(__filename);
 test('DataQualityBadge renders data grade and metadata helpers', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/DataQualityBadge.jsx'), 'utf8');
   assert.match(source, /formatDataGradeLabel/);
+  assert.match(source, /formatCoverageModeLabel/);
   assert.match(source, /formatFreshnessLabel/);
   assert.match(source, /formatMetadataUnitLabel/);
+  assert.match(source, /formatReadinessStatusLabel/);
   assert.match(source, /metadata\?\.interval_minutes/);
+  assert.match(source, /normalizedTags/);
 });
 
 test('PageSection spans the full 12-column content grid', () => {
@@ -24,6 +27,8 @@ test('PageSection spans the full 12-column content grid', () => {
 test('App main workbench keeps metadata badge plus loading and retry branches', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
   assert.match(source, /<DataQualityBadge metadata=\{chartMetadata\} lang=\{lang\}/);
+  assert.match(source, /currentMarketStatusTags/);
+  assert.match(source, /currentMarketTruthStrip/);
   assert.match(source, /t\.status\.loading/);
   assert.match(source, /t\.status\.retry/);
   assert.match(source, /t\.status\.error/);
@@ -33,6 +38,21 @@ test('App avoids rendering a duplicate primary market title below workspace nav'
   const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
   assert.match(source, /<PageWorkspaceNav/);
   assert.doesNotMatch(source, /<h1 className="text-2xl font-bold leading-tight md:text-3xl">\s*\{t\.header\.title1\}\s*\{t\.header\.title2\}\s*<\/h1>/);
+});
+
+test('AEMO workspace nav collapses to a button-only top strip without left-side hero copy', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  const navSource = fs.readFileSync(path.resolve(__dirname, '../components/PageWorkspaceNav.jsx'), 'utf8');
+
+  assert.match(source, /<PageWorkspaceNav/);
+  assert.match(source, /compact/);
+  assert.match(source, /buttonOnly/);
+  assert.doesNotMatch(source, /brand=\{t\.nav\.brand\}/);
+  assert.doesNotMatch(source, /subtitle=\{t\.appShell\.primarySignalTitle/);
+  assert.doesNotMatch(source, /title=\{t\.appShell\.recommendedPathLabel/);
+  assert.doesNotMatch(source, /meta=\{lastUpdate/);
+  assert.match(navSource, /buttonOnly = false/);
+  assert.match(source, /className="col-span-12 mt-2 mb-2"/);
 });
 
 test('App keeps only language controls in workspace nav actions area', () => {
@@ -73,9 +93,12 @@ test('WEM-facing modules preserve preview caveat signaling', () => {
 
   assert.match(fcasSource, /DataQualityBadge/);
   assert.match(fcasSource, /previewCaveat/);
+  assert.match(fcasSource, /fcasWemScopeCaveat/);
   assert.match(stackingSource, /t\.stackNoPreviewData/);
   assert.match(stackingSource, /t\.stackPreviewNotInvestmentGrade/);
+  assert.match(stackingSource, /stackWemScopeCaveat/);
   assert.match(investmentSource, /previewCaveat/);
+  assert.match(investmentSource, /wemReadinessCaveat/);
   assert.match(investmentSource, /DataQualityBadge/);
 });
 
@@ -149,6 +172,9 @@ test('Grid forecast workbench surfaces p4 governance copy without hardcoded labe
   const source = fs.readFileSync(path.resolve(__dirname, '../components/GridForecast.jsx'), 'utf8');
 
   assert.match(source, /governance/);
+  assert.match(source, /forecastStatusTags/);
+  assert.match(source, /wemOutlookCaveat/);
+  assert.match(source, /<DataQualityBadge metadata=\{forecastStatusMetadata\} lang=\{locale\} tags=\{forecastStatusTags\}/);
   assert.match(source, /sectionCopy\.governanceTitle/);
   assert.match(source, /sectionCopy\.governanceFreshness/);
   assert.match(source, /sectionCopy\.governanceDrift/);
@@ -168,6 +194,7 @@ test('Grid forecast diagnostics panel consumes walk-forward and forecast value p
 
 test('P3 decision panel consumes governance and source backtest fields', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/P3BessDecisionPanel.jsx'), 'utf8');
+  const copySource = fs.readFileSync(path.resolve(__dirname, './p3Decision.js'), 'utf8');
 
   assert.match(source, /payload\.governance/);
   assert.match(source, /sourceBacktest/);
@@ -177,6 +204,18 @@ test('P3 decision panel consumes governance and source backtest fields', () => {
   assert.match(source, /governance\.drift/);
   assert.match(source, /governance\.disclaimer/);
   assert.match(source, /governance\.lineage/);
+  assert.match(source, /copy\.decisionHeadline/);
+  assert.match(source, /copy\.decisionWhy/);
+  assert.match(source, /copy\.decisionEconomics/);
+  assert.match(source, /copy\.decisionDiagnostics/);
+  assert.match(source, /<DataQualityBadge/);
+  assert.match(source, /payload\.readinessStatus/);
+  assert.match(source, /payload\.coverageMode/);
+  assert.match(source, /<details/);
+  assert.match(copySource, /decisionHeadline/);
+  assert.match(copySource, /decisionWhy/);
+  assert.match(copySource, /decisionEconomics/);
+  assert.match(copySource, /decisionDiagnostics/);
 });
 
 test('Fingrid summary cards centralize localized loading copy', () => {
@@ -191,17 +230,17 @@ test('App centralizes section navigation and month label copy', () => {
 
   assert.match(source, /PageWorkspaceNav/);
   assert.match(source, /t\.appShell\.sectionNav/);
-  assert.match(source, /t\.appShell\.stageOverview/);
-  assert.match(source, /t\.appShell\.stageOpportunities/);
-  assert.match(source, /t\.appShell\.stageInvestment/);
+  assert.match(source, /t\.appShell\.stageCurrentMarket/);
+  assert.match(source, /t\.appShell\.stage24hOutlook/);
+  assert.match(source, /t\.appShell\.stageBessDecision/);
   assert.match(source, /t\.appShell\.primarySignalTitle/);
   assert.match(source, /t\.appShell\.recommendedPathLabel/);
   assert.match(source, /t\.appShell\.monthLabels/);
   assert.match(source, /t\.appShell\.simulatorScopeNote/);
   assert.match(source, /t\.appShell\.investmentScopeNote/);
-  assert.match(source, /id="stage-overview"/);
-  assert.match(source, /id="stage-opportunities"/);
-  assert.match(source, /id="stage-investment"/);
+  assert.match(source, /id="stage-current-market"/);
+  assert.match(source, /id="stage-24h-outlook"/);
+  assert.match(source, /id="stage-bess-decision"/);
   assert.match(source, /translations\[lang\]\?\.status\?\.loadingSection/);
   assert.match(source, /aria-label=\{sectionNavCopy\.sectionNavigation\}/);
   assert.match(source, /aria-label=\{t\.appShell\.backToTop\}/);
@@ -217,6 +256,13 @@ test('App centralizes section navigation and month label copy', () => {
   assert.equal(source.includes('Back to top'), false);
   assert.equal(source.includes('Trigger Background Data Sync'), false);
   assert.equal(source.includes('Toggle language'), false);
+});
+
+test('Current Market keeps intraday structure in the right content rail instead of a full-width block below', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+
+  assert.match(source, /id="sec-overview"[\s\S]*id="sec-market-structure"/);
+  assert.doesNotMatch(source, /<\/div>\s*<\/div>\s*<StageDetailGroup[\s\S]*id="sec-market-structure"/);
 });
 
 test('core analytics components avoid inline loading fallback strings', () => {
@@ -269,6 +315,8 @@ test('BESS simulator centralizes financial summary copy', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/BessSimulator.jsx'), 'utf8');
 
   assert.match(source, /t\.eyebrow/);
+  assert.match(source, /t\.decisionReferenceTitle/);
+  assert.match(source, /t\.decisionReferenceBody/);
   assert.match(source, /t\.capacityMwUnit/);
   assert.match(source, /t\.durationHoursUnit/);
   assert.match(source, /t\.wfGross/);
@@ -286,6 +334,7 @@ test('BESS simulator centralizes financial summary copy', () => {
   assert.match(source, /t\.pDegradation/);
   assert.match(source, /t\.pAemoFee/);
   assert.match(source, /regime_compact/);
+  assert.doesNotMatch(source, /<P3BessDecisionPanel/);
   assert.equal(source.includes('FINANCIAL MODEL'), false);
   assert.equal(source.includes('Net $/MWh'), false);
   assert.equal(source.includes('Daily Revenue'), false);

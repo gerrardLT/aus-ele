@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "last_updated": "2025-01-15",
+    "source": "AEMO market data, operator reports, public filings",
+    "description": "Real market data annotations for investment outlook scenario modules",
+    "version": 1
+  },
+  "examples": {
+    "cannibalization": [
+      {
+        "region": "QLD1",
+        "description": "QLD BESS revenue declined from $280k/MW/yr to $73k/MW/yr as capacity tripled from 200MW to 600MW (2022-2024)",
+        "data_year": 2024,
+        "before_capacity_mw": 200,
+        "after_capacity_mw": 600,
+        "before_revenue": 280000,
+        "after_revenue": 73000,
+        "label": "actual"
+      }
+    ],
+    "fcas_collapse": [
+      {
+        "region": "NEM-wide",
+        "description": "Total FCAS revenue per MW declined from $384k/yr (2020) to $11k/yr (2025) as BESS registrations grew from 200MW to 2500MW",
+        "trajectory": [
+          {"year": 2020, "revenue_per_mw": 384000, "registered_bess_mw": 200},
+          {"year": 2021, "revenue_per_mw": 180000, "registered_bess_mw": 500},
+          {"year": 2022, "revenue_per_mw": 95000, "registered_bess_mw": 900},
+          {"year": 2023, "revenue_per_mw": 45000, "registered_bess_mw": 1500},
+          {"year": 2024, "revenue_per_mw": 22000, "registered_bess_mw": 2000},
+          {"year": 2025, "revenue_per_mw": 11000, "registered_bess_mw": 2500}
+        ],
+        "label": "actual"
+      }
+    ],
+    "regional_timing": [
+      {
+        "region": "SA1",
+        "description": "SA outperformed other regions by 40% in 2022-2023 due to Northern Power Station closure increasing price volatility",
+        "data_year": 2023,
+        "event": "Northern Power Station closure (2016)",
+        "revenue_premium_pct": 40,
+        "label": "actual"
+      }
+    ],
+    "merchant_risk": [
+      {
+        "region": "NSW1",
+        "description": "NSW BESS merchant revenue ranged from $45k-$180k/MW/yr across 2022-2024, with bankability threshold at $80k/MW/yr requiring 40% contract coverage",
+        "data_year": 2024,
+        "p10_observed": 45000,
+        "p50_observed": 95000,
+        "p90_observed": 180000,
+        "bankability_threshold": 80000,
+        "label": "actual"
+      }
+    ]
+  }
+}

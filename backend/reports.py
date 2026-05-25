@@ -58,36 +58,50 @@ def generate_report_payload(
         sections = [
             {
                 "section_key": "executive_summary",
-                "title": "Executive Summary",
-                "summary": f"{region} average price was {market_snapshot['avg_price']} with peak {market_snapshot['max_price']} in the selected month.",
+                "title": "Executive Summary / 执行摘要",
+                "summary": (
+                    f"{region} 平均电价为 ${market_snapshot['avg_price']}/MWh，"
+                    f"峰值 ${market_snapshot['max_price']}/MWh。"
+                    f"负价比例 {market_snapshot['negative_ratio_pct']}%。\n\n"
+                    f"{region} average price was ${market_snapshot['avg_price']}/MWh "
+                    f"with peak ${market_snapshot['max_price']}/MWh. "
+                    f"Negative price ratio: {market_snapshot['negative_ratio_pct']}%."
+                ),
             },
             {
                 "section_key": "market_snapshot",
-                "title": "Market Snapshot",
+                "title": "Market Snapshot / 市场快照",
                 "summary": market_snapshot,
             },
             {
                 "section_key": "screening_position",
-                "title": "Screening Position",
+                "title": "Screening Position / 筛选定位",
                 "summary": candidate or {},
             },
         ]
-        title = f"{year}-{month or 'ALL'} Monthly Market Report | {region}"
+        title = f"{year}-{month or 'ALL'} 月度市场报告 | {region}"
     elif report_type == "investment_memo_draft":
+        overall_score = (candidate or {}).get('overall_score', 0)
         sections = [
             {
                 "section_key": "investment_case",
-                "title": "Investment Case",
-                "summary": f"{region} shows average price {market_snapshot['avg_price']} and screening score {(candidate or {}).get('overall_score', 0)} for a BESS 2h asset.",
+                "title": "Investment Case / 投资案例",
+                "summary": (
+                    f"{region} 平均电价 ${market_snapshot['avg_price']}/MWh，"
+                    f"筛选评分 {overall_score}。"
+                    f"基于 2h BESS 资产评估。\n\n"
+                    f"{region} shows average price ${market_snapshot['avg_price']}/MWh "
+                    f"and screening score {overall_score} for a BESS 2h asset."
+                ),
             },
             {
                 "section_key": "market_evidence",
-                "title": "Market Evidence",
+                "title": "Market Evidence / 市场证据",
                 "summary": market_snapshot,
             },
             {
                 "section_key": "risk_flags",
-                "title": "Risk Flags",
+                "title": "Risk Flags / 风险标志",
                 "summary": {
                     "negative_ratio_pct": market_snapshot["negative_ratio_pct"],
                     "data_quality_score": (candidate or {}).get("data_quality_score"),
@@ -95,7 +109,7 @@ def generate_report_payload(
                 },
             },
         ]
-        title = f"Investment Memo Draft | {region} | {year}"
+        title = f"投资备忘录草案 | {region} | {year}"
     else:
         raise ValueError(f"Unsupported report_type: {report_type}")
 

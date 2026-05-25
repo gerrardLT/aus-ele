@@ -24,6 +24,7 @@ test('RevenueStacking uses DataQualityBadge for WEM preview-grade signalling', (
   const source = fs.readFileSync(path.resolve(__dirname, '../components/RevenueStacking.jsx'), 'utf8');
   assert.match(source, /import DataQualityBadge from '\.\.\/components\/DataQualityBadge'|import DataQualityBadge from '\.\/DataQualityBadge'/);
   assert.match(source, /<DataQualityBadge metadata=\{sectionMetadata\} lang=\{lang\}/);
+  assert.match(source, /sectionStatusTags/);
 });
 
 test('RevenueStacking preserves WEM preview empty-state branches', () => {
@@ -37,6 +38,7 @@ test('RevenueStacking centralizes preview and summary copy through translation k
   const source = fs.readFileSync(path.resolve(__dirname, '../components/RevenueStacking.jsx'), 'utf8');
   assert.match(source, /t\.stackLegacyFallback/);
   assert.match(source, /t\.stackPreviewNotInvestmentGrade/);
+  assert.match(source, /t\.stackWemScopeCaveat/);
   assert.match(source, /t\.stackSummaryPeriods/);
   assert.match(source, /t\.stackSummaryArbitrageBase/);
   assert.match(source, /t\.stackSummaryFcasLayers/);

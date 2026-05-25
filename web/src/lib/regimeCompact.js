@@ -62,8 +62,8 @@ export function getRegimeAccent(regime) {
     case 'congestion':
       return {
         tone: 'congestion',
-        color: '#7c3aed',
-        soft: 'rgba(124, 58, 237, 0.12)',
+        color: '#6d28d9',
+        soft: 'rgba(109, 40, 217, 0.12)',
       };
     case 'transmission_separation':
       return {

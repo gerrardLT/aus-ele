@@ -68,10 +68,10 @@ test('investment copy resolves bilingual labels from translations', () => {
   const zhCopy = getInvestmentCopy('zh', translations.zh.investment);
   const enCopy = getInvestmentCopy('en', translations.en.investment);
 
-  assert.equal(zhCopy.title, '投资分析');
+  assert.equal(zhCopy.title, '市场进入准备度');
   assert.equal(zhCopy.runAnalysis, '运行分析');
   assert.equal(zhCopy.groups.storage, '储能参数');
-  assert.equal(enCopy.title, 'Investment Analysis');
+  assert.equal(enCopy.title, 'Market Entry Readiness');
   assert.equal(enCopy.runAnalysis, 'Run Analysis');
   assert.equal(enCopy.groups.finance, 'Finance');
 });
@@ -152,6 +152,8 @@ test('InvestmentAnalysis shows DataQualityBadge and preview caveat support', () 
   const source = fs.readFileSync(path.resolve(__dirname, '../components/InvestmentAnalysis.jsx'), 'utf8');
   assert.match(source, /DataQualityBadge/);
   assert.match(source, /sectionMetadata/);
+  assert.match(source, /investmentStatusTags/);
+  assert.match(source, /p3Decision\?\.readiness_status/);
 });
 
 test('InvestmentAnalysis preserves lazy and error-state UI branches', () => {
@@ -173,6 +175,8 @@ test('InvestmentAnalysis consumes backtest observed and traceability fields', ()
 
 test('InvestmentAnalysis cash-flow views consume structured backtest-driven fields', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/InvestmentAnalysis.jsx'), 'utf8');
+  assert.match(source, /result\?\.cash_flows/);
+  assert.match(source, /decision_adjusted_cash_flows/);
   assert.match(source, /total_revenue/);
   assert.match(source, /cumulative_cash_flow/);
   assert.match(source, /revenue_arbitrage/);

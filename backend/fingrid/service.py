@@ -9,6 +9,9 @@ from .client import FingridClient
 from .schemas import normalize_fingrid_row
 
 
+UPSERT_BATCH_SIZE = 1000
+
+
 def _parse_utc(raw_value: str) -> datetime:
     return datetime.fromisoformat(raw_value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
@@ -49,6 +52,11 @@ def _month_windows(start_utc: datetime, end_utc: datetime) -> Iterable[tuple[dat
         window_end = min(next_month, end_utc)
         yield cursor, window_end
         cursor = window_end
+
+
+def _iter_batches(items: list[dict], batch_size: int = UPSERT_BATCH_SIZE) -> Iterable[list[dict]]:
+    for index in range(0, len(items), batch_size):
+        yield items[index:index + batch_size]
 
 
 def sync_dataset(
@@ -101,14 +109,21 @@ def sync_dataset(
                 start_time_utc=_format_utc(window_start),
                 end_time_utc=_format_utc(window_end),
             )
-            normalized_rows = [normalize_fingrid_row(dataset, row, ingested_at=ingested_at) for row in raw_rows]
-            db.upsert_fingrid_timeseries(normalized_rows)
             windows_synced += 1
-            records_upserted += len(normalized_rows)
             last_window_cursor = _format_utc(window_end)
-            if normalized_rows:
-                last_timestamp_utc = normalized_rows[-1]["timestamp_utc"]
-                last_window_cursor = last_timestamp_utc
+            last_window_timestamp_utc = None
+
+            for raw_batch in _iter_batches(raw_rows):
+                normalized_rows = [normalize_fingrid_row(dataset, row, ingested_at=ingested_at) for row in raw_batch]
+                if not normalized_rows:
+                    continue
+                db.upsert_fingrid_timeseries(normalized_rows)
+                records_upserted += len(normalized_rows)
+                last_window_timestamp_utc = normalized_rows[-1]["timestamp_utc"]
+
+            if last_window_timestamp_utc:
+                last_timestamp_utc = last_window_timestamp_utc
+                last_window_cursor = last_window_timestamp_utc
 
             db.upsert_fingrid_sync_state(
                 dataset_id=dataset_id,

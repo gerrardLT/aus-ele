@@ -1,0 +1,106 @@
+"""System administration API routes.
+
+Migrated from server.py — provides system management endpoints including
+observability status, job management, and alert rules.
+Delegates to server.py's existing implementations to preserve API contract.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, Query
+from pydantic import BaseModel, Field
+
+from deps import get_db, get_cache
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["admin"])
+
+
+# ---------------------------------------------------------------------------
+# Route: GET /api/observability/status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/observability/status")
+def get_observability_status(access_scope: dict | None = None):
+    """Return observability status including source freshness, telemetry, and OpenLineage."""
+    import server as _server
+
+    return _server.get_observability_status(access_scope=access_scope)
+
+
+# ---------------------------------------------------------------------------
+# Route: GET /api/jobs (list jobs)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/jobs")
+def list_jobs_route(
+    status: Optional[str] = Query(None),
+    queue_name: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    access_scope: dict | None = None,
+):
+    """List jobs with optional status and queue filters."""
+    import server as _server
+
+    return _server.list_jobs_route(
+        status=status, queue_name=queue_name, limit=limit, access_scope=access_scope
+    )
+
+
+# ---------------------------------------------------------------------------
+# Route: POST /api/jobs (create job)
+# ---------------------------------------------------------------------------
+
+
+class _JobCreateRequest(BaseModel):
+    """Mirror of server.JobCreateRequest for route-level validation."""
+
+    job_type: str
+    queue_name: str
+    source_key: str
+    payload: dict = Field(default_factory=dict)
+    priority: int = 100
+    max_attempts: int = 3
+
+
+@router.post("/api/jobs")
+def create_job_route(payload: _JobCreateRequest):
+    """Create a new job and enqueue it for processing."""
+    import server as _server
+
+    return _server.create_job_route(payload)
+
+
+# ---------------------------------------------------------------------------
+# Route: POST /api/jobs/run-next
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/run-next")
+def run_next_job_route(
+    queue_names: str | None = Query(None),
+    access_scope: dict | None = None,
+):
+    """Run the next available job from the queue."""
+    import server as _server
+
+    return _server.run_next_job_route(queue_names=queue_names, access_scope=access_scope)
+
+
+# ---------------------------------------------------------------------------
+# Route: GET /api/alerts/rules
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/alerts/rules")
+def list_alert_rules_route(workspace_id: Optional[str] = Query(None)):
+    """List configured alert rules, optionally filtered by workspace."""
+    import server as _server
+
+    return _server.list_alert_rules_route(workspace_id=workspace_id)

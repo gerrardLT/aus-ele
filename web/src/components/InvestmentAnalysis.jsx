@@ -21,13 +21,13 @@ import {
 import { getApiBase } from '../lib/apiBase';
 import DataQualityBadge from './DataQualityBadge';
 import RegimeCompactInline from './RegimeCompactInline';
-import P3BessDecisionPanel from './P3BessDecisionPanel';
 import { formatRegimeName, normalizeRegimeCompact } from '../lib/regimeCompact';
 import { getDataGradeCaveat, getResultMetadata } from '../lib/resultMetadata';
+import NarrativeTooltip from './modules/NarrativeTooltip';
 
 const API_BASE = getApiBase();
 
-const PRESET_DEFAULTS = {
+export const INVESTMENT_PRESET_DEFAULTS = {
   power_mw: 100,
   duration_hours: 4,
   round_trip_efficiency: 0.87,
@@ -141,12 +141,30 @@ function getRegimeFinanceNarrative(regime, lang) {
   }
 }
 
-export default function InvestmentAnalysis({ region, year, lang = 'en', t, scopeNote, regimeCompactCopy }) {
+export function buildInvestmentDecisionRequest({ region, year, params = INVESTMENT_PRESET_DEFAULTS }) {
+  return {
+    market: region === 'WEM' ? 'WEM' : 'NEM',
+    region,
+    year: year || (Array.isArray(params.backtest_years) ? params.backtest_years[0] : null),
+    power_mw: params.power_mw,
+    energy_mwh: params.power_mw * params.duration_hours,
+    duration_hours: params.duration_hours,
+    round_trip_efficiency: params.round_trip_efficiency,
+    degradation_cost_per_mwh: 0,
+    variable_om_per_mwh: params.variable_om_per_mwh,
+    network_fee_per_mwh: 0,
+    forecast_horizon: '7d',
+    reserve_soc_pct: 15,
+    risk_mode: 'balanced',
+  };
+}
+
+export default function InvestmentAnalysis({ region, year, lang = 'en', t, scopeNote, regimeCompactCopy, showDecisionPanel = true }) {
   const sectionRef = useRef(null);
   const requestControllerRef = useRef(null);
   const requestSeqRef = useRef(0);
   const [params, setParams] = useState({
-    ...PRESET_DEFAULTS,
+    ...INVESTMENT_PRESET_DEFAULTS,
     fcas_revenue_mode: getDefaultMode(region),
   });
   const [result, setResult] = useState(null);
@@ -160,11 +178,21 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
   const sectionMetadata = result?.metadata
     ? resultMetadata
     : {
-        data_grade: region === 'WEM' ? 'preview' : 'analytical',
+        data_grade: region === 'WEM' ? 'preview' : 'decision-grade',
         unit: 'AUD',
-        warnings: region === 'WEM' ? ['preview_only'] : [],
+        warnings: region === 'WEM' ? ['preview_only', 'core_only'] : [],
       };
   const previewCaveat = region === 'WEM' ? getDataGradeCaveat(sectionMetadata.data_grade, lang) : '';
+  const wemReadinessCaveat = region === 'WEM'
+    ? (lang === 'zh'
+      ? 'WEM 的市场设计与 NEM 不同。这里的结果更适合用于方向判断，暂未纳入容量收入和全部制度价值流，因此不建议直接与 NEM 结果逐项对比。'
+      : 'WEM follows a different market design from NEM. This view is best used for directional assessment and does not yet include capacity revenue or every market value stream, so it should not be compared one-for-one with NEM results.')
+    : '';
+  const capitalViewScopeNote = !showDecisionPanel
+    ? (lang === 'zh'
+      ? '这里提供项目收益、现金流和回本分析，用于辅助判断市场进入可行性。'
+      : 'This section provides project return, cash-flow, and payback analysis to support entry decisions.')
+    : '';
 
   useEffect(() => {
     const node = sectionRef.current;
@@ -285,7 +313,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
   }, [isVisible, requestKey, loadedKey, loading]);
 
   const cashFlows = useMemo(() => (
-    (result?.scenarios?.[0]?.cash_flows || [])
+    (result?.cash_flows || result?.scenarios?.[0]?.cash_flows || [])
       .filter((row) => row.year > 0)
       .map((row) => ({
         ...row,
@@ -345,6 +373,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
   const mc = result?.monte_carlo;
   const decisionAdjustedMonteCarlo = result?.decision_adjusted_monte_carlo || null;
   const p3Governance = result?.p3_decision?.governance || null;
+  const p3Decision = result?.p3_decision || null;
   const backtest_observed = result?.backtest_observed || null;
   const backtest_reference = result?.backtest_reference || null;
   const backtest_fallback_used = Boolean(result?.backtest_fallback_used);
@@ -360,22 +389,6 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
   const regimeNarrativeDriver = normalizedRegimeCompact.top_drivers[0]?.headline || copy.regimeNarrativeEmpty;
   const regimeNarrativeTransition = normalizedRegimeCompact.transition_hints[0] || copy.regimeNarrativeEmpty;
   const regimeNarrativeFinance = getRegimeFinanceNarrative(primaryRegime?.regime, lang);
-  const p3DecisionRequest = useMemo(() => ({
-    market: region === 'WEM' ? 'WEM' : 'NEM',
-    region,
-    year: year || (Array.isArray(params.backtest_years) ? params.backtest_years[0] : null),
-    power_mw: params.power_mw,
-    energy_mwh: params.power_mw * params.duration_hours,
-    duration_hours: params.duration_hours,
-    round_trip_efficiency: params.round_trip_efficiency,
-    degradation_cost_per_mwh: 0,
-    variable_om_per_mwh: params.variable_om_per_mwh,
-    network_fee_per_mwh: 0,
-    forecast_horizon: '24h',
-    reserve_soc_pct: 15,
-    risk_mode: 'balanced',
-  }), [region, year, params]);
-
   const capexPreview = useMemo(() => (
     (params.capex_per_kwh * params.power_mw * params.duration_hours * 1000) + params.grid_connection_cost
   ), [params]);
@@ -393,13 +406,18 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
     { label: copy.kpis.uiYear, value: year || '-' },
   ];
   const lazyLoadNote = isVisible ? copy.lazyVisible : (copy.lazyHidden || copy.statuses.hidden);
+  const investmentStatusTags = [
+    { label: lang === 'zh' ? '准备度' : 'Readiness', value: p3Decision?.readiness_status || '', format: 'readiness_status' },
+    { label: lang === 'zh' ? '覆盖' : 'Coverage', value: p3Decision?.coverage_mode || '', format: 'coverage_mode' },
+    { label: lang === 'zh' ? '范围' : 'Scope', value: p3Decision?.conclusion_scope || '' },
+  ].filter((item) => item.value);
 
   return (
-    <div ref={sectionRef} className="col-span-12 mt-16 border-t border-[var(--color-border)] pt-12">
-      <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+    <div ref={sectionRef} className="col-span-12 mt-12 border-t border-[var(--color-border)] pt-8">
+      <div className="mb-6 flex flex-col justify-between gap-2 md:flex-row md:items-baseline">
         <div>
-          <h2 className="text-3xl font-serif">{copy.title}</h2>
-          <p className="font-sans text-sm text-[var(--color-muted)]">
+          <h2 className="text-2xl font-serif md:text-[1.75rem]">{copy.title}</h2>
+          <p className="font-sans text-xs leading-5 text-[var(--color-muted)] md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">
             {copy.subtitle}
           </p>
         </div>
@@ -409,7 +427,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
       </div>
 
       <div className="mb-6">
-        <DataQualityBadge metadata={sectionMetadata} lang={lang} />
+        <DataQualityBadge metadata={sectionMetadata} lang={lang} tags={investmentStatusTags} />
       </div>
 
       <div className="mb-6">
@@ -417,36 +435,48 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
       </div>
 
       {scopeNote && (
-        <div className="mb-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
+        <div className="mb-5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">
           {scopeNote}
         </div>
       )}
 
+      {capitalViewScopeNote && (
+        <div className="mb-5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">
+          {capitalViewScopeNote}
+        </div>
+      )}
+
       {previewCaveat && (
-        <div className="mb-8 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="mb-5 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
           {previewCaveat}
+        </div>
+      )}
+      {wemReadinessCaveat && (
+        <div className="mb-5 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+          {wemReadinessCaveat}
         </div>
       )}
 
       {!result && !loading && (
-        <div className="mb-8 rounded border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-muted)]">
+        <div className="mb-6 rounded border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">
           {lazyLoadNote}
         </div>
       )}
 
-      <div className="grid grid-cols-12 gap-8">
-        <div className="col-span-12 space-y-6 lg:col-span-4">
+      <div className="grid grid-cols-12 gap-6">
+        <div className="col-span-12 space-y-4 lg:col-span-4">
           <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
             <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <h3 className="text-sm font-bold uppercase tracking-wider">{copy.parameters}</h3>
             </div>
 
-            <div className="space-y-6 p-4">
+            <div className="space-y-4 p-4">
               <div>
-                <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                <label htmlFor="inv-fcas-mode" className="mb-2 block text-xs font-bold uppercase tracking-widest text-[var(--color-muted)]">
                   {copy.fcasRevenueMode}
                 </label>
                 <select
+                  id="inv-fcas-mode"
                   value={params.fcas_revenue_mode}
                   onChange={(e) => setParams((prev) => ({ ...prev, fcas_revenue_mode: e.target.value }))}
                   className="w-full rounded border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm"
@@ -528,8 +558,8 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
           {result && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-                <KpiCard label={copy.kpis.npv} value={fmt(metrics.npv)} tone={metrics.npv > 0 ? 'good' : 'bad'} sub={`${copy.kpiSubs.discount} ${(params.discount_rate * 100).toFixed(1)}%`} />
-                <KpiCard label={copy.kpis.irr} value={formatPercentageValue(metrics.irr)} tone={metrics.irr > params.discount_rate * 100 ? 'good' : 'warn'} sub={copy.kpiSubs.unlevered} />
+                <KpiCard label={copy.kpis.npv} value={<NarrativeTooltip module="investment_npv" lang={lang}>{fmt(metrics.npv)}</NarrativeTooltip>} tone={metrics.npv > 0 ? 'good' : 'bad'} sub={`${copy.kpiSubs.discount} ${(params.discount_rate * 100).toFixed(1)}%`} />
+                <KpiCard label={copy.kpis.irr} value={<NarrativeTooltip module="investment_irr" lang={lang}>{formatPercentageValue(metrics.irr)}</NarrativeTooltip>} tone={metrics.irr > params.discount_rate * 100 ? 'good' : 'warn'} sub={copy.kpiSubs.unlevered} />
                 <KpiCard label={copy.kpis.debtCap} value={fmt(metrics.debt_capacity)} tone="brand" sub={`${copy.kpiSubs.avgDscr} ${metrics.dscr_avg ? metrics.dscr_avg.toFixed(2) : '-'}x`} />
                 <KpiCard label={copy.kpis.leveredIrr} value={formatPercentageValue(metrics.levered_irr !== null && metrics.levered_irr !== undefined ? metrics.levered_irr * 100 : null)} tone="good" sub={copy.kpiSubs.equityReturn} />
                 <KpiCard label={copy.kpis.payback} value={metrics.payback_years ? `${metrics.payback_years} ${copy.kpiSubs.years}` : copy.kpis.overLife} tone={metrics.payback_years ? 'good' : 'warn'} sub={`${copy.kpiSubs.life} ${params.project_life_years} ${copy.kpiSubs.years}`} />
@@ -600,7 +630,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                             <td className="py-3 pr-3 text-right font-mono">{fmt(row.adjusted_npv)}</td>
                             <td
                               className="py-3 pr-3 text-right font-mono"
-                              style={{ color: (row.delta_npv ?? 0) >= 0 ? '#22c55e' : '#ef4444' }}
+                              style={{ color: (row.delta_npv ?? 0) >= 0 ? '#15803d' : '#b91c1c' }}
                             >
                               {fmt(row.delta_npv)}
                             </td>
@@ -616,11 +646,11 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
               {p3Governance && (
                 <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                   <h4 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-primary)]">
-                    {lang === 'zh' ? 'P4 治理概览' : 'P4 Governance Snapshot'}
+                    {lang === 'zh' ? 'P4 数据状态概览' : 'P4 Data Status Snapshot'}
                   </h4>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     <SummaryBlock
-                      label={lang === 'zh' ? '使用范围' : 'Usage Scope'}
+                      label={lang === 'zh' ? '适用范围' : 'Use Case'}
                       value={p3Governance?.disclaimer?.usage_scope || '-'}
                     />
                     <SummaryBlock
@@ -689,15 +719,6 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                   </div>
                 )}
               </div>
-
-              <P3BessDecisionPanel
-                apiBase={API_BASE}
-                year={p3DecisionRequest.year}
-                region={region}
-                requestPayload={p3DecisionRequest}
-                initialPayload={result?.p3_decision || null}
-                locale={lang}
-              />
 
               {backtest_observed && (
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -872,11 +893,11 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                             <td className="p-2 text-right">{fmt(row.revenue_fcas)}</td>
                             <td className="p-2 text-right">{fmt(row.revenue_capacity)}</td>
                             <td className="p-2 text-right text-[var(--color-primary)]">{fmt(row.revenue)}</td>
-                            <td className="p-2 text-right text-[#ef4444]">{fmt(row.opex)}</td>
-                            <td className="p-2 text-right font-bold" style={{ color: row.net_cash_flow >= 0 ? '#22c55e' : '#ef4444' }}>
+                            <td className="p-2 text-right text-[#b91c1c]">{fmt(row.opex)}</td>
+                            <td className="p-2 text-right font-bold" style={{ color: row.net_cash_flow >= 0 ? '#15803d' : '#b91c1c' }}>
                               {fmt(row.net_cash_flow)}
                             </td>
-                            <td className="p-2 text-right" style={{ color: row.cumulative >= 0 ? '#22c55e' : '#ef4444' }}>
+                            <td className="p-2 text-right" style={{ color: row.cumulative >= 0 ? '#15803d' : '#b91c1c' }}>
                               {fmt(row.cumulative)}
                             </td>
                             <td className="p-2 text-right text-[var(--color-muted)]">
@@ -899,9 +920,9 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
 
 function KpiCard({ label, value, sub, tone }) {
   const colors = {
-    good: '#22c55e',
-    bad: '#ef4444',
-    warn: '#f59e0b',
+    good: '#15803d',
+    bad: '#b91c1c',
+    warn: '#b45309',
     brand: '#0047FF',
   };
 

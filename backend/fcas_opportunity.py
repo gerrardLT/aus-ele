@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from statistics import median
+from typing import Sequence
 
 
 NEM_FCAS_SERVICE_GROUPS = {
@@ -22,12 +23,20 @@ def _parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _infer_interval_hours(rows: list[dict], default_minutes: int = 5) -> list[float]:
+def _build_row_reader(columns: Sequence[str] | None):
+    if not columns:
+        return lambda row, key: row.get(key)
+
+    column_index = {name: idx for idx, name in enumerate(columns)}
+    return lambda row, key: row[column_index[key]] if key in column_index else None
+
+
+def _infer_interval_hours(rows, row_reader, default_minutes: int = 5) -> list[float]:
     if not rows:
         return []
 
     default_hours = default_minutes / 60.0
-    timestamps = [_parse_timestamp(row["settlement_date"]) for row in rows]
+    timestamps = [_parse_timestamp(str(row_reader(row, "settlement_date"))) for row in rows]
     intervals = []
     for idx, current in enumerate(timestamps):
         if idx + 1 < len(timestamps):
@@ -39,11 +48,12 @@ def _infer_interval_hours(rows: list[dict], default_minutes: int = 5) -> list[fl
 
 
 def summarize_nem_fcas_opportunity(
-    rows: list[dict],
+    rows,
     *,
     capacity_mw: float,
     duration_hours: float = 4.0,
     starting_soc_fraction: float = 0.5,
+    columns: Sequence[str] | None = None,
 ) -> dict:
     if not rows:
         return {
@@ -57,8 +67,9 @@ def summarize_nem_fcas_opportunity(
             },
         }
 
-    interval_hours = _infer_interval_hours(rows)
-    energy_prices = [float(row.get("rrp_aud_mwh") or 0.0) for row in rows]
+    row_reader = _build_row_reader(columns)
+    interval_hours = _infer_interval_hours(rows, row_reader)
+    energy_prices = [float(row_reader(row, "rrp_aud_mwh") or 0.0) for row in rows]
     sorted_prices = sorted(energy_prices)
     low_idx = max(0, int((len(sorted_prices) - 1) * 0.25))
     high_idx = max(0, int((len(sorted_prices) - 1) * 0.75))
@@ -89,14 +100,14 @@ def summarize_nem_fcas_opportunity(
     }
 
     for idx, row in enumerate(rows):
-        energy_price = float(row.get("rrp_aud_mwh") or 0.0)
+        energy_price = float(row_reader(row, "rrp_aud_mwh") or 0.0)
         hours = interval_hours[idx]
 
         raise_soc_headroom_mw = min(capacity_mw, max((soc_mwh - min_soc_mwh) / hours, 0.0)) if hours > 0 else 0.0
         lower_soc_headroom_mw = min(capacity_mw, max((max_soc_mwh - soc_mwh) / hours, 0.0)) if hours > 0 else 0.0
 
         for service_key, group in NEM_FCAS_SERVICE_GROUPS.items():
-            price = float(row.get(f"{service_key}_rrp") or 0.0)
+            price = float(row_reader(row, f"{service_key}_rrp") or 0.0)
             if price <= 0:
                 continue
 

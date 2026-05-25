@@ -19,6 +19,15 @@ import { getDataGradeCaveat, getPreviewModeLabel } from '../lib/resultMetadata';
 import RegimeCompactInline from './RegimeCompactInline';
 import { pickFirstAvailableRegimeCompact } from '../lib/regimeCompact';
 
+// TODO [platform-optimization]: Migrate to separated price/revenue APIs.
+// Currently this component fetches from /peak-analysis (price data) and /fcas-analysis
+// (FCAS revenue data) in a single combined request. Per the design doc (Phase 1),
+// price analysis ($/MWh) and revenue analysis ($) should use independent endpoints:
+//   - Price data: usePriceAnalysis hook → /api/price-trend
+//   - Revenue data: useRevenueAnalysis hook → /api/revenue-analysis
+// This separation ensures dimensional correctness (Requirement 1.1).
+// The current mixed stacking logic will be refactored once the new APIs are stable.
+
 const FCAS_KEYS = [
   { key: 'raise1sec_rrp', copyKey: 'raise1sec', color: '#1d4ed8' },
   { key: 'raise6sec_rrp', copyKey: 'raise6sec', color: '#2563eb' },
@@ -192,11 +201,24 @@ export default function RevenueStacking({
         data_grade: 'preview',
         unit: 'AUD/MWh',
         warnings: ['preview_only'],
+        coverage_mode: 'core-only',
+        regulatory_scope: 'WEM',
+        result_type: 'supporting_diagnostics',
       }
     : {
         data_grade: 'analytical',
         unit: 'AUD/MWh',
+        coverage_mode: 'full',
+        regulatory_scope: 'NEM',
+        result_type: 'supporting_diagnostics',
       };
+  const sectionStatusTags = isWem
+    ? [
+        { label: t.tagCoverage, value: sectionMetadata.coverage_mode, format: 'coverage_mode' },
+        { label: t.tagScope, value: sectionMetadata.regulatory_scope },
+        { label: t.tagCapacity, value: t.capacityNotIncluded },
+      ]
+    : [];
 
   const totalSummary = useMemo(() => {
     if (!chartData.length) return null;
@@ -235,12 +257,12 @@ export default function RevenueStacking({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.35 }}
-      className="col-span-12 mt-16 pt-12 border-t-2 border-[var(--color-text)]"
+      className="col-span-12 mt-12 pt-8 border-t-2 border-[var(--color-text)]"
     >
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div>
-          <h2 className="text-3xl font-serif font-bold mb-1">{t.stackTitle}</h2>
-          <p className="text-sm text-[var(--color-muted)] font-sans">
+          <h2 className="text-2xl font-serif font-bold md:text-[1.75rem]">{t.stackTitle}</h2>
+          <p className="text-xs leading-5 text-[var(--color-muted)] font-sans md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">
             {t.stackSubtitle}
           </p>
         </div>
@@ -250,7 +272,7 @@ export default function RevenueStacking({
       </div>
 
       {legacySpreadFallback && (
-        <div className="mb-6 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="mb-6 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
           {t.stackLegacyFallback}
         </div>
       )}
@@ -258,12 +280,13 @@ export default function RevenueStacking({
       {isWem && (
         <div className="mb-6 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
           <div className="flex flex-wrap items-center gap-3">
-            <DataQualityBadge metadata={sectionMetadata} lang={lang} />
+            <DataQualityBadge metadata={sectionMetadata} lang={lang} tags={sectionStatusTags} />
             <div className="font-semibold tracking-wide">
               {previewLabel} | {previewNotInvestmentGrade}
             </div>
           </div>
-          <div className="mt-2">{previewCaveat}</div>
+          <div className="mt-2 text-xs leading-5">{t.stackWemScopeCaveat}</div>
+          <div className="mt-2 text-xs leading-5">{previewCaveat}</div>
           {fcasData?.summary?.coverage_days !== undefined && (
             <div className="mt-1">coverage_days={fcasData.summary.coverage_days}</div>
           )}
@@ -289,7 +312,7 @@ export default function RevenueStacking({
           </div>
 
           {totalSummary && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
               <SummaryCard label={t.stackSummaryPeriods} value={totalSummary.periods} />
               <SummaryCard label={t.stackSummaryArbitrageBase} value={`$${totalSummary.totalArbitrage.toFixed(1)}`} />
               <SummaryCard label={t.stackSummaryFcasLayers} value={`$${totalSummary.totalFcas.toFixed(1)}`} />
@@ -350,7 +373,7 @@ export default function RevenueStacking({
               </div>
             </div>
           ) : isMultiDayPreview ? (
-            <div className="h-[420px]">
+            <div className="h-[380px] md:h-[400px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
@@ -382,7 +405,7 @@ export default function RevenueStacking({
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-[420px]">
+            <div className="h-[380px] md:h-[400px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />

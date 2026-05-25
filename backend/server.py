@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 import logging
 from typing import Optional, Dict, Any
 import datetime
+import itertools
 import subprocess
 import uuid
 from pathlib import Path
@@ -142,7 +143,7 @@ install_trace_log_record_factory(
     span_id_supplier=get_current_span_id,
 )
 
-_REGIME_LAYER_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
+_REGIME_LAYER_CACHE: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
 _REGIME_LAYER_CACHE_LOCK = threading.Lock()
 _REGIME_LAYER_CACHE_TTL_SECONDS = 300
 install_json_log_formatter_if_enabled()
@@ -549,7 +550,7 @@ def _market_data_version() -> str:
 
 
 def _get_cached_regime_layer_payload(*, market: str, region: str) -> dict:
-    cache_key = (market, region, _market_data_version())
+    cache_key = (market, region, _market_data_version(), getattr(db, "db_path", "") or "")
     now_monotonic = time.monotonic()
 
     with _REGIME_LAYER_CACHE_LOCK:
@@ -586,7 +587,14 @@ def _region_timezone(region: str) -> str:
 def _attach_price_trend_metadata(payload: dict, *, region: str) -> dict:
     market = "WEM" if region == "WEM" else "NEM"
     data_version = _market_data_version()
-    payload["metadata"] = build_result_metadata(
+    coverage_mode = "core-only" if market == "WEM" else "full"
+    regulatory_scope = market
+    market_design_context = (
+        "WEM co-optimised ESS preview view with independent market-design caveat and non-equivalent coverage."
+        if market == "WEM"
+        else "NEM energy market truth with regime, event, reserve, and frequency-aware context."
+    )
+    base_metadata = build_result_metadata(
         market=market,
         region_or_zone=region,
         timezone=_region_timezone(region),
@@ -600,8 +608,15 @@ def _attach_price_trend_metadata(payload: dict, *, region: str) -> dict:
         source_name="AEMO",
         source_version=data_version,
         methodology_version="price_trend_v1",
-        warnings=[],
+        warnings=[] if market != "WEM" else ["preview_only", "core_only"],
     )
+    payload["metadata"] = {
+        **base_metadata,
+        "coverage_mode": coverage_mode,
+        "regulatory_scope": regulatory_scope,
+        "market_design_context": market_design_context,
+        "result_type": "market_state",
+    }
     return payload
 
 
@@ -806,6 +821,72 @@ def _build_p3_bess_decision_payload(
     stochastic_spread = round(float(stochastic_dispatch.get("scenario_spread") or 0.0), 4)
 
     recommended_strategy = "forecast_driven_dispatch" if diagnostics.get("status") == "available" else "rule_based_dispatch"
+    coverage_mode = "core-only" if params.market == "WEM" else "decision-support"
+    market_design_context = (
+        "WEM co-optimised ESS preview with explicit coverage caveats; capacity-style value is not fully modeled here."
+        if params.market == "WEM"
+        else "NEM energy-plus-FCAS market view with no capacity mechanism included in the conclusion bundle."
+    )
+    value_stream_coverage = [
+        "energy_arbitrage",
+        "reserve_proxy",
+        "scenario_spread",
+    ]
+    capacity_revenue_in_scope = False
+    benchmark_family = "australia_bess_entry_v1"
+    readiness_status = (
+        "preview_only"
+        if params.market == "WEM"
+        else ("watchlist" if calibration.get("summary_grade") in {"poor", None} else "screenable")
+    )
+    conclusion_scope = (
+        "Preview-only WEM entry view. Compare with NEM only after checking service, capacity, and data-scope differences."
+        if params.market == "WEM"
+        else "NEM entry view covering energy, reserve proxy, and scenario spread without project-finance or capacity revenue."
+    )
+    regulatory_scope = params.market
+    result_type = "investment_conclusion"
+    recommendation_headline = (
+        "Outlook-backed entry case"
+        if recommended_strategy == "forecast_driven_dispatch"
+        else "Conservative fallback case"
+    )
+    recommendation_rationale = (
+        f"Current market is led by {primary_regime}; {params.forecast_horizon} opportunity calibration is "
+        f"{calibration.get('summary_grade') or 'unknown'}; expected scenario spread is A${stochastic_spread:.1f}. "
+        f"Use this as an entry-readiness conclusion, not as an auto-dispatch instruction."
+    )
+    explanation_chain = [
+        {
+            "step": "Current Market",
+            "title": primary_regime,
+            "detail": f"Primary regime is {primary_regime} with lead driver '{(regime_compact.get('top_drivers') or [{}])[0].get('headline', 'unavailable')}'.",
+        },
+        {
+            "step": "24h Outlook",
+            "title": params.forecast_horizon,
+            "detail": (
+                f"Spike probability {spike_probability:.2f}, negative-price probability {negative_probability:.2f}, "
+                f"charge score {charge_window_score:.1f}, discharge score {discharge_window_score:.1f}. "
+                f"Treat this layer as forward opportunity framing over the selected horizon."
+            ),
+        },
+        {
+            "step": "BESS Decision",
+            "title": recommended_strategy,
+            "detail": (
+                f"Conclusion bundle points to net revenue A${forecast_driven_net:.1f}, FCAS proxy A${fcas_stack_proxy:.1f}, "
+                f"and scenario spread A${stochastic_spread:.1f}."
+            ),
+        },
+    ]
+    risk_boundary = {
+        "expected_range": f"A${bear_net:.1f} to A${bull_net:.1f}",
+        "downside_case": f"A${bear_net:.1f}",
+        "upside_case": f"A${bull_net:.1f}",
+        "scenario_spread": stochastic_spread,
+        "usage_scope": "preview/core-only" if params.market == "WEM" else "decision-grade",
+    }
 
     warnings = list(backtest_payload.get("warnings") or [])
     if calibration.get("summary_grade") in {"poor", None}:
@@ -820,6 +901,15 @@ def _build_p3_bess_decision_payload(
         "market": params.market,
         "region": params.region,
         "year": params.year,
+        "market_design_context": market_design_context,
+        "value_stream_coverage": value_stream_coverage,
+        "capacity_revenue_in_scope": capacity_revenue_in_scope,
+        "benchmark_family": benchmark_family,
+        "readiness_status": readiness_status,
+        "conclusion_scope": conclusion_scope,
+        "coverage_mode": coverage_mode,
+        "regulatory_scope": regulatory_scope,
+        "result_type": result_type,
         "forecast_context": {
             "horizon": params.forecast_horizon,
             "as_of": params.as_of,
@@ -834,6 +924,19 @@ def _build_p3_bess_decision_payload(
             "rolling_horizon_mode": "forecast_window_aware_v1",
             "co_optimization_mode": "energy_fcas_headroom_optimizer_v2",
             "degradation_mode": "throughput_penalty_with_reserve_buffer_v2",
+            "market_design_context": market_design_context,
+            "value_stream_coverage": value_stream_coverage,
+            "capacity_revenue_in_scope": capacity_revenue_in_scope,
+            "benchmark_family": benchmark_family,
+            "readiness_status": readiness_status,
+            "conclusion_scope": conclusion_scope,
+            "recommendation_summary": {
+                "headline": recommendation_headline,
+                "action": recommended_strategy,
+                "rationale": recommendation_rationale,
+            },
+            "explanation_chain": explanation_chain,
+            "risk_boundary": risk_boundary,
         },
         "strategy_bundle": {
             "rule_based_dispatch": {
@@ -886,14 +989,14 @@ def _build_p3_bess_decision_payload(
         currency="AUD",
         unit="AUD",
         interval_minutes=get_settlement_interval(params.region) if params.market != "WEM" else 5,
-        data_grade="analytical-preview",
+        data_grade="preview" if params.market == "WEM" else "decision-grade",
         data_quality_score=None,
-        coverage={"status": "decision_preview"},
+        coverage={"status": "decision_bundle"},
         freshness={"last_updated_at": _analysis_data_version()},
         source_name="AEMO",
         source_version=_analysis_data_version(),
         methodology_version="p3_bess_decision_layer_v1",
-        warnings=warnings,
+        warnings=sorted(set(warnings + (["preview_only", "core_only"] if params.market == "WEM" else []))),
         dataset_family="bess_decision_layer",
         observation_kind="decision",
         lineage={
@@ -901,7 +1004,7 @@ def _build_p3_bess_decision_payload(
             "backtest_dataset_family": (backtest_payload.get("metadata") or {}).get("dataset_family"),
             "forecast_dataset_family": (forecast_payload.get("metadata") or {}).get("dataset_family"),
         },
-        grade="analytical-preview",
+        grade="preview" if params.market == "WEM" else "decision-grade",
     )
     payload["governance"] = build_p3_governance_payload(
         metadata=payload["metadata"],
@@ -986,6 +1089,13 @@ def _build_decision_adjusted_metrics(
     if adjusted.get("payback_years"):
         adjusted["payback_years"] = max(1, round(float(adjusted["payback_years"]) / max(uplift_ratio, 0.25)))
     return adjusted
+
+
+def _strip_scenario_cash_flows_for_response(scenario_payloads: list[dict]) -> list[dict]:
+    return [
+        {key: value for key, value in scenario.items() if key != "cash_flows"}
+        for scenario in scenario_payloads
+    ]
 
 
 def _build_decision_adjusted_result(
@@ -1145,6 +1255,18 @@ def _attach_grid_forecast_metadata(payload: dict, *, region: str, data_version: 
     market = existing.get("market") or ("WEM" if region == "WEM" else "NEM")
     version = data_version or _grid_forecast_data_version()
     coverage_payload = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
+    coverage_mode = coverage_payload.get("mode") or existing.get("coverage_mode") or existing.get("coverage_quality", "none")
+    regulatory_scope = existing.get("regulatory_scope") or market
+    market_design_context = existing.get("market_design_context") or (
+        "WEM co-optimised ESS preview outlook with independent market-design caveat and incomplete public-market coverage."
+        if market == "WEM"
+        else "NEM forward opportunity outlook grounded in official price windows, regime persistence, and event overlays."
+    )
+    value_stream_coverage = existing.get("value_stream_coverage") or (
+        ["energy_arbitrage", "negative_price_windows", "reserve_proxy"]
+        if market == "NEM"
+        else ["energy_arbitrage", "reserve_proxy"]
+    )
     warnings = list(existing.get("warnings") or [])
     if market == "WEM" and "preview_only" not in warnings:
         warnings.append("preview_only")
@@ -1172,7 +1294,15 @@ def _attach_grid_forecast_metadata(payload: dict, *, region: str, data_version: 
         methodology_version="grid_forecast_v1",
         warnings=warnings,
     )
-    payload["metadata"] = {**base, **existing}
+    payload["metadata"] = {
+        **base,
+        **existing,
+        "coverage_mode": coverage_mode,
+        "regulatory_scope": regulatory_scope,
+        "market_design_context": market_design_context,
+        "value_stream_coverage": value_stream_coverage,
+        "result_type": existing.get("result_type") or "opportunity_outlook",
+    }
     return payload
 
 
@@ -1180,6 +1310,25 @@ def _build_p2_forecast_layer_payload(payload: dict, *, market: str, region: str)
     payload = grid_forecast.ensure_baseline_forecast_contract(payload, db=db)
     baseline_forecast = dict(payload.get("baseline_forecast") or {})
     regime_compact = payload.get("regime_compact") or {}
+    coverage_mode = (
+        payload.get("coverage_mode")
+        or baseline_forecast.get("coverage_mode")
+        or (payload.get("coverage") or {}).get("mode")
+        or (payload.get("metadata") or {}).get("coverage_quality")
+        or ("core-only" if market == "WEM" else "full")
+    )
+    market_design_context = payload.get("market_design_context") or (
+        "WEM co-optimised ESS preview outlook with independent market-design caveat and incomplete public-market coverage."
+        if market == "WEM"
+        else "NEM forward opportunity outlook grounded in official price windows, regime persistence, and event overlays."
+    )
+    value_stream_coverage = payload.get("value_stream_coverage") or (
+        ["energy_arbitrage", "negative_price_windows", "reserve_proxy"]
+        if market == "NEM"
+        else ["energy_arbitrage", "reserve_proxy"]
+    )
+    regulatory_scope = payload.get("regulatory_scope") or market
+    result_type = payload.get("result_type") or "opportunity_outlook"
     metadata = build_result_metadata(
         market=market,
         region_or_zone=region,
@@ -1200,12 +1349,25 @@ def _build_p2_forecast_layer_payload(payload: dict, *, market: str, region: str)
         lineage={"source_id": "p2_forecast_layer"},
         grade="preview" if market == "WEM" else "analytical-preview",
     )
+    metadata = {
+        **metadata,
+        "coverage_mode": coverage_mode,
+        "regulatory_scope": regulatory_scope,
+        "market_design_context": market_design_context,
+        "value_stream_coverage": value_stream_coverage,
+        "result_type": result_type,
+    }
     return {
         "market": market,
         "region": region,
         "horizon": (payload.get("metadata") or {}).get("horizon"),
         "summary": payload.get("summary") or {},
         "baseline_forecast": baseline_forecast,
+        "coverage_mode": coverage_mode,
+        "market_design_context": market_design_context,
+        "value_stream_coverage": value_stream_coverage,
+        "regulatory_scope": regulatory_scope,
+        "result_type": result_type,
         "regime_compact": regime_compact,
         "coverage": payload.get("coverage") or {},
         "market_context": payload.get("market_context") or {},
@@ -1275,7 +1437,7 @@ def _attach_fcas_analysis_metadata(payload: dict, *, region: str) -> dict:
         source_name="AEMO",
         source_version=data_version,
         methodology_version="fcas_analysis_v1",
-        warnings=[] if market != "WEM" else ["preview_only"],
+        warnings=[] if market != "WEM" else ["preview_only", "core_only"],
     )
     return payload
 
@@ -1290,14 +1452,14 @@ def _attach_investment_metadata(payload: dict, *, region: str) -> dict:
         currency="AUD",
         unit="AUD/year",
         interval_minutes=None,
-        data_grade="preview" if market == "WEM" else "analytical",
+        data_grade="preview" if market == "WEM" else "decision-grade",
         data_quality_score=None,
         coverage={"cash_flow_years": len(payload.get("cash_flows", []))},
         freshness={"last_updated_at": data_version},
         source_name="AEMO",
         source_version=data_version,
         methodology_version="investment_analysis_v1",
-        warnings=[] if market != "WEM" else ["preview_only"],
+        warnings=[] if market != "WEM" else ["preview_only", "core_only"],
     )
     return _attach_regime_layer(payload, market=market, region=region)
 
@@ -2007,6 +2169,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AEMO NEM Data API", lifespan=lifespan)
 
+# Register modular route modules (spike, saturation, ranking, co-opt, wem_modules, etc.)
+from routes import register_all_routes as _register_modular_routes
+_register_modular_routes(app)
+
 OPENAPI_ERROR_RESPONSES = {
     500: {
         "description": "Internal server error",
@@ -2150,17 +2316,22 @@ def _local_interval_to_utc_bounds(raw_value: str, region: str, minutes: int) -> 
 def _fetch_operational_demand_actual_rows(region: str, *, limit: int = 288) -> list[dict]:
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT interval_datetime, operational_demand
-            FROM operational_demand_actual_hh
-            WHERE region_id = ?
-            ORDER BY interval_datetime DESC
-            LIMIT ?
-            """,
-            (region, limit),
-        )
-        rows = cursor.fetchall()
+        try:
+            cursor.execute(
+                """
+                SELECT interval_datetime, operational_demand
+                FROM operational_demand_actual_hh
+                WHERE region_id = ?
+                ORDER BY interval_datetime DESC
+                LIMIT ?
+                """,
+                (region, limit),
+            )
+            rows = cursor.fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
     normalized = []
     for interval_datetime, value in reversed(rows):
         start_utc, end_utc = _local_interval_to_utc_bounds(interval_datetime, region, 30)
@@ -2209,17 +2380,22 @@ def _fetch_operational_demand_forecast_rows(region: str, *, limit: int = 96) -> 
 def _fetch_rooftop_pv_actual_rows(region: str, *, limit: int = 288) -> list[dict]:
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT interval_datetime, power
-            FROM rooftop_pv_actual_measurement
-            WHERE region_id = ?
-            ORDER BY interval_datetime DESC
-            LIMIT ?
-            """,
-            (region, limit),
-        )
-        rows = cursor.fetchall()
+        try:
+            cursor.execute(
+                """
+                SELECT interval_datetime, power
+                FROM rooftop_pv_actual_measurement
+                WHERE region_id = ?
+                ORDER BY interval_datetime DESC
+                LIMIT ?
+                """,
+                (region, limit),
+            )
+            rows = cursor.fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
     normalized = []
     for interval_datetime, value in reversed(rows):
         start_utc, end_utc = _local_interval_to_utc_bounds(interval_datetime, region, 30)
@@ -2236,17 +2412,23 @@ def _fetch_rooftop_pv_actual_rows(region: str, *, limit: int = 288) -> list[dict
 def _fetch_dispatch_region_metric_rows(region: str, value_column: str, *, limit: int = 288) -> list[dict]:
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            f"""
-            SELECT settlement_date, {value_column}
-            FROM dispatch_region_summary
-            WHERE region_id = ?
-            ORDER BY settlement_date DESC
-            LIMIT ?
-            """,
-            (region, limit),
-        )
-        rows = cursor.fetchall()
+        try:
+            cursor.execute(
+                f"""
+                SELECT settlement_date, {value_column}
+                FROM dispatch_region_summary
+                WHERE region_id = ?
+                ORDER BY settlement_date DESC
+                LIMIT ?
+                """,
+                (region, limit),
+            )
+            rows = cursor.fetchall()
+        except sqlite3.OperationalError as exc:
+            lowered = str(exc).lower()
+            if "no such table" in lowered or "no such column" in lowered:
+                return []
+            raise
     normalized = []
     for settlement_date, value in reversed(rows):
         start_utc, end_utc = _local_interval_to_utc_bounds(settlement_date, region, 5)
@@ -2631,6 +2813,22 @@ def _clamp_regime_score(value: float) -> float:
     return round(max(0.0, min(value, 100.0)), 1)
 
 
+def _rank_regime_driver_priority(driver_type: str | None) -> int:
+    priority_map = {
+        "reserve_shortfall": 0,
+        "reserve_tightness": 1,
+        "network_stress": 2,
+        "constraint_binding": 3,
+        "interconnector_flow": 4,
+        "load_tightness": 5,
+        "renewables_balance": 6,
+        "regional_price_spread": 7,
+        "price_level": 8,
+        "price_shape": 9,
+    }
+    return priority_map.get(driver_type or "", 10)
+
+
 def _build_compact_regime_contract(regime_payload: dict) -> dict:
     metadata = regime_payload.get("metadata") if isinstance(regime_payload.get("metadata"), dict) else {}
     warnings = list(metadata.get("warnings") or [])
@@ -2642,7 +2840,12 @@ def _build_compact_regime_contract(regime_payload: dict) -> dict:
     availability_status = "unavailable" if "regime_layer_unavailable" in warnings else "available"
     top_drivers = []
     seen_driver_keys: set[tuple[str | None, str | None]] = set()
-    for item in drivers[:3]:
+    sorted_drivers = sorted(
+        [item for item in drivers if isinstance(item, dict)],
+        key=lambda item: (_rank_regime_driver_priority(item.get("driver_type")), drivers.index(item)),
+    )
+
+    for item in sorted_drivers[:3]:
         if not isinstance(item, dict):
             continue
         driver_key = (item.get("driver_type"), item.get("headline"))
@@ -2655,10 +2858,8 @@ def _build_compact_regime_contract(regime_payload: dict) -> dict:
                 "driver_type": item.get("driver_type"),
             }
         )
-    if len(top_drivers) < 3 and len(drivers) > 3:
-        for item in drivers[3:]:
-            if not isinstance(item, dict):
-                continue
+    if len(top_drivers) < 3 and len(sorted_drivers) > 3:
+        for item in sorted_drivers[3:]:
             driver_key = (item.get("driver_type"), item.get("headline"))
             if driver_key in seen_driver_keys:
                 continue
@@ -2803,16 +3004,31 @@ def _build_regime_layer_payload(*, market: str, region: str) -> dict:
         avg_abs_flow = sum(abs(float(row.get("value") or 0.0)) for row in interconnector_rows) / len(interconnector_rows)
         interconnector_flow_signal = min(avg_abs_flow / 8.0, 100.0)
 
-    oversupply_score = _clamp_regime_score((negative_ratio * 100.0 * 0.45) + (min(renewable_ratio, 1.5) / 1.5 * 100.0 * 0.40) + ((100.0 if latest_price < 0 else 0.0) * 0.15))
-    scarcity_score = _clamp_regime_score((spike_ratio * 100.0 * 0.55) + (min(max(load_tightness_signal, 0.0), 100.0) * 0.30) + (max(reserve_shortfall_signal, reserve_state_signal) * 0.15))
+    load_tightness_score = _clamp_regime_score(max(load_tightness_signal, 0.0) * 4.0)
+    oversupply_score = _clamp_regime_score((negative_ratio * 100.0 * 0.35) + (min(renewable_ratio, 1.5) / 1.5 * 100.0 * 0.50) + ((100.0 if latest_price < 0 else 0.0) * 0.15))
+    scarcity_score = _clamp_regime_score(
+        (spike_ratio * 100.0 * 0.35)
+        + (load_tightness_score * 0.30)
+        + (max(reserve_shortfall_signal, reserve_state_signal) * 0.30)
+        + (network_state_signal * 0.12)
+        + (interconnector_flow_signal * 0.07)
+        + ((20.0 if latest_price >= 120.0 else 0.0) * 0.05)
+        + (10.0 if load_tightness_score >= 35.0 and max(reserve_shortfall_signal, reserve_state_signal) >= 70.0 else 0.0)
+    )
     negative_price_score = _clamp_regime_score((negative_ratio * 100.0 * 0.70) + ((100.0 if latest_price < 0 else 0.0) * 0.30))
     reserve_stress_score = _clamp_regime_score((reserve_shortfall_signal * 0.55) + (reserve_state_signal * 0.45) + (20.0 if reserve_shortfall_rows else 0.0))
     congestion_score = _clamp_regime_score(
-        (constraint_signal * 0.40)
-        + (network_state_signal * 0.60)
-        + (12.0 if network_state_signal >= 60.0 else 0.0)
+        (constraint_signal * 0.30)
+        + (network_state_signal * 0.50)
+        + (interconnector_flow_signal * 0.10)
+        + (12.0 if network_state_signal >= 70.0 else 0.0)
     )
-    transmission_separation_score = _clamp_regime_score((price_separation_signal * 0.45) + (interconnector_flow_signal * 0.35) + (network_state_signal * 0.20))
+    transmission_separation_score = _clamp_regime_score(
+        (price_separation_signal * 0.35)
+        + (interconnector_flow_signal * 0.35)
+        + (network_state_signal * 0.15)
+        + (12.0 if price_separation_signal >= 50.0 else 0.0)
+    )
 
     regime_score_map = {
         "oversupply": oversupply_score,
@@ -2829,8 +3045,9 @@ def _build_regime_layer_payload(*, market: str, region: str) -> dict:
             {"headline": f"Negative-price interval ratio {negative_ratio:.2%}", "driver_type": "price_shape"},
         ],
         "scarcity": [
-            {"headline": f"Spike interval ratio {spike_ratio:.2%}", "driver_type": "price_shape"},
-            {"headline": f"Load tightness signal {max(load_tightness_signal, 0.0):.1f}", "driver_type": "load_tightness"},
+            {"headline": f"Load tightness signal {load_tightness_score:.1f}", "driver_type": "load_tightness"},
+            {"headline": f"Reserve support signal {max(reserve_shortfall_signal, reserve_state_signal):.1f}", "driver_type": "reserve_tightness"},
+            {"headline": f"Network support signal {network_state_signal:.1f}", "driver_type": "network_stress"},
         ],
         "negative_price": [
             {"headline": f"Latest price {latest_price:.1f} AUD/MWh", "driver_type": "price_level"},
@@ -5923,9 +6140,9 @@ def get_peak_analysis(
                 f"WHERE {where_clause} ORDER BY settlement_date ASC",
                 tuple(params),
             )
-            rows = cursor.fetchall()
+            first_row = cursor.fetchone()
 
-            if not rows:
+            if not first_row:
                 response = {
                     "region": region, "year": year, "aggregation": aggregation,
                     "network_fee": fee, "data": [], "summary": {}
@@ -5939,53 +6156,13 @@ def get_peak_analysis(
                     DEFAULT_RESPONSE_CACHE_TTL_SECONDS,
                 )
 
-            # Group by day: { "2025-01-15": [price1, price2, ...] }
-            daily_prices = defaultdict(list)
-            for date_str, price in rows:
-                day_key = date_str[:10]  # "2025-01-15"
-                daily_prices[day_key].append(price)
-
-            # Sliding window analysis for each day
-            daily_results = []
-            for day, prices in sorted(daily_prices.items()):
-                n = len(prices)
-                result = {"date": day}
-
-                for label, w_size in windows.items():
-                    if n < w_size:
-                        # Not enough data points for this window
-                        result[f"peak_{label}"] = None
-                        result[f"trough_{label}"] = None
-                        continue
-
-                    # Efficient sliding window using running sum
-                    window_sum = sum(prices[:w_size])
-                    best_max = window_sum
-                    best_min = window_sum
-
-                    for i in range(1, n - w_size + 1):
-                        window_sum += prices[i + w_size - 1] - prices[i - 1]
-                        if window_sum > best_max:
-                            best_max = window_sum
-                        if window_sum < best_min:
-                            best_min = window_sum
-
-                    result[f"peak_{label}"] = round(best_max / w_size, 2)
-                    result[f"trough_{label}"] = round(best_min / w_size, 2)
-
-                # Calculate spreads for 2h/4h/6h
-                for label in ["2h", "4h", "6h"]:
-                    peak = result.get(f"peak_{label}")
-                    trough = result.get(f"trough_{label}")
-                    if peak is not None and trough is not None:
-                        spread = round(peak - trough, 2)
-                        result[f"spread_{label}"] = spread
-                        result[f"net_spread_{label}"] = round(spread - 2 * fee, 2)
-                    else:
-                        result[f"spread_{label}"] = None
-                        result[f"net_spread_{label}"] = None
-
-                daily_results.append(result)
+            daily_results = list(
+                _iter_peak_daily_results(
+                    itertools.chain([first_row], cursor),
+                    windows=windows,
+                    fee=fee,
+                )
+            )
 
             # Aggregate based on requested granularity
             if aggregation == "daily":
@@ -6060,6 +6237,62 @@ def _aggregate_peak_data(daily_results: list, aggregation: str) -> list:
         aggregated.append(entry)
 
     return aggregated
+
+
+def _compute_peak_day_result(day: str, prices: list[float], *, windows: dict, fee: float) -> dict:
+    n = len(prices)
+    result = {"date": day}
+
+    for label, w_size in windows.items():
+        if n < w_size:
+            result[f"peak_{label}"] = None
+            result[f"trough_{label}"] = None
+            continue
+
+        window_sum = sum(prices[:w_size])
+        best_max = window_sum
+        best_min = window_sum
+
+        for i in range(1, n - w_size + 1):
+            window_sum += prices[i + w_size - 1] - prices[i - 1]
+            if window_sum > best_max:
+                best_max = window_sum
+            if window_sum < best_min:
+                best_min = window_sum
+
+        result[f"peak_{label}"] = round(best_max / w_size, 2)
+        result[f"trough_{label}"] = round(best_min / w_size, 2)
+
+    for label in ["2h", "4h", "6h"]:
+        peak = result.get(f"peak_{label}")
+        trough = result.get(f"trough_{label}")
+        if peak is not None and trough is not None:
+            spread = round(peak - trough, 2)
+            result[f"spread_{label}"] = spread
+            result[f"net_spread_{label}"] = round(spread - 2 * fee, 2)
+        else:
+            result[f"spread_{label}"] = None
+            result[f"net_spread_{label}"] = None
+
+    return result
+
+
+def _iter_peak_daily_results(rows, *, windows: dict, fee: float):
+    current_day = None
+    current_prices = []
+
+    for date_str, price in rows:
+        day_key = date_str[:10]
+        if current_day is None:
+            current_day = day_key
+        if day_key != current_day:
+            yield _compute_peak_day_result(current_day, current_prices, windows=windows, fee=fee)
+            current_day = day_key
+            current_prices = []
+        current_prices.append(price)
+
+    if current_day is not None:
+        yield _compute_peak_day_result(current_day, current_prices, windows=windows, fee=fee)
 
 
 def _compute_summary(daily_results: list) -> dict:
@@ -6539,8 +6772,8 @@ def _get_wem_ess_analysis(
 
 @app.get(
     "/api/fcas-analysis",
-    summary="Get FCAS and ESS revenue analysis",
-    description="Returns FCAS analysis results with unified metadata. WEM responses may remain preview-grade and expose that state through metadata.data_grade and metadata.warnings.",
+    summary="Get Reserve Opportunity analysis",
+    description="Returns Reserve Opportunity proxy outputs for FCAS upside, ESS reserve context, and unified metadata. WEM responses remain preview_only/core_only and should not be treated as investment-grade market truth.",
     responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
 )
 def get_fcas_analysis(
@@ -6751,11 +6984,12 @@ def get_fcas_analysis(
                 tuple(params),
             )
             opportunity_columns = [desc[0] for desc in cursor.description]
-            opportunity_rows = [dict(zip(opportunity_columns, row)) for row in cursor.fetchall()]
+            opportunity_rows = cursor.fetchall()
             opportunity = summarize_nem_fcas_opportunity(
                 opportunity_rows,
                 capacity_mw=capacity_mw,
                 duration_hours=DEFAULT_FCAS_OPPORTUNITY_DURATION_HOURS,
+                columns=opportunity_columns,
             )
             opportunity_by_key = {
                 item["key"]: item for item in opportunity["service_breakdown"]
@@ -6994,12 +7228,13 @@ def _estimate_nem_fcas_baseline(params: InvestmentParams) -> tuple[float, str]:
                 continue
 
             columns = [desc[0] for desc in cursor.description]
-            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
             if rows:
                 summary = summarize_nem_fcas_opportunity(
                     rows,
                     capacity_mw=params.battery.power_mw,
                     duration_hours=params.battery.duration_hours,
+                    columns=columns,
                 )["summary"]
                 annualized_net_incremental_total += max(summary["total_net_incremental_revenue_k"], 0.0) * 1000.0
                 valid_years += 1
@@ -7077,14 +7312,27 @@ def _build_investment_response(
     decision_adjusted_monte_carlo=None,
     backtest_summary: dict,
 ) -> dict:
+    def _serialize_cash_flow_rows(rows) -> list[dict]:
+        serialized: list[dict] = []
+        for row in rows or []:
+            if hasattr(row, "model_dump"):
+                serialized.append(row.model_dump())
+            elif isinstance(row, dict):
+                serialized.append(dict(row))
+        return serialized
+
     base_metrics = base_result.metrics.model_dump()
     storage_capex = max(
         0.0,
         base_result.metrics.total_capex - params.financial.grid_connection_cost,
     )
-    base_cash_flows = []
-    for row in base_result.cash_flows:
-        payload = row.model_dump()
+    scenario_payloads = [scenario.model_dump() for scenario in scenarios]
+    if scenario_payloads:
+        base_cash_flows = list(scenario_payloads[0].get("cash_flows") or [])
+    else:
+        base_cash_flows = _serialize_cash_flow_rows(getattr(base_result, "cash_flows", []))
+    for index, row in enumerate(base_cash_flows):
+        payload = dict(row)
         if storage_capex > 0 and payload.get("augmentation_capex", 0) > 0:
             payload["degradation_factor"] = max(
                 0.0,
@@ -7092,7 +7340,7 @@ def _build_investment_response(
             )
         else:
             payload["degradation_factor"] = payload.get("state_of_health")
-        base_cash_flows.append(payload)
+        base_cash_flows[index] = payload
 
     assumptions = [
         "Using Dual-factor degradation model.",
@@ -7115,6 +7363,15 @@ def _build_investment_response(
     decision_bundle = (p3_decision or {}).get("strategy_bundle") or {}
     forecast_strategy = decision_bundle.get("forecast_driven_dispatch") or {}
     stochastic_strategy = decision_bundle.get("stochastic_dispatch") or {}
+    scenario_response_payloads = _strip_scenario_cash_flows_for_response(scenario_payloads)
+    decision_adjusted_scenario_payloads = (
+        [scenario.model_dump() for scenario in decision_adjusted_scenarios]
+        if decision_adjusted_scenarios
+        else []
+    )
+    decision_adjusted_scenario_response_payloads = _strip_scenario_cash_flows_for_response(
+        decision_adjusted_scenario_payloads
+    ) if decision_adjusted_scenario_payloads else []
 
     response = {
         "region": params.region,
@@ -7124,7 +7381,7 @@ def _build_investment_response(
             "project_life": params.financial.project_life_years,
         },
         "base_metrics": base_metrics,
-        "scenarios": [scenario.model_dump() for scenario in scenarios],
+        "scenarios": scenario_response_payloads,
         "monte_carlo": mc_result.model_dump() if mc_result else None,
         "assumptions": assumptions,
         # Legacy compatibility fields still consumed by tests and parts of the UI.
@@ -7168,13 +7425,13 @@ def _build_investment_response(
             decision_adjusted_result=decision_adjusted_result,
         ),
     }
-    if decision_adjusted_scenarios:
-        response["decision_adjusted_scenarios"] = [
-            scenario.model_dump() for scenario in decision_adjusted_scenarios
-        ]
+    if decision_adjusted_scenario_response_payloads:
+        response["decision_adjusted_scenarios"] = decision_adjusted_scenario_response_payloads
     if decision_adjusted_monte_carlo is not None:
         response["decision_adjusted_monte_carlo"] = decision_adjusted_monte_carlo.model_dump()
-    if decision_adjusted_result is not None:
+    if decision_adjusted_scenario_payloads:
+        response["decision_adjusted_cash_flows"] = decision_adjusted_scenario_payloads[0]["cash_flows"]
+    elif decision_adjusted_result is not None:
         response["decision_adjusted_cash_flows"] = [row.model_dump() for row in decision_adjusted_result.cash_flows]
     return _attach_investment_metadata(response, region=params.region)
 
@@ -7293,8 +7550,8 @@ def get_bess_backtest_coverage(
 
 @app.post(
     "/api/p3/bess/decision-layer",
-    summary="Run P3 BESS decision layer",
-    description="Combines standardized BESS backtest output with the P2 forecast layer to produce a dispatch decision bundle, scenario spread, degradation-aware revenue attribution, and preview-grade decision diagnostics.",
+    summary="Run market entry conclusion layer",
+    description="Combines standardized BESS backtest output with the P2 forecast layer to produce a market entry conclusion bundle with decision-grade metadata for NEM, scenario spread, degradation-aware revenue attribution, and preview_only/core_only warnings for WEM.",
     responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
     response_model=P3BessDecisionLayerPayload,
 )
@@ -7322,8 +7579,8 @@ def run_p3_bess_decision_layer(params: P3BessDecisionParams, access_scope=None):
 
 @app.post(
     "/api/investment-analysis",
-    summary="Run investment analysis",
-    description="Runs investment analysis using standardized backtest-driven baselines when available. Response includes unified metadata plus traceability fields such as backtest_reference, backtest_observed, and backtest_fallback_used.",
+    summary="Run Market Entry Readiness analysis",
+    description="Runs Market Entry Readiness analysis using standardized backtest-driven baselines when available. Response is positioned inside the market entry conclusion chain and includes decision-grade metadata for NEM plus traceability fields such as backtest_reference, backtest_observed, and backtest_fallback_used.",
     responses=OPENAPI_ERROR_RESPONSES,
 )
 def investment_analysis(params: InvestmentParams, access_scope=None):

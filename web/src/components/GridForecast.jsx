@@ -17,6 +17,7 @@ import GridForecastTimeline from './GridForecastTimeline';
 import GridForecastDrivers from './GridForecastDrivers';
 import RegimeCompactInline from './RegimeCompactInline';
 import GridForecastDiagnosticsPanel from './GridForecastDiagnosticsPanel';
+import DataQualityBadge from './DataQualityBadge';
 
 const HORIZONS = ['24h', '7d', '30d'];
 
@@ -168,6 +169,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
     let ignore = false;
     setLoading(true);
     setError(false);
+    setPayload(null);
 
     fetchJson(
       buildForecastLayerUrl(apiBase, {
@@ -178,7 +180,11 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
     )
       .then((data) => {
         if (!ignore) {
-          setPayload(normalizeForecastResponse(data));
+          const normalized = normalizeForecastResponse(data);
+          if (!normalized || (!normalized.windows?.length && !normalized.coverage?.forward_points)) {
+            console.warn('[GridForecast] Empty payload after normalization:', { data, normalized });
+          }
+          setPayload(normalized);
           setLoading(false);
         }
       })
@@ -203,26 +209,43 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
   const coverageLabel = getForecastCoverageCopy(payload?.coverage?.mode || payload?.metadata?.coverage_quality, locale);
   const confidenceLabel = getForecastConfidenceCopy(payload?.metadata?.confidence_band, locale);
   const governance = payload?.governance || null;
+  const forecastStatusMetadata = payload
+    ? {
+        ...payload.metadata,
+        freshness: payload.metadata?.freshness || governance?.freshness || {},
+      }
+    : null;
+  const forecastStatusTags = payload
+    ? [
+        { label: locale === 'zh' ? '覆盖' : 'Coverage', value: payload.coverageMode || payload.coverage?.mode || payload.metadata?.coverage_quality, format: 'coverage_mode' },
+        { label: locale === 'zh' ? '范围' : 'Scope', value: payload.regulatoryScope || governance?.disclaimer?.usage_scope || '' },
+        { label: locale === 'zh' ? '市场' : 'Market', value: market },
+      ]
+    : [];
+  const isWemPreview = market === 'WEM';
+  const wemOutlookCaveat = locale === 'zh'
+    ? `WEM 的市场设计与 NEM 不同。当前展望主要覆盖 ${Array.isArray(payload?.valueStreamCoverage) && payload.valueStreamCoverage.length ? payload.valueStreamCoverage.join('、') : '能量与备用代理'}，适合用于方向判断，不代表完整市场或容量收入结论。`
+    : `WEM follows a different market design from NEM. This outlook currently covers ${Array.isArray(payload?.valueStreamCoverage) && payload.valueStreamCoverage.length ? payload.valueStreamCoverage.join(', ') : 'energy and reserve proxy streams'} and is best used for directional assessment rather than a full-market or capacity-revenue conclusion.`;
 
   return (
     <motion.section
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
-      className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-5"
+      className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
     >
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div className="max-w-3xl">
           <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-muted)]">
             {sectionCopy.sectionLabel}
           </div>
-          <h2 className="mt-2 text-3xl font-serif text-[var(--color-text)]">{sectionCopy.title}</h2>
-          <p className="mt-1.5 text-sm leading-6 text-[var(--color-muted)]">{sectionCopy.subtitle}</p>
-          <div className="mt-3 rounded border border-dashed border-[var(--color-border)] bg-white/50 px-4 py-2.5 text-sm leading-6 text-[var(--color-muted)]">
+          <h2 className="mt-1 text-2xl font-serif text-[var(--color-text)] md:text-[1.75rem]">{sectionCopy.title}</h2>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-muted)] md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">{sectionCopy.subtitle}</p>
+          <div className="mt-2 rounded border border-dashed border-[var(--color-border)] bg-white/50 px-3 py-2 text-xs leading-5 text-[var(--color-muted)]">
             {horizonNotes[horizon] || copy.generic.notAvailable}
           </div>
           {payload && (
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               <span className="inline-flex items-center rounded-full bg-[var(--color-inverted)] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--color-inverted-text)]">
                 {payload.metadata.market}
               </span>
@@ -235,6 +258,19 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
               <span className="inline-flex items-center rounded-full border border-[var(--color-border)] px-3 py-1 text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
                 {getForecastModeCopy(payload.metadata.forecast_mode, locale)}
               </span>
+            </div>
+          )}
+          {forecastStatusMetadata && (
+            <div className="mt-3">
+              <DataQualityBadge metadata={forecastStatusMetadata} lang={locale} tags={forecastStatusTags} />
+            </div>
+          )}
+          {isWemPreview && (
+            <div className="mt-3 rounded border border-amber-500 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+              <div className="font-semibold">
+                {locale === 'zh' ? 'WEM 独立制度提醒' : 'WEM Market-Design Caveat'}
+              </div>
+              <div className="mt-1">{wemOutlookCaveat}</div>
             </div>
           )}
         </div>
@@ -271,7 +307,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
           {sectionCopy.error || copy.generic.notAvailable}
         </div>
       ) : !payload ? (
-        <div className="mt-6 text-sm text-[var(--color-muted)]">{sectionCopy.empty || copy.generic.notAvailable}</div>
+        null
       ) : (
         <>
         <div className="mt-6 grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.95fr)]">

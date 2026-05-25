@@ -106,7 +106,8 @@ export default function FcasAnalysis({
     value !== null && value !== undefined ? `$${Number(value).toFixed(0)}k` : '-'
   );
 
-  const fmtCount = (value) => Number(value ?? 0).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US');
+  const numberLocale = t.locale || 'en-US';
+  const fmtCount = (value) => Number(value ?? 0).toLocaleString(numberLocale);
   const fmtDecimal = (value, digits = 1) => Number(value ?? 0).toFixed(digits);
 
   const serviceBreakdown = useMemo(() => data?.service_breakdown || [], [data]);
@@ -162,30 +163,43 @@ export default function FcasAnalysis({
         data_grade: 'preview',
         unit: 'AUD/MWh',
         warnings: ['preview_only'],
+        coverage_mode: 'core-only',
+        regulatory_scope: 'WEM',
+        result_type: 'supporting_diagnostics',
       }
     : {
         data_grade: 'analytical',
         unit: 'AUD/MWh',
+        coverage_mode: 'full',
+        regulatory_scope: 'NEM',
+        result_type: 'supporting_diagnostics',
       };
+  const sectionStatusTags = isWemPreview
+    ? [
+        { label: t.tagCoverage, value: sectionMetadata.coverage_mode, format: 'coverage_mode' },
+        { label: t.tagScope, value: sectionMetadata.regulatory_scope },
+        { label: t.tagCapacity, value: t.capacityNotIncluded },
+      ]
+    : [];
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.3 }}
-      className="col-span-12 mt-16 pt-12 border-t-2 border-[var(--color-text)]"
+      className="col-span-12 mt-12 pt-8 border-t-2 border-[var(--color-text)]"
     >
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div>
-          <h2 className="text-3xl font-serif font-bold mb-1">{t.fcasTitle}</h2>
-          <p className="text-sm text-[var(--color-muted)] font-sans">{t.fcasSubtitle}</p>
+          <h2 className="text-2xl font-serif font-bold md:text-[1.75rem]">{t.fcasTitle}</h2>
+          <p className="text-xs leading-5 text-[var(--color-muted)] font-sans md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">{t.fcasSubtitle}</p>
         </div>
         <div className="text-xs text-[var(--color-muted)] tracking-widest uppercase font-bold">
           {t.fcasEyebrow}
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-col gap-2">
           <span className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
             {t.aggregation}
@@ -246,7 +260,7 @@ export default function FcasAnalysis({
           </div>
 
           {data.summary && (
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-10">
+            <div className="mb-7 grid grid-cols-2 gap-3 md:grid-cols-6">
               <SummaryCard label={t.fcasTotalAvg} value={fmt(data.summary.total_avg_fcas_price)} sub="/MWh" />
               <SummaryCard label={revenueLabel} value={fmtK(data.summary.total_est_revenue_k)} accent />
               <SummaryCard label={t.fcasNetIncremental} value={fmtK(data.summary.total_net_incremental_revenue_k)} />
@@ -266,13 +280,14 @@ export default function FcasAnalysis({
           )}
 
           {isWemPreview && (
-            <div className="mb-8 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="mb-6 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
               <div className="mb-1 flex flex-wrap items-center gap-3">
-                <DataQualityBadge metadata={sectionMetadata} lang={lang} />
+                <DataQualityBadge metadata={sectionMetadata} lang={lang} tags={sectionStatusTags} />
                 <div className="font-semibold tracking-wide">
                   {previewLabel} | {previewNotInvestmentGrade}
                 </div>
               </div>
+              <div className="mb-2">{t.fcasWemScopeCaveat}</div>
               <div>
                 {t.fcasCoverageDays}={data.summary.coverage_days}, {t.fcasInvestmentGrade}=
                 {String(data.summary.investment_grade)}
@@ -283,11 +298,11 @@ export default function FcasAnalysis({
                 <div>{t.fcasQuality} {data.summary.quality_score ?? 0}</div>
                 <div>{data.summary.preview_caveat}</div>
               </div>
-              <div className="mt-1">{previewCaveat}</div>
+              <div className="mt-1 text-xs leading-5">{previewCaveat}</div>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+          <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2">
             <div>
               <h3 className="text-lg font-serif mb-4">{t.fcasServiceBreakdown}</h3>
               <div className="h-[320px]">
@@ -371,7 +386,7 @@ export default function FcasAnalysis({
             </div>
           </div>
 
-          <div className="overflow-x-auto mb-8">
+          <div className="mb-6 overflow-x-auto">
             <h3 className="text-lg font-serif mb-4">{t.fcasDetailTable}</h3>
             <table className="w-full text-sm font-sans border-collapse">
               <thead>

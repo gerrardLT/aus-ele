@@ -21,13 +21,13 @@ export default function RegimeCompactInline({ compact, copy, className = '' }) {
   const accent = getRegimeAccent(primary?.regime);
   const Icon = getRegimeIcon(primary?.regime);
   const labels = {
-    title: copy?.title || 'Regime snapshot',
+    title: copy?.title || 'Market State',
     available: copy?.available || 'Available',
     unavailable: copy?.unavailable || 'Unavailable',
-    primaryLabel: copy?.primaryLabel || 'Primary regime',
+    primaryLabel: copy?.primaryLabel || 'Primary state',
     driversLabel: copy?.driversLabel || 'Top drivers',
-    activeLabel: copy?.activeLabel || 'Active regimes',
-    unavailableMessage: copy?.unavailableMessage || 'Regime context is not available for the current dataset window.',
+    activeLabel: copy?.activeLabel || 'States in play',
+    unavailableMessage: copy?.unavailableMessage || 'Market-state context is not available for the current dataset window.',
     unknown: copy?.unknown || 'Unavailable',
     regimeNames: copy?.regimeNames || {},
   };

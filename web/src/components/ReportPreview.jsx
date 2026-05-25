@@ -22,11 +22,11 @@ export default function ReportPreview({ year, region, month = 'ALL', apiBase, t 
   }, [apiBase, month, region, reportType, year]);
 
   return (
-    <div className="mt-16 pt-12 border-t border-[var(--color-border)]">
-      <div className="mb-8 flex items-end justify-between gap-4">
+    <div className="mt-12 pt-8 border-t border-[var(--color-border)]">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div>
-          <h2 className="text-3xl font-serif">{t.title}</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">{t.subtitle}</p>
+          <h2 className="text-2xl font-serif md:text-[1.75rem]">{t.title}</h2>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-muted)] md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">{t.subtitle}</p>
         </div>
         <div className="flex gap-2">
           {REPORT_TYPES.map((key) => (
@@ -44,8 +44,8 @@ export default function ReportPreview({ year, region, month = 'ALL', apiBase, t 
       {loading ? (
         <div className="rounded border border-[var(--color-border)] p-6 text-sm text-[var(--color-muted)]">{t.loading}</div>
       ) : payload ? (
-        <div className="rounded border border-[var(--color-border)] p-6">
-          <div className="mb-4">
+        <div className="rounded border border-[var(--color-border)] p-5">
+          <div className="mb-3">
             <div className="text-xs uppercase tracking-widest text-[var(--color-muted)]">{payload.report_type}</div>
             <h3 className="text-2xl font-serif">{payload.title}</h3>
           </div>

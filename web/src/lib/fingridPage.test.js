@@ -21,7 +21,9 @@ test('PageSection supports hiding the section divider and header for chart-first
   const source = fs.readFileSync(path.resolve(__dirname, '../components/PageSection.jsx'), 'utf8');
   assert.match(source, /showHeader = true/);
   assert.match(source, /showDivider = true/);
-  assert.match(source, /showDivider \? 'border-t border-\[var\(--color-border\)\] pt-8' : ''/);
+  assert.match(source, /showDivider/);
+  assert.match(source, /border-t border-\[var\(--color-border\)\] pt-8/);
+  assert.match(source, /scroll-mt-24/);
   assert.match(source, /showHeader \? \(/);
 });
 
@@ -94,18 +96,15 @@ test('FingridPage wires language state and dynamic request limits', () => {
   assert.match(source, /const \[lang, setLang\]/);
   assert.match(source, /buildFingridRequestLimit/);
   assert.match(source, /buildFingridAllMarketsExportUrl/);
-  assert.match(source, /import PageWorkspaceNav from '\.\.\/components\/PageWorkspaceNav';/);
-  assert.match(source, /<PageWorkspaceNav/);
-  assert.match(source, /languageLabel=\{copy\.toggleLanguage\}/);
-  assert.match(source, /compact/);
-  assert.match(source, /title=\{null\}/);
-  assert.match(source, /subtitle=\{null\}/);
-  assert.match(source, /meta=\{null\}/);
+  assert.match(source, /import PageSection from '\.\.\/components\/PageSection';/);
+  assert.match(source, /copy\.toggleLanguage/);
+  assert.match(source, /copy\.toggleLanguageAriaLabel/);
+  assert.match(source, /id=\"fingrid-workspace-shell\"/);
   assert.match(source, /const toolbar = \(/);
   assert.match(source, /toolbarOnly/);
   assert.match(source, /mode="hero"/);
   assert.match(source, /mode="details"/);
-  assert.match(source, /onToggleLanguage=\{\(\) => setLang\(\(current\) => \(current === 'zh' \? 'en' : 'zh'\)\)\}/);
+  assert.match(source, /onClick=\{\(\) => setLang\(\(current\) => \(current === 'zh' \? 'en' : 'zh'\)\)\}/);
 });
 
 test('Fingrid yearly-plan board keeps the main chart ahead of overview cards', () => {

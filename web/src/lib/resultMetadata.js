@@ -23,7 +23,7 @@ export function getResultMetadata(payload = {}) {
 }
 
 export function getDataGradeTone(grade = 'unknown') {
-  if (grade === 'analytical') return 'success';
+  if (grade === 'analytical' || grade === 'decision-grade') return 'success';
   if (grade === 'preview' || grade === 'analytical-preview') return 'warning';
   return 'neutral';
 }
@@ -32,6 +32,7 @@ export function formatDataGradeLabel(grade = 'unknown', lang = 'en') {
   const normalizedLang = lang === 'zh' ? 'zh' : 'en';
   const labels = {
     analytical: { zh: '分析级', en: 'Analytical' },
+    'decision-grade': { zh: '决策级', en: 'Decision Grade' },
     preview: { zh: '预览级', en: 'Preview' },
     'analytical-preview': { zh: '分析预览', en: 'Analytical Preview' },
     unknown: { zh: '未知', en: 'Unknown' },
@@ -82,6 +83,28 @@ export function formatFreshnessLabel(freshness = {}, lang = 'en') {
   return normalizedLang === 'zh' ? `更新于 ${lastUpdatedAt}` : `Updated ${lastUpdatedAt}`;
 }
 
+export function formatCoverageModeLabel(mode = '', lang = 'en') {
+  const normalizedLang = lang === 'zh' ? 'zh' : 'en';
+  const labels = {
+    'decision-support': { zh: '判断支持', en: 'Decision Support' },
+    'core-only': { zh: '核心覆盖', en: 'Core-only' },
+    full: { zh: '完整覆盖', en: 'Full Coverage' },
+    partial: { zh: '部分覆盖', en: 'Partial Coverage' },
+    none: { zh: '无已验证覆盖', en: 'No Verified Coverage' },
+  };
+  return (labels[mode] || { zh: mode || '暂无', en: mode || 'n/a' })[normalizedLang];
+}
+
+export function formatReadinessStatusLabel(status = '', lang = 'en') {
+  const normalizedLang = lang === 'zh' ? 'zh' : 'en';
+  const labels = {
+    screenable: { zh: '可筛选', en: 'Screenable' },
+    watchlist: { zh: '观察中', en: 'Watchlist' },
+    preview_only: { zh: '仅预览', en: 'Preview Only' },
+  };
+  return (labels[status] || { zh: status || '暂无', en: status || 'n/a' })[normalizedLang];
+}
+
 export function getPreviewModeLabel(mode = '', lang = 'en') {
   const normalizedLang = lang === 'zh' ? 'zh' : 'en';
   const labels = {
@@ -95,6 +118,10 @@ export function getPreviewModeLabel(mode = '', lang = 'en') {
 export function getDataGradeCaveat(grade = 'unknown', lang = 'en') {
   const normalizedLang = lang === 'zh' ? 'zh' : 'en';
   const copy = {
+    'decision-grade': {
+      zh: '决策级输出，适用于运行与配置判断，但仍需结合现场约束与风控复核。decision-grade metadata 已附带来源与警告。',
+      en: 'Decision-grade output for operating judgement and configuration review. Still validate site constraints and risk controls; see decision-grade metadata for lineage and warnings.',
+    },
     preview: {
       zh: '仅供预览，请勿用于项目融资。',
       en: 'Preview only. Do not use for project finance.',

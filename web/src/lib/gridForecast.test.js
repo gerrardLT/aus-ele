@@ -35,6 +35,11 @@ test('buildGridForecastUrl includes market region horizon and optional as_of', (
 test('normalizeForecastResponse sorts future windows and preserves coverage metadata', () => {
   const normalized = normalizeForecastResponse({
     metadata: { market: 'NEM', coverage_quality: 'core_only', warnings: ['confidence_constrained'] },
+    coverage_mode: 'decision-support',
+    market_design_context: 'NEM forward opportunity outlook grounded in official price windows, regime persistence, and event overlays.',
+    value_stream_coverage: ['energy_arbitrage', 'negative_price_windows', 'reserve_proxy'],
+    regulatory_scope: 'NEM',
+    result_type: 'opportunity_outlook',
     coverage: {
       source_status: { nem_predispatch: 'ok' },
       forward_points: 2,
@@ -53,6 +58,11 @@ test('normalizeForecastResponse sorts future windows and preserves coverage meta
   assert.deepEqual(normalized.metadata.warnings, ['confidence_constrained']);
   assert.equal(normalized.coverage.forward_points, 2);
   assert.equal(normalized.coverage.source_status.nem_predispatch, 'ok');
+  assert.equal(normalized.coverageMode, 'decision-support');
+  assert.equal(normalized.marketDesignContext, 'NEM forward opportunity outlook grounded in official price windows, regime persistence, and event overlays.');
+  assert.deepEqual(normalized.valueStreamCoverage, ['energy_arbitrage', 'negative_price_windows', 'reserve_proxy']);
+  assert.equal(normalized.regulatoryScope, 'NEM');
+  assert.equal(normalized.resultType, 'opportunity_outlook');
   assert.equal(normalized.marketContext.forward_price_max_aud_mwh, 420);
 });
 
@@ -107,8 +117,8 @@ test('forecast copy exposes localized horizon and mode labels', () => {
   const zhCopy = getForecastSectionCopy('zh');
   const enCopy = getForecastSectionCopy('en');
 
-  assert.equal(zhCopy.sectionLabel, '电网预测');
-  assert.equal(zhCopy.signalDesk, '信号总览');
+  assert.equal(zhCopy.sectionLabel, '市场展望');
+  assert.equal(zhCopy.signalDesk, '展望总览');
   assert.match(getForecastModeCopy('daily_regime_outlook', 'zh'), /日度/);
   assert.equal(enCopy.marketContext, 'Market Context');
   assert.match(getForecastModeCopy('structural_regime_outlook', 'en'), /Structural/i);
@@ -157,7 +167,7 @@ test('translations include readable Chinese labels for core dashboard and develo
   assert.equal(translations.zh.nav.brand, 'AEMO 澳洲电网智能观测站');
   assert.equal(translations.zh.filters.yearSelect, '年份选择 (YEAR)');
   assert.equal(translations.zh.status.retry, '重新尝试');
-  assert.equal(translations.zh.forecast.title, '澳洲电网预测');
+  assert.equal(translations.zh.forecast.title, '市场展望');
   assert.equal(translations.zh.developerPortal.title, '开发者门户');
   assert.equal(translations.en.developerPortal.title, 'Developer Portal');
 });

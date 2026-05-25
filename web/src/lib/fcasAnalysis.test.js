@@ -11,6 +11,7 @@ test('FcasAnalysis uses DataQualityBadge for WEM preview-grade signalling', () =
   const source = fs.readFileSync(path.resolve(__dirname, '../components/FcasAnalysis.jsx'), 'utf8');
   assert.match(source, /DataQualityBadge/);
   assert.match(source, /sectionMetadata/);
+  assert.match(source, /sectionStatusTags/);
   assert.match(source, /previewCaveat/);
 });
 
@@ -41,5 +42,6 @@ test('FcasAnalysis centralizes preview and viability copy through translation ke
   assert.match(source, /t\.fcasPreviewNotInvestmentGrade/);
   assert.match(source, /t\.fcasViabilityPositive/);
   assert.match(source, /t\.fcasViabilityNegative/);
+  assert.match(source, /t\.fcasWemScopeCaveat/);
   assert.equal(source.includes("lang === 'zh'"), false);
 });

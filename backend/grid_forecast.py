@@ -14,7 +14,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-NEM_PREDISPATCH_LISTING_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/PREDISPATCHIS_Reports/"
+NEM_PREDISPATCH_LISTING_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/PredispatchIS_Reports/"
 FCAS_COLUMNS = [
     "raise1sec_rrp", "raise6sec_rrp", "raise60sec_rrp", "raise5min_rrp", "raisereg_rrp",
     "lower1sec_rrp", "lower6sec_rrp", "lower60sec_rrp", "lower5min_rrp", "lowerreg_rrp",
@@ -23,6 +23,19 @@ SEVERITY_SCORES = {
     "low": 15.0,
     "medium": 30.0,
     "high": 45.0,
+}
+EVENT_PRESSURE_SCORES = {
+    "low": 30.0,
+    "medium": 55.0,
+    "high": 80.0,
+}
+EVENT_CATEGORY_BY_STATE = {
+    "supply_shock": "supply",
+    "post_event_structural": "supply",
+    "demand_weather_shock": "demand",
+    "network_stress": "network",
+    "reserve_tightness": "reserve",
+    "security_intervention": "security",
 }
 HEADERS = {
     "User-Agent": (
@@ -381,10 +394,34 @@ def build_event_features(db, market: str, region: str, as_of: str, horizon: str)
         }
         for row in rows
     ]
+    category_totals = {
+        "supply": 0.0,
+        "demand": 0.0,
+        "network": 0.0,
+        "reserve": 0.0,
+        "security": 0.0,
+    }
+    category_max = {key: 0.0 for key in category_totals}
+    category_counts = {key: 0 for key in category_totals}
+    category_weighted_counts = {key: 0.0 for key in category_totals}
+    for state in states:
+        category = EVENT_CATEGORY_BY_STATE.get(state["state_type"])
+        if not category:
+            continue
+        confidence = clamp(float(state.get("confidence") or 0.0), 0.0, 1.0)
+        pressure = EVENT_PRESSURE_SCORES.get(state["severity"], 0.0) * confidence
+        category_totals[category] += pressure
+        category_max[category] = max(category_max[category], pressure)
+        category_counts[category] += 1
+        category_weighted_counts[category] += confidence
     return {
         "state_types": [state["state_type"] for state in states],
         "event_count": len(states),
         "severity_score": sum(SEVERITY_SCORES.get(state["severity"], 0.0) for state in states),
+        "category_totals": {key: round(value, 2) for key, value in category_totals.items()},
+        "category_max": {key: round(value, 2) for key, value in category_max.items()},
+        "category_counts": category_counts,
+        "category_weighted_counts": {key: round(value, 2) for key, value in category_weighted_counts.items()},
         "states": states,
     }
 
@@ -406,6 +443,121 @@ def _event_drivers(event_features: dict) -> list[dict]:
             }
         )
     return drivers
+
+
+def _build_event_pressure_snapshot(event_features: dict) -> dict:
+    category_max = event_features.get("category_max") or {}
+    category_totals = event_features.get("category_totals") or {}
+    category_weighted_counts = event_features.get("category_weighted_counts") or {}
+    supply_score = clamp(category_max.get("supply", 0.0) + min(category_weighted_counts.get("supply", 0.0) * 6.0, 18.0))
+    demand_score = clamp(category_max.get("demand", 0.0) + min(category_weighted_counts.get("demand", 0.0) * 5.0, 15.0))
+    network_score = clamp(category_max.get("network", 0.0) + min(category_weighted_counts.get("network", 0.0) * 6.0, 18.0))
+    reserve_score = clamp(category_max.get("reserve", 0.0) + min(category_weighted_counts.get("reserve", 0.0) * 5.0, 15.0))
+    security_score = clamp(category_max.get("security", 0.0) + min(category_weighted_counts.get("security", 0.0) * 5.0, 15.0))
+    return {
+        "supply_score": round(supply_score, 2),
+        "demand_score": round(demand_score, 2),
+        "network_score": round(network_score, 2),
+        "reserve_score": round(reserve_score, 2),
+        "security_score": round(security_score, 2),
+        "supply_total": round(category_totals.get("supply", 0.0), 2),
+        "demand_total": round(category_totals.get("demand", 0.0), 2),
+        "network_total": round(category_totals.get("network", 0.0), 2),
+        "reserve_total": round(category_totals.get("reserve", 0.0), 2),
+        "security_total": round(category_totals.get("security", 0.0), 2),
+    }
+
+
+def _estimate_forward_demand_baseline(demand_values: list[float]) -> float:
+    cleaned = sorted(value for value in demand_values if value > 0)
+    if not cleaned:
+        return 0.0
+    if len(cleaned) <= 2:
+        return sum(cleaned) / len(cleaned)
+    trim_count = max(1, len(cleaned) // 4)
+    trimmed = cleaned[:-trim_count] if len(cleaned) - trim_count >= 2 else cleaned
+    return sum(trimmed) / len(trimmed)
+
+
+def _estimate_demand_level_vs_normal(demand_values: list[float], *, target_value: float | None = None) -> float:
+    baseline = _estimate_forward_demand_baseline(demand_values)
+    if baseline <= 0:
+        return 0.0
+    effective_target = target_value
+    if effective_target is None:
+        cleaned = [value for value in demand_values if value > 0]
+        effective_target = cleaned[-1] if cleaned else 0.0
+    if effective_target <= 0:
+        return 0.0
+    return (((effective_target / baseline) - 1.0) * 100.0)
+
+
+def _fetch_recent_operational_demand_values(db, region: str, as_of: str, *, limit: int = 96) -> list[float]:
+    as_of_dt = parse_as_of(as_of)
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name = 'operational_demand_actual_hh'")
+        if not cursor.fetchone():
+            return []
+        cursor.execute(
+            """
+            SELECT interval_datetime, operational_demand
+            FROM operational_demand_actual_hh
+            WHERE region_id = ?
+            ORDER BY interval_datetime DESC
+            LIMIT ?
+            """,
+            (region, limit),
+        )
+        rows = cursor.fetchall()
+
+    values = []
+    for interval_datetime, demand_value in reversed(rows):
+        parsed_dt = None
+        for fmt in ("%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                parsed_dt = dt.datetime.strptime(interval_datetime, fmt)
+                break
+            except (TypeError, ValueError):
+                continue
+        if parsed_dt is None or parsed_dt > as_of_dt:
+            continue
+        values.append(float(demand_value or 0.0))
+    return values
+
+
+def _build_nem_market_context(
+    *,
+    recent: dict,
+    pressure: dict,
+    max_future_price: float | None,
+    min_future_price: float | None,
+    demand_peak_mw: float | None,
+    demand_stress_score: float,
+    demand_level_vs_normal: float,
+    reserve_pressure_score: float,
+    extra_fields: dict | None = None,
+) -> dict:
+    market_context = {
+        "recent_avg_price_aud_mwh": round(recent["recent_avg_price"], 2),
+        "recent_price_max_aud_mwh": round(recent["recent_max_price"], 2),
+        "recent_price_min_aud_mwh": round(recent["recent_min_price"], 2),
+        "recent_negative_ratio_pct": round(recent["negative_ratio"] * 100.0, 2),
+        "recent_fcas_avg_aud_mwh": round(recent["recent_fcas_avg"], 2),
+        "forward_price_min_aud_mwh": round(min_future_price, 2) if min_future_price is not None else None,
+        "forward_price_max_aud_mwh": round(max_future_price, 2) if max_future_price is not None else None,
+        "forward_demand_peak_mw": round(demand_peak_mw, 2) if demand_peak_mw is not None else None,
+        "dominant_supply_availability_delta": round(-(pressure["supply_score"] * 0.9), 2),
+        "major_generation_outage_score": round(pressure["supply_score"], 1),
+        "major_network_outage_score": round(pressure["network_score"], 1),
+        "interconnector_stress_score": round(clamp((pressure["network_score"] * 0.85) + (pressure["security_score"] * 0.25)), 1),
+        "weather_load_stress_score": round(clamp(demand_stress_score), 1),
+        "demand_level_vs_normal": round(demand_level_vs_normal, 2),
+        "reserve_pressure_score": round(clamp(reserve_pressure_score), 1),
+    }
+    if extra_fields:
+        market_context.update(extra_fields)
+    return market_context
 
 
 def _is_current_forecast_payload(payload: dict | None) -> bool:
@@ -1050,18 +1202,42 @@ def build_nem_24h_forecast(db, region: str, horizon: str, as_of: str) -> dict:
         and as_of_dt <= parse_timestamp(row["time"]) <= window_end
     ]
     event_features = build_event_features(db, "NEM", region, as_of, horizon)
+    pressure = _build_event_pressure_snapshot(event_features)
 
     max_future_price = max((float(row["price"] or 0.0) for row in forward_rows), default=recent["recent_max_price"])
     min_future_price = min((float(row["price"] or 0.0) for row in forward_rows), default=recent["recent_min_price"])
-    max_future_demand = max((float(row["demand_mw"] or 0.0) for row in forward_rows), default=0.0)
+    demand_values = [float(row["demand_mw"] or 0.0) for row in forward_rows if row.get("demand_mw") is not None]
+    max_future_demand = max(demand_values, default=0.0)
+    demand_level_vs_normal = _estimate_demand_level_vs_normal(demand_values, target_value=max_future_demand)
+    demand_stress_score = clamp(max(demand_level_vs_normal, 0.0) * 10.0 + pressure["demand_score"] * 0.5 + (10.0 if max_future_demand > 0 else 0.0))
+    reserve_pressure_score = clamp(18.0 + pressure["reserve_score"] + pressure["security_score"] * 0.35 + recent["recent_fcas_avg"] * 1.8)
+    network_pressure_score = clamp(pressure["network_score"] + pressure["security_score"] * 0.35)
+    supply_pressure_score = clamp(pressure["supply_score"])
 
-    spike_score = clamp((max_future_price / 500.0) * 100.0 + min(event_features["severity_score"], 20.0))
-    negative_score = clamp(max(abs(min(min_future_price, 0.0)) * 1.5, recent["negative_ratio"] * 100.0))
-    reserve_score = clamp(25.0 + recent["recent_fcas_avg"] * 0.4 + event_features["severity_score"])
-    fcas_score = clamp(reserve_score * 0.75 + recent["recent_fcas_avg"] * 0.6)
+    calibration_spike = (max_future_price / 500.0) * 100.0
+    spike_score = clamp(
+        (calibration_spike * 0.50)
+        + (supply_pressure_score * 0.25)
+        + (network_pressure_score * 0.15)
+        + (reserve_pressure_score * 0.12)
+        + (demand_stress_score * 0.13)
+        + (12.0 if max_future_price >= 300.0 else 0.0)
+    )
+    negative_score = clamp(
+        max(abs(min(min_future_price, 0.0)) * 1.5, recent["negative_ratio"] * 100.0)
+        + (6.0 if min_future_price < 0 else 0.0)
+    )
+    reserve_score = reserve_pressure_score
+    fcas_score = clamp((reserve_pressure_score * 0.7) + recent["recent_fcas_avg"] * 1.0 + pressure["security_score"] * 0.25)
     charge_score = clamp(negative_score + (10.0 if min_future_price < 0 else 0.0))
-    discharge_score = clamp(spike_score + (10.0 if max_future_price > 300 else 0.0))
-    grid_stress = clamp(max(spike_score, reserve_score, recent["recent_avg_price"] * 0.25, max_future_demand / 180.0))
+    discharge_score = clamp(spike_score + (10.0 if max_future_price > 300 else 0.0) + supply_pressure_score * 0.1)
+    grid_stress = clamp(
+        (supply_pressure_score * 0.28)
+        + (demand_stress_score * 0.22)
+        + (network_pressure_score * 0.22)
+        + (reserve_pressure_score * 0.20)
+        + (calibration_spike * 0.08)
+    )
 
     driver_tags = sorted(
         set(event_features["state_types"])
@@ -1155,16 +1331,16 @@ def build_nem_24h_forecast(db, region: str, horizon: str, as_of: str) -> dict:
         "forward_window_start": forward_rows[0]["time"] if forward_rows else None,
         "forward_window_end": forward_rows[-1]["time"] if forward_rows else None,
     }
-    market_context = {
-        "recent_avg_price_aud_mwh": round(recent["recent_avg_price"], 2),
-        "recent_price_max_aud_mwh": round(recent["recent_max_price"], 2),
-        "recent_price_min_aud_mwh": round(recent["recent_min_price"], 2),
-        "recent_negative_ratio_pct": round(recent["negative_ratio"] * 100.0, 2),
-        "recent_fcas_avg_aud_mwh": round(recent["recent_fcas_avg"], 2),
-        "forward_price_min_aud_mwh": round(min_future_price, 2),
-        "forward_price_max_aud_mwh": round(max_future_price, 2),
-        "forward_demand_peak_mw": round(max_future_demand, 2),
-    }
+    market_context = _build_nem_market_context(
+        recent=recent,
+        pressure=pressure,
+        max_future_price=max_future_price,
+        min_future_price=min_future_price,
+        demand_peak_mw=max_future_demand,
+        demand_stress_score=demand_stress_score,
+        demand_level_vs_normal=demand_level_vs_normal,
+        reserve_pressure_score=reserve_pressure_score,
+    )
     payload = {
         "metadata": {
             "market": "NEM",
@@ -1207,52 +1383,109 @@ def build_nem_long_horizon_forecast(db, region: str, horizon: str, as_of: str) -
     horizon_end = as_of_dt + horizon_delta(horizon)
     recent = build_recent_market_features(db, "NEM", region, as_of)
     event_features = build_event_features(db, "NEM", region, as_of, horizon)
-
-    horizon_multiplier = 1.0 if horizon == "7d" else 1.25
+    pressure = _build_event_pressure_snapshot(event_features)
     price_band_width = max(recent["recent_max_price"] - recent["recent_min_price"], 0.0)
-    severity_score = event_features["severity_score"]
+    calibration_pressure = clamp((price_band_width * 0.45) + (recent["recent_avg_price"] * 0.15) + (recent["negative_ratio"] * 100.0 * 0.25))
 
-    projected_min = round(
-        min(recent["recent_min_price"], 0.0) - (recent["negative_ratio"] * 120.0 * horizon_multiplier),
-        2,
-    )
-    projected_max = round(
-        max(
-            recent["recent_max_price"] * (1.55 if horizon == "7d" else 1.9),
-            recent["recent_avg_price"] + price_band_width * (1.8 if horizon == "7d" else 2.4),
-        ) + severity_score * (1.35 if horizon == "7d" else 1.8),
-        2,
-    )
+    if horizon == "7d":
+        recent_load_values = _fetch_recent_operational_demand_values(db, region, as_of)
+        demand_level_vs_normal = _estimate_demand_level_vs_normal(recent_load_values)
+        demand_stress_score = clamp((pressure["demand_score"] * 0.7) + 22.0)
+        reserve_pressure_score = clamp(18.0 + pressure["reserve_score"] + recent["recent_fcas_avg"] * 1.5)
+        network_pressure_score = clamp(pressure["network_score"] + pressure["security_score"] * 0.4)
+        supply_pressure_score = clamp(pressure["supply_score"])
+        projected_min = round(min(recent["recent_min_price"], 0.0) - (recent["negative_ratio"] * 90.0) - pressure["demand_score"] * 0.15, 2)
+        projected_max = round(
+            max(recent["recent_max_price"] * 1.35, recent["recent_avg_price"] + price_band_width * 1.4)
+            + (supply_pressure_score * 1.1)
+            + (network_pressure_score * 0.7)
+            + (reserve_pressure_score * 0.6),
+            2,
+        )
+        spike_score = clamp(
+            (supply_pressure_score * 0.32)
+            + (network_pressure_score * 0.24)
+            + (reserve_pressure_score * 0.18)
+            + (demand_stress_score * 0.16)
+            + (calibration_pressure * 0.10)
+        )
+        negative_signal_present = recent["negative_ratio"] > 0.0 or recent["recent_min_price"] < 0
+        negative_score = clamp((recent["negative_ratio"] * 100.0 * 0.75) + abs(min(recent["recent_min_price"], 0.0)) * 0.9)
+        reserve_score = reserve_pressure_score
+        fcas_score = clamp((reserve_pressure_score * 0.65) + recent["recent_fcas_avg"] * 1.1 + pressure["security_score"] * 0.2)
+        charge_score = clamp(negative_score + (6.0 if negative_signal_present else 0.0))
+        discharge_score = clamp(spike_score + 8.0)
+        grid_stress = clamp(
+            (supply_pressure_score * 0.30)
+            + (demand_stress_score * 0.20)
+            + (network_pressure_score * 0.22)
+            + (reserve_pressure_score * 0.18)
+            + (calibration_pressure * 0.10)
+        )
+        driver_tags = sorted(set(event_features["state_types"]) | {"weekly_fundamental_outlook"})
+        extra_market_context = {}
+    else:
+        recent_load_values = _fetch_recent_operational_demand_values(db, region, as_of)
+        demand_level_vs_normal = _estimate_demand_level_vs_normal(recent_load_values)
+        demand_stress_score = clamp((pressure["demand_score"] * 0.8) + 18.0)
+        reserve_pressure_score = clamp(12.0 + pressure["reserve_score"] * 0.85 + recent["recent_fcas_avg"] * 1.2)
+        network_pressure_score = clamp(pressure["network_score"] + pressure["security_score"] * 0.45)
+        supply_pressure_score = clamp(pressure["supply_score"])
+        weighted_counts = event_features.get("category_weighted_counts", {})
+        maintenance_concentration_score = clamp((pressure["supply_score"] * 0.8) + min(weighted_counts.get("supply", 0.0) * 12.0, 24.0))
+        structural_load_growth_score = clamp((pressure["demand_score"] * 0.65) + min(weighted_counts.get("demand", 0.0) * 10.0, 20.0))
+        projected_min = round(min(recent["recent_min_price"], 0.0) - (recent["negative_ratio"] * 70.0), 2)
+        projected_max = round(
+            max(recent["recent_max_price"] * 1.5, recent["recent_avg_price"] + price_band_width * 1.8)
+            + (maintenance_concentration_score * 1.05)
+            + (structural_load_growth_score * 0.85)
+            + (network_pressure_score * 0.6),
+            2,
+        )
+        spike_score = clamp(
+            (maintenance_concentration_score * 0.34)
+            + (structural_load_growth_score * 0.24)
+            + (network_pressure_score * 0.18)
+            + (reserve_pressure_score * 0.12)
+            + (calibration_pressure * 0.12)
+        )
+        negative_signal_present = recent["negative_ratio"] > 0.0 or recent["recent_min_price"] < 0
+        negative_score = clamp((recent["negative_ratio"] * 100.0 * 0.8) + abs(min(recent["recent_min_price"], 0.0)) * 0.8)
+        reserve_score = reserve_pressure_score
+        fcas_score = clamp((reserve_pressure_score * 0.55) + recent["recent_fcas_avg"] * 1.0 + network_pressure_score * 0.15)
+        charge_score = clamp(negative_score + (5.0 if negative_signal_present else 0.0))
+        discharge_score = clamp(spike_score + 9.0)
+        grid_stress = clamp(
+            (maintenance_concentration_score * 0.30)
+            + (structural_load_growth_score * 0.24)
+            + (network_pressure_score * 0.18)
+            + (reserve_pressure_score * 0.12)
+            + (calibration_pressure * 0.16)
+            + (6.0 if maintenance_concentration_score >= 60.0 or structural_load_growth_score >= 40.0 else 0.0)
+        )
+        driver_tags = sorted(set(event_features["state_types"]) | {"structural_supply_outlook"})
+        extra_market_context = {
+            "maintenance_concentration_score": round(maintenance_concentration_score, 1),
+            "structural_load_growth_score": round(structural_load_growth_score, 1),
+        }
 
-    spike_score = clamp(
-        price_band_width * (0.9 if horizon == "7d" else 1.1)
-        + recent["recent_avg_price"] * 0.3
-        + severity_score * (0.8 if horizon == "7d" else 0.95)
-    )
-    negative_score = clamp(
-        recent["negative_ratio"] * 100.0 * (1.3 if horizon == "7d" else 1.5)
-        + abs(min(recent["recent_min_price"], 0.0)) * 1.1
-        + severity_score * 0.2
-    )
-    reserve_score = clamp(20.0 + recent["recent_fcas_avg"] * 0.5 + severity_score * 0.8)
-    fcas_score = clamp(18.0 + recent["recent_fcas_avg"] * 0.9 + severity_score * 0.5)
-    charge_score = clamp(negative_score + 6.0)
-    discharge_score = clamp(spike_score + 8.0)
-    grid_stress = clamp(max(spike_score, reserve_score, recent["recent_avg_price"] * 0.4 + severity_score * 0.35))
-
-    driver_tags = sorted(set(event_features["state_types"]) | {"market_regime_shift"})
     drivers = _event_drivers(event_features)
     drivers.append(
         {
-            "driver_type": "market_regime_shift",
+            "driver_type": "market_regime_shift" if horizon == "7d" else "structural_supply_outlook",
             "direction": "two_way",
             "severity": "high" if grid_stress >= 70 else "medium",
-            "headline": "Market regime shift",
+            "headline": "Market regime shift" if horizon == "7d" else "Structural supply and load outlook",
             "summary": (
-                f"Recent spot prices ranged from {round(recent['recent_min_price'], 2)} to "
-                f"{round(recent['recent_max_price'], 2)} AUD/MWh, implying a broader {horizon} risk band."
+                (
+                    f"Weekly outlook is driven by outage, reserve, demand, and network pressure; "
+                    f"recent prices only calibrate the band."
+                ) if horizon == "7d" else (
+                    f"Monthly outlook emphasizes dominant supply availability, maintenance concentration, "
+                    f"and structural load growth."
+                )
             ),
-            "source": "recent_market_history",
+            "source": "event_state",
             "source_url": None,
             "effective_start": issued_at,
             "effective_end": format_timestamp(horizon_end),
@@ -1314,16 +1547,17 @@ def build_nem_long_horizon_forecast(db, region: str, horizon: str, as_of: str) -
         "forward_window_start": issued_at,
         "forward_window_end": format_timestamp(horizon_end),
     }
-    market_context = {
-        "recent_avg_price_aud_mwh": round(recent["recent_avg_price"], 2),
-        "recent_price_max_aud_mwh": round(recent["recent_max_price"], 2),
-        "recent_price_min_aud_mwh": round(recent["recent_min_price"], 2),
-        "recent_negative_ratio_pct": round(recent["negative_ratio"] * 100.0, 2),
-        "recent_fcas_avg_aud_mwh": round(recent["recent_fcas_avg"], 2),
-        "forward_price_min_aud_mwh": projected_min,
-        "forward_price_max_aud_mwh": projected_max,
-        "forward_demand_peak_mw": None,
-    }
+    market_context = _build_nem_market_context(
+        recent=recent,
+        pressure=pressure,
+        max_future_price=projected_max,
+        min_future_price=projected_min,
+        demand_peak_mw=None,
+        demand_stress_score=demand_stress_score,
+        demand_level_vs_normal=demand_level_vs_normal,
+        reserve_pressure_score=reserve_pressure_score,
+        extra_fields=extra_market_context,
+    )
 
     payload = {
         "metadata": {
@@ -1389,19 +1623,26 @@ def build_wem_core_forecast(db, region: str, horizon: str, as_of: str) -> dict:
     issued_at = format_timestamp(parse_as_of(as_of))
     recent = build_recent_market_features(db, "WEM", region, as_of)
     event_features = build_event_features(db, "WEM", region, as_of, horizon)
+    pressure = _build_event_pressure_snapshot(event_features)
+    constraint_pressure = clamp((recent["binding_count_avg"] * 12.0) + (recent["binding_shadow_max"] / 9.0) + (recent["network_shadow_max"] / 12.0))
+    shortfall_pressure = clamp((recent["shortfall_total"] * 9.0) + pressure["reserve_score"] * 0.75 + pressure["security_score"] * 0.35)
 
     grid_stress = clamp(
-        25.0
-        + recent["binding_count_avg"] * 10.0
-        + recent["binding_shadow_max"] / 10.0
-        + recent["shortfall_total"] * 4.0
-        + event_features["severity_score"] * 0.6
+        18.0
+        + (constraint_pressure * 0.45)
+        + (shortfall_pressure * 0.35)
+        + (pressure["network_score"] * 0.12)
+        + (pressure["security_score"] * 0.08)
     )
-    spike_score = clamp(recent["recent_max_price"] / 4.0 + recent["binding_shadow_max"] / 8.0)
+    spike_score = clamp(
+        (constraint_pressure * 0.45)
+        + (shortfall_pressure * 0.25)
+        + (recent["recent_max_price"] / 8.0)
+    )
     negative_score = 0.0
-    reserve_score = clamp(20.0 + recent["shortfall_total"] * 8.0 + recent["recent_fcas_avg"] * 0.05)
-    fcas_score = clamp(30.0 + recent["recent_fcas_avg"] * 0.1 + recent["binding_count_avg"] * 8.0)
-    charge_score = clamp(15.0 + recent["network_shadow_max"] * 0.08)
+    reserve_score = clamp(20.0 + (shortfall_pressure * 0.7) + recent["recent_fcas_avg"] * 0.15)
+    fcas_score = clamp(24.0 + (reserve_score * 0.45) + recent["recent_fcas_avg"] * 0.18 + pressure["security_score"] * 0.15)
+    charge_score = clamp(12.0 + recent["network_shadow_max"] * 0.10 + pressure["network_score"] * 0.25)
     discharge_score = clamp(spike_score + 10.0)
     driver_tags = sorted(set(event_features["state_types"]) | {"wem_constraint_tightness", "wem_shortfall_signal"})
 
@@ -1464,6 +1705,13 @@ def build_wem_core_forecast(db, region: str, horizon: str, as_of: str) -> dict:
         "network_shadow_max": round(recent["network_shadow_max"], 2),
         "shortfall_total_mw": round(recent["shortfall_total"], 2),
         "constraint_pressure_index": round(recent["binding_count_avg"] * 10.0 + recent["shortfall_total"], 2),
+        "dominant_supply_availability_delta": round(-(constraint_pressure * 0.45), 2),
+        "major_generation_outage_score": 0.0,
+        "major_network_outage_score": round(max(pressure["network_score"], recent["network_shadow_max"] / 4.0), 1),
+        "interconnector_stress_score": 0.0,
+        "weather_load_stress_score": 0.0,
+        "demand_level_vs_normal": 0.0,
+        "reserve_pressure_score": round(reserve_score, 1),
     }
 
     payload = {

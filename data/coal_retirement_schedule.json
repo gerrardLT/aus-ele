@@ -1,0 +1,98 @@
+{
+  "metadata": {
+    "last_updated": "2025-01-15",
+    "source": "AEMO ISP 2024, operator announcements"
+  },
+  "retirements": [
+    {
+      "plant_name": "Eraring",
+      "region": "NSW1",
+      "capacity_mw": 2880,
+      "fuel_type": "black_coal",
+      "expected_closure_date": "2027-08-01",
+      "confidence": "confirmed",
+      "volatility_impact_estimate": 0.40
+    },
+    {
+      "plant_name": "Yallourn",
+      "region": "VIC1",
+      "capacity_mw": 1480,
+      "fuel_type": "brown_coal",
+      "expected_closure_date": "2028-06-30",
+      "confidence": "confirmed",
+      "volatility_impact_estimate": 0.35
+    },
+    {
+      "plant_name": "Bayswater",
+      "region": "NSW1",
+      "capacity_mw": 2640,
+      "fuel_type": "black_coal",
+      "expected_closure_date": "2030-12-31",
+      "confidence": "announced",
+      "volatility_impact_estimate": 0.30
+    },
+    {
+      "plant_name": "Callide B",
+      "region": "QLD1",
+      "capacity_mw": 700,
+      "fuel_type": "black_coal",
+      "expected_closure_date": "2028-12-31",
+      "confidence": "announced",
+      "volatility_impact_estimate": 0.20
+    },
+    {
+      "plant_name": "Vales Point B",
+      "region": "NSW1",
+      "capacity_mw": 1320,
+      "fuel_type": "black_coal",
+      "expected_closure_date": "2029-10-31",
+      "confidence": "announced",
+      "volatility_impact_estimate": 0.25
+    },
+    {
+      "plant_name": "Loy Yang A",
+      "region": "VIC1",
+      "capacity_mw": 2210,
+      "fuel_type": "brown_coal",
+      "expected_closure_date": "2035-06-30",
+      "confidence": "announced",
+      "volatility_impact_estimate": 0.45
+    },
+    {
+      "plant_name": "Loy Yang B",
+      "region": "VIC1",
+      "capacity_mw": 1000,
+      "fuel_type": "brown_coal",
+      "expected_closure_date": "2032-06-30",
+      "confidence": "speculated",
+      "volatility_impact_estimate": 0.30
+    },
+    {
+      "plant_name": "Gladstone",
+      "region": "QLD1",
+      "capacity_mw": 1680,
+      "fuel_type": "black_coal",
+      "expected_closure_date": "2035-12-31",
+      "confidence": "speculated",
+      "volatility_impact_estimate": 0.25
+    },
+    {
+      "plant_name": "Tarong",
+      "region": "QLD1",
+      "capacity_mw": 1400,
+      "fuel_type": "black_coal",
+      "expected_closure_date": "2034-06-30",
+      "confidence": "speculated",
+      "volatility_impact_estimate": 0.22
+    },
+    {
+      "plant_name": "Mt Piper",
+      "region": "NSW1",
+      "capacity_mw": 1400,
+      "fuel_type": "black_coal",
+      "expected_closure_date": "2032-11-30",
+      "confidence": "announced",
+      "volatility_impact_estimate": 0.20
+    }
+  ]
+}

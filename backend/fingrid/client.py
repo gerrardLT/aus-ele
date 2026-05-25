@@ -104,18 +104,19 @@ class FingridClient:
                             "Connection: close\r\n\r\n"
                         )
                         tls_sock.sendall(request.encode("utf-8"))
-                        response_bytes = b""
+                        chunks = []
                         while True:
                             chunk = tls_sock.recv(65536)
                             if not chunk:
                                 break
-                            response_bytes += chunk
+                            chunks.append(chunk)
             except (ssl.SSLError, socket.timeout, ConnectionError, OSError):
                 if attempt < 2:
                     time.sleep(1.5 + attempt)
                     continue
                 raise
 
+            response_bytes = b"".join(chunks)
             head, body = response_bytes.split(b"\r\n\r\n", 1)
             header_lines = head.decode("iso-8859-1").split("\r\n")
             status_line = header_lines[0]

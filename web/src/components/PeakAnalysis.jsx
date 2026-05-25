@@ -120,19 +120,19 @@ export default function PeakAnalysis({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.2 }}
-      className="col-span-12 mt-16 pt-12 border-t-2 border-[var(--color-text)]"
+      className="col-span-12 mt-12 pt-8 border-t-2 border-[var(--color-text)]"
     >
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div>
-          <h2 className="text-3xl font-serif font-bold mb-1">{t.title}</h2>
-          <p className="text-sm text-[var(--color-muted)] font-sans">{t.subtitle}</p>
+          <h2 className="text-2xl font-serif font-bold md:text-[1.75rem]">{t.title}</h2>
+          <p className="text-xs leading-5 text-[var(--color-muted)] font-sans md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">{t.subtitle}</p>
         </div>
         <div className="text-xs text-[var(--color-muted)] tracking-widest uppercase font-bold">
           {t.eyebrow}
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-col gap-2">
           <span className="text-xs font-bold tracking-widest text-[var(--color-muted)] uppercase">
             {t.aggregation}
@@ -188,7 +188,7 @@ export default function PeakAnalysis({
           </div>
 
           {data.summary && (
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-10">
+            <div className="mb-7 grid grid-cols-2 gap-3 md:grid-cols-6">
               <SummaryCard label={`${t.avgSpread} 2h`} value={fmt(data.summary.avg_spread_2h)} />
               <SummaryCard label={`${t.avgSpread} 4h`} value={fmt(data.summary.avg_spread_4h)} />
               <SummaryCard label={`${t.avgSpread} 6h`} value={fmt(data.summary.avg_spread_6h)} />

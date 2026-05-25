@@ -1,6 +1,7 @@
 const inflightGetRequests = new Map();
 const recentGetResponses = new Map();
 const DEFAULT_TTL_MS = 5000;
+const MAX_CACHED_GET_RESPONSES = 64;
 
 function cloneJson(value) {
   if (typeof globalThis.structuredClone === 'function') {
@@ -11,6 +12,24 @@ function cloneJson(value) {
 
 function buildCacheKey(url, method) {
   return `${method}:${url}`;
+}
+
+function pruneExpiredGetResponses(now = Date.now()) {
+  for (const [cacheKey, entry] of recentGetResponses.entries()) {
+    if (entry.expiresAt <= now) {
+      recentGetResponses.delete(cacheKey);
+    }
+  }
+}
+
+function pruneOverflowingGetResponses() {
+  while (recentGetResponses.size > MAX_CACHED_GET_RESPONSES) {
+    const oldestKey = recentGetResponses.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    recentGetResponses.delete(oldestKey);
+  }
 }
 
 export function clearFetchJsonCache() {
@@ -25,6 +44,7 @@ export async function fetchJson(url, options = {}) {
   const now = Date.now();
 
   if (cacheable) {
+    pruneExpiredGetResponses(now);
     const cached = recentGetResponses.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       return cloneJson(cached.data);
@@ -49,6 +69,7 @@ export async function fetchJson(url, options = {}) {
         data,
         expiresAt: Date.now() + DEFAULT_TTL_MS,
       });
+      pruneOverflowingGetResponses();
     }
     return cloneJson(data);
   } finally {

@@ -1,0 +1,325 @@
+{
+  "metadata": {
+    "last_updated": "2025-06-15",
+    "description": "Real-world evidence and source citations for Financial Accuracy Modules. Each data point includes its source, date, and how it validates the model.",
+    "version": 1
+  },
+  "cost_structure_evidence": {
+    "description": "Evidence supporting fee component values and classification",
+    "sources": [
+      {
+        "id": "aer_2024_determination",
+        "name": "AER Revenue Determination 2024-29",
+        "url": "https://www.aer.gov.au/networks-pipelines/determinations-access-arrangements",
+        "date": "2024-04-01",
+        "type": "regulatory_determination"
+      },
+      {
+        "id": "aemo_fee_schedule_2024",
+        "name": "AEMO Energy Market Fees and Charges 2024-25",
+        "url": "https://aemo.com.au/about/corporate-governance/energy-market-fees-and-charges",
+        "date": "2024-07-01",
+        "type": "fee_schedule"
+      },
+      {
+        "id": "aemo_mlf_2024",
+        "name": "AEMO Marginal Loss Factors 2024-25",
+        "url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/market-operations/loss-factors-and-regional-boundaries",
+        "date": "2024-04-01",
+        "type": "published_data"
+      },
+      {
+        "id": "aemc_iess_rule",
+        "name": "AEMC Integrating Energy Storage Systems Rule Change",
+        "url": "https://aemc.gov.au/rule-changes/implementing-integrated-energy-storage-systems",
+        "date": "2024-03-04",
+        "type": "rule_change"
+      },
+      {
+        "id": "aemo_fpp_2025",
+        "name": "AEMO Frequency Performance Payments (FPP) Implementation",
+        "url": "https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/data-dashboard-fpp",
+        "date": "2025-06-08",
+        "type": "market_reform"
+      }
+    ],
+    "evidence_points": [
+      {
+        "parameter": "aemo_participant_fee",
+        "value": "$0.30-$0.50/MWh on Gross Energy",
+        "source_id": "aemo_fee_schedule_2024",
+        "evidence": "AEMO recovers operating costs through participant fees. Under IESS rule, storage is billed on both charge and discharge (Gross Energy), not net.",
+        "cross_reference": "aemc_iess_rule",
+        "real_example": "100MW/4h BESS cycling 1.4x/day: Gross Energy = 200,000 MWh/yr. Fee = $0.40 × 200,000 = $80,000/yr"
+      },
+      {
+        "parameter": "tuos_demand_charge",
+        "value": "$5,000-$15,000/MW/year",
+        "source_id": "aer_2024_determination",
+        "evidence": "Transmission Use of System charges are set by TNSPs (TransGrid NSW, Powerlink QLD, AusNet VIC, ElectraNet SA, TasNetworks TAS) under AER revenue determinations. Demand charges are the dominant component for large loads/generators.",
+        "regional_values": {
+          "NSW1": {"value": 12000, "tnsp": "TransGrid", "note": "Based on 2024-29 determination"},
+          "QLD1": {"value": 10000, "tnsp": "Powerlink", "note": "Lower due to shorter transmission distances"},
+          "VIC1": {"value": 9000, "tnsp": "AusNet Services", "note": "Competitive due to dense network"},
+          "SA1": {"value": 14000, "tnsp": "ElectraNet", "note": "Highest nationally due to long radial lines"},
+          "TAS1": {"value": 11000, "tnsp": "TasNetworks", "note": "Moderate, island network"},
+          "WEM": {"value": 8000, "tnsp": "Western Power", "note": "Lower regulated rates"}
+        }
+      },
+      {
+        "parameter": "mlf",
+        "value": "0.90-1.05 multiplier",
+        "source_id": "aemo_mlf_2024",
+        "evidence": "AEMO publishes MLFs annually. They represent electrical losses between a connection point and the Regional Reference Node. MLF < 1 means the generator receives less than the RRN price; MLF > 1 means it receives more.",
+        "real_example": "Modo Energy research (June 2025): MLFs have reduced revenues by up to $75k/MW for BESS in constrained regions like South-West NSW (MLF ~0.92). Well-located BESS near demand centres have MLF ~0.98-1.00.",
+        "source_url": "https://modoenergy.com/research/en/locational-impacts-battery-energy-storage-revenues-nem-australia-curtailment-june-2025"
+      },
+      {
+        "parameter": "fpp",
+        "value": "~$750/MW/year net earning for BESS",
+        "source_id": "aemo_fpp_2025",
+        "evidence": "Frequency Performance Payments went live 8 June 2025, replacing the old Causer Pays methodology. In the first two months, batteries earned an average of $750/MW/year — negligible compared to wholesale and FCAS earnings.",
+        "source_url": "https://modoenergy.com/research/australia-nem-battery-energy-storage-frequency-performance-payments",
+        "note": "FPP is a double-sided mechanism: assets that stabilize frequency earn payments, those that destabilize pay penalties. Well-operated BESS typically earns a small net positive."
+      },
+      {
+        "parameter": "duos_exemption",
+        "value": "Transmission-connected BESS exempt from DUOS",
+        "source_id": "aemc_iess_rule",
+        "evidence": "Grid-scale BESS connected at transmission level (>= 66kV) do not pay Distribution Use of System charges. Only distribution-connected assets (< 66kV) pay DUOS. In April 2026, Energy Minister Chris Bowen rejected AEMC's proposal to impose network charges on storage assets.",
+        "source_url": "https://www.afr.com/policy/energy-and-climate/bowen-slaps-down-3000-bill-hike-for-battery-owners-20260428-p5zrkz"
+      }
+    ]
+  },
+  "forward_price_evidence": {
+    "description": "Evidence supporting price scenario assumptions and parameters",
+    "sources": [
+      {
+        "id": "modo_nem_2024_review",
+        "name": "Modo Energy: What did batteries earn in the NEM in 2024?",
+        "url": "https://modoenergy.com/research/australia-nem-battery-energy-storage-revenues-2024",
+        "date": "2025-02-10",
+        "type": "market_analysis"
+      },
+      {
+        "id": "aemo_isp_2026",
+        "name": "AEMO Draft 2026 Integrated System Plan",
+        "url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo",
+        "date": "2025-12-10",
+        "type": "system_plan"
+      },
+      {
+        "id": "modo_fcas_saturation",
+        "name": "Modo Energy: FCAS saturation hitting BESS revenues",
+        "url": "https://modoenergy.com/research/fcas-saturation-battery-energy-storage-revenues-australia-nem",
+        "date": "2025-05-15",
+        "type": "market_analysis"
+      },
+      {
+        "id": "modo_price_setting_2026",
+        "name": "Modo Energy: How BESS is pushing down peak prices",
+        "url": "https://modoenergy.com/research/jp/australia-nem-bess-growth-price-setting-peak-bidding-april-2026",
+        "date": "2026-04-28",
+        "type": "market_analysis"
+      },
+      {
+        "id": "aemo_esoo_2025",
+        "name": "AEMO 2025 Electricity Statement of Opportunities (Oct Update)",
+        "url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo",
+        "date": "2025-10-01",
+        "type": "supply_adequacy"
+      }
+    ],
+    "evidence_points": [
+      {
+        "parameter": "base_spread_nsw1",
+        "value": "$120/MWh mean daily spread",
+        "source_id": "modo_nem_2024_review",
+        "evidence": "NEM BESS average revenue was $148k/MW in 2024 (45% YoY increase). Energy trading represented 69% of revenue. For a 4h battery cycling once daily: $148k / (4h × 365 × 0.87 RTE) ≈ $116/MWh effective spread. We use $120 as the base.",
+        "calculation": "148000 / (4 * 365 * 0.87) = $116/MWh → rounded to $120"
+      },
+      {
+        "parameter": "spike_frequency",
+        "value": "0.3% of intervals > $3000/MWh",
+        "source_id": "modo_nem_2024_review",
+        "evidence": "50% of energy trading revenues in 2024 came from prices above $3,000/MWh. These extreme price events are rare (< 1% of intervals) but account for half of battery earnings. We estimate ~0.3% of 5-min intervals exceed $3000.",
+        "implication": "As BESS price-setting frequency increases (22% in 2025, 41% in Q1 2026), these spikes will become less frequent and less extreme."
+      },
+      {
+        "parameter": "bess_saturation_effect",
+        "value": "BESS price-setting: 1% (2020) → 22% (2025) → 41% (Q1 2026)",
+        "source_id": "modo_price_setting_2026",
+        "evidence": "Evening peak prices now settle at a median of $88/MWh with a top 10th percentile of $132/MWh, firmly inside the battery bid range. This means batteries are increasingly setting the price, which compresses the spread available to all batteries.",
+        "model_implication": "Our compression_factor = max(0, 1 - bess_capacity_ratio × sensitivity) captures this: as BESS/peak_demand ratio increases, spreads compress."
+      },
+      {
+        "parameter": "fcas_revenue_collapse",
+        "value": "$384k/MW (2020) → $11k/MW (2025)",
+        "source_id": "modo_fcas_saturation",
+        "evidence": "Battery FCAS revenues have steadily decreased from $384k/MW/year in 2020 to just $11k/MW/year in the first four months of 2025. This is driven by BESS registrations growing from 200MW to 2500MW, flooding the FCAS markets.",
+        "model_implication": "Our FCAS Collapse Forecaster uses supply/demand ratio to model this: when ratio > 3.0, the service is 'collapsed' with near-zero price ceiling."
+      },
+      {
+        "parameter": "coal_retirement_impact",
+        "value": "SA outperformed by 40% after Northern PS closure",
+        "source_id": "modo_nem_2024_review",
+        "evidence": "South Australia's Northern Power Station closed in 2016. In 2022-2023, SA BESS outperformed other regions by ~40% due to higher price volatility from reduced baseload supply. This validates our coal_retirement spread_impact_factor > 1 assumption.",
+        "model_implication": "Each coal closure increases regional volatility. Our model applies volatility_impact_estimate (0.2-0.45) as a multiplicative factor on spread."
+      },
+      {
+        "parameter": "scenario_assumptions",
+        "value": "Central/High/Low aligned with AEMO ISP 2026",
+        "source_id": "aemo_isp_2026",
+        "evidence": "AEMO's Draft 2026 ISP models three scenarios for NEM development through 2050. Coal operates until 2049 in some scenarios. $128B grid overhaul planned. Our Central scenario aligns with ISP Step Change, High with Green Energy Exports (faster coal exit), Low with Progressive Change (slower transition).",
+        "source_url": "https://ts2.tech/en/australias-aemo-draft-2026-isp-coal-until-2049-as-128b-grid-overhaul-backs-solar-and-batteries/"
+      },
+      {
+        "parameter": "eraring_closure_update",
+        "value": "Eraring closure date updated in Oct 2025 ESOO",
+        "source_id": "aemo_esoo_2025",
+        "evidence": "On 1 October 2025, AEMO published an update to the 2025 ESOO, which updates its modelling to consider new information including changes to the closure dates of Torrens Island B and Gladstone Power Station.",
+        "model_implication": "Our coal_retirement_schedule.json is sourced from these AEMO publications and operator announcements."
+      }
+    ]
+  },
+  "cross_validation": {
+    "description": "Structured external source data for multi-source cross-validation",
+    "coal_retirements": [
+      {
+        "plant_name": "Eraring",
+        "source_name": "AEMO ISP 2026 Draft",
+        "source_date": "2025-12-10",
+        "reported_value": "2027-08-01",
+        "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo"
+      },
+      {
+        "plant_name": "Eraring",
+        "source_name": "Origin Energy Announcement",
+        "source_date": "2025-03-15",
+        "reported_value": "2027-08-01",
+        "source_url": "https://www.originenergy.com.au/about/investors-media/eraring-power-station/"
+      },
+      {
+        "plant_name": "Yallourn",
+        "source_name": "AEMO ISP 2026 Draft",
+        "source_date": "2025-12-10",
+        "reported_value": "2028-06-30",
+        "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo"
+      },
+      {
+        "plant_name": "Yallourn",
+        "source_name": "EnergyAustralia Announcement",
+        "source_date": "2024-11-20",
+        "reported_value": "2028-06-30",
+        "source_url": "https://www.energyaustralia.com.au/about-us/energy-generation/yallourn-power-station"
+      },
+      {
+        "plant_name": "Bayswater",
+        "source_name": "AEMO ISP 2026 Draft",
+        "source_date": "2025-12-10",
+        "reported_value": "2030-12-31",
+        "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo"
+      },
+      {
+        "plant_name": "Bayswater",
+        "source_name": "AGL Energy Announcement",
+        "source_date": "2025-06-01",
+        "reported_value": "2030-12-31",
+        "source_url": "https://www.agl.com.au/about-agl/how-we-source-energy/bayswater-power-station"
+      }
+    ],
+    "revenue_benchmarks": [
+      {
+        "source_name": "Modo Energy NEM 2024 Review",
+        "source_date": "2025-02-10",
+        "revenue_per_mw": 148000,
+        "region": "",
+        "note": "NEM-wide average BESS revenue 2024",
+        "source_url": "https://modoenergy.com/research/australia-nem-battery-energy-storage-revenues-2024"
+      }
+    ],
+    "price_forecasts": [
+      {
+        "source_name": "AEMO ISP 2026 Step Change",
+        "source_date": "2025-12-10",
+        "region": "NSW1",
+        "scenario": "central",
+        "spread_value": 115.0,
+        "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo"
+      },
+      {
+        "source_name": "AEMO ISP 2026 Step Change",
+        "source_date": "2025-12-10",
+        "region": "QLD1",
+        "scenario": "central",
+        "spread_value": 95.0,
+        "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo"
+      },
+      {
+        "source_name": "AEMO ISP 2026 Step Change",
+        "source_date": "2025-12-10",
+        "region": "VIC1",
+        "scenario": "central",
+        "spread_value": 105.0,
+        "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo"
+      },
+      {
+        "source_name": "AEMO ISP 2026 Step Change",
+        "source_date": "2025-12-10",
+        "region": "SA1",
+        "scenario": "central",
+        "spread_value": 130.0,
+        "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/nem-forecasting-and-planning/forecasting-and-reliability/nem-electricity-statement-of-opportunities-esoo"
+      }
+    ]
+  },
+  "tax_model_evidence": {
+    "description": "Evidence supporting Australian tax rules applied to BESS",
+    "sources": [
+      {
+        "id": "ato_depreciation_2024",
+        "name": "ATO Guide to Depreciating Assets 2024",
+        "url": "https://www.ato.gov.au/forms-and-instructions/depreciating-assets-guide-2024",
+        "date": "2024-06-01",
+        "type": "tax_ruling"
+      },
+      {
+        "id": "ato_company_tax",
+        "name": "ATO Company Tax Rates",
+        "url": "https://www.ato.gov.au/businesses-and-organisations/income-deductions-and-concessions/depreciation-and-capital-expenses-and-allowances/general-depreciation-rules-capital-allowances",
+        "date": "2024-07-01",
+        "type": "tax_law"
+      }
+    ],
+    "evidence_points": [
+      {
+        "parameter": "company_tax_rate",
+        "value": "30% standard / 25% base rate entity",
+        "source_id": "ato_company_tax",
+        "evidence": "Standard company tax rate is 30%. Base rate entities (aggregated turnover < $50M and <= 80% passive income) pay 25%. Most grid-scale BESS SPVs are standard entities (project finance vehicles with > $50M turnover from energy sales).",
+        "real_example": "A 100MW/4h BESS earning $148k/MW = $14.8M annual revenue → standard entity rate applies."
+      },
+      {
+        "parameter": "effective_life",
+        "value": "15-20 years (industry convention)",
+        "source_id": "ato_depreciation_2024",
+        "evidence": "ATO has not published a specific effective life determination for grid-scale BESS. Industry uses 15-20 years aligned with manufacturer warranties and project finance tenors. TR 2024/1 covers 'electrical distribution equipment' at 20 years which is the closest proxy.",
+        "note": "Some advisors argue for 10-12 years based on 'electrical storage equipment' but this is aggressive and may be challenged by ATO."
+      },
+      {
+        "parameter": "diminishing_value_method",
+        "value": "200% / effective_life per year on WDV",
+        "source_id": "ato_depreciation_2024",
+        "evidence": "Under Division 40 of ITAA 1997, the Diminishing Value method rate = 200% ÷ effective life. For 20-year life: 10% of Written Down Value each year. This front-loads deductions, providing larger tax shields in early years when cash flow is most needed.",
+        "real_example": "Year 1: 10% × $145M = $14.5M deduction. Year 2: 10% × $130.5M = $13.05M. Tax shield Year 1 = $14.5M × 30% = $4.35M."
+      },
+      {
+        "parameter": "interest_deductibility",
+        "value": "Debt interest fully deductible against assessable income",
+        "source_id": "ato_company_tax",
+        "evidence": "Interest on borrowings used to produce assessable income is deductible under Section 8-1 ITAA 1997. For project finance BESS: debt typically 60-70% of capex at 6-7% interest rate. Annual interest deduction = ~$5-6M for a $145M project.",
+        "note": "Thin capitalisation rules (Division 820) may limit deductions if debt exceeds safe harbour (60% of assets). Most BESS projects stay within this limit."
+      }
+    ]
+  }
+}

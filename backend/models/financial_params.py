@@ -1,8 +1,16 @@
+from __future__ import annotations
+
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, TYPE_CHECKING
 from enum import Enum
 
 from models.bess_backtest_params import BessBacktestParams
+from models.cost_structure_models import CostStructureOverrides, AnnualCostBreakdown
+from models.tax_models import TaxConfig, AfterTaxResult, TaxSummary
+from models.forward_price_models import ScenarioType, ScenarioComparisonResult
+
+if TYPE_CHECKING:
+    from engines.degradation_model import DegradationModel
 
 class DispatchMode(str, Enum):
     HINDSIGHT_OPTIMIZED = "hindsight_optimized"
@@ -78,6 +86,11 @@ class InvestmentParams(BaseModel):
     scenarios: List[ScenarioConfig] = [ScenarioConfig()]
     monte_carlo: MonteCarloConfig = Field(default_factory=MonteCarloConfig)
 
+    # Financial Accuracy Module optional fields (backward-compatible)
+    cost_structure_overrides: Optional[CostStructureOverrides] = None
+    tax_config: Optional[TaxConfig] = None
+    forward_scenario: Optional[ScenarioType] = None
+
     @model_validator(mode="after")
     def apply_legacy_overrides(self):
         if self.power_mw is not None:
@@ -108,6 +121,11 @@ class CashFlowYear(BaseModel):
     state_of_health: float
     annual_cycles: float
 
+    # Tax-related fields (Financial Accuracy Modules)
+    depreciation: float = 0.0
+    tax_payable: float = 0.0
+    after_tax_cash_flow: Optional[float] = None
+
 class FinancialMetrics(BaseModel):
     npv: float
     irr: Optional[float]
@@ -124,6 +142,7 @@ class ScenarioResult(BaseModel):
     scenario_name: str
     metrics: FinancialMetrics
     cash_flows: List[CashFlowYear]
+    cost_breakdown: Optional[AnnualCostBreakdown] = None
 
 class MonteCarloResult(BaseModel):
     npv_p10: float
@@ -139,4 +158,22 @@ class InvestmentAnalysisResponse(BaseModel):
     base_metrics: FinancialMetrics
     scenarios: List[ScenarioResult]
     monte_carlo: Optional[MonteCarloResult]
+    degradation_model: Optional["DegradationModel"] = None
     assumptions: List[str]
+
+    # Financial Accuracy Module optional fields (backward-compatible)
+    cost_breakdown: Optional[AnnualCostBreakdown] = None
+    tax_summary: Optional[TaxSummary] = None
+    scenario_projections: Optional[ScenarioComparisonResult] = None
+    after_tax_metrics: Optional[AfterTaxResult] = None
+
+
+def rebuild_forward_refs() -> None:
+    """Resolve forward references after all modules are loaded.
+
+    Call this once at application startup to resolve the DegradationModel
+    forward reference in InvestmentAnalysisResponse.
+    """
+    from engines.degradation_model import DegradationModel  # noqa: F811
+
+    InvestmentAnalysisResponse.model_rebuild()

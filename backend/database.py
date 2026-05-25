@@ -1187,9 +1187,11 @@ class DatabaseManager:
     ):
         with self.get_connection() as conn:
             self.ensure_analysis_cache_table(conn)
+            org_id = organization_id or ""
+            ws_id = workspace_id or ""
             conn.execute(
                 f"""
-                INSERT INTO {self.ANALYSIS_CACHE_TABLE} (
+                INSERT OR REPLACE INTO {self.ANALYSIS_CACHE_TABLE} (
                     scope,
                     cache_key,
                     data_version,
@@ -1198,16 +1200,13 @@ class DatabaseManager:
                     response_json,
                     updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(scope, cache_key, data_version, organization_id, workspace_id) DO UPDATE SET
-                    response_json=excluded.response_json,
-                    updated_at=CURRENT_TIMESTAMP
                 """,
                 (
                     scope,
                     cache_key,
                     data_version,
-                    organization_id,
-                    workspace_id,
+                    org_id,
+                    ws_id,
                     json.dumps(response_payload or {}),
                 ),
             )
@@ -4136,3 +4135,144 @@ class DatabaseManager:
             cursor.execute("DELETE FROM system_status WHERE key = ?", (lock_key,))
             conn.commit()
             return True
+
+    # ------------------------------------------------------------------
+    # FCAS 4-second data methods
+    # ------------------------------------------------------------------
+
+    FCAS_4S_TABLE = "fcas_4s_data"
+
+    def ensure_fcas_4s_table(self, conn=None):
+        """Create the fcas_4s_data table if it doesn't exist."""
+        from pipelines.fcas_4s_ingest import CREATE_FCAS_4S_TABLE_SQL, CREATE_FCAS_4S_INDEX_SQL
+
+        def _create(c):
+            cursor = c.cursor()
+            cursor.execute(CREATE_FCAS_4S_TABLE_SQL)
+            cursor.execute(CREATE_FCAS_4S_INDEX_SQL)
+            c.commit()
+
+        if conn is not None:
+            _create(conn)
+        else:
+            with self.get_connection() as c:
+                _create(c)
+
+    def fetch_fcas_4s_before(self, cutoff_datetime: "datetime") -> list[dict]:
+        """Fetch all 4-second FCAS records with timestamp before the cutoff.
+
+        Args:
+            cutoff_datetime: datetime object; records with timestamp < this value
+                are returned.
+
+        Returns:
+            List of dicts with column names as keys.
+        """
+        cutoff_iso = cutoff_datetime.isoformat() if hasattr(cutoff_datetime, 'isoformat') else str(cutoff_datetime)
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Check table exists
+            cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (self.FCAS_4S_TABLE,),
+            )
+            if not cursor.fetchone():
+                return []
+
+            cursor.execute(
+                f"SELECT * FROM {self.FCAS_4S_TABLE} WHERE timestamp < ? ORDER BY timestamp ASC",
+                (cutoff_iso,),
+            )
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+
+    def replace_fcas_records(self, before: "datetime", new_records: list[dict]) -> int:
+        """Replace 4-second FCAS records older than `before` with new (downsampled) records.
+
+        This is used by the data compressor to replace raw 4s data with
+        1-minute downsampled data for records older than the retention period.
+
+        Args:
+            before: datetime cutoff; records with timestamp < this are deleted.
+            new_records: replacement records to insert (downsampled data).
+
+        Returns:
+            Number of new records inserted.
+        """
+        before_iso = before.isoformat() if hasattr(before, 'isoformat') else str(before)
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Ensure table exists
+            self.ensure_fcas_4s_table(conn)
+
+            # Delete old records
+            cursor.execute(
+                f"DELETE FROM {self.FCAS_4S_TABLE} WHERE timestamp < ?",
+                (before_iso,),
+            )
+            deleted = cursor.rowcount
+
+            # Insert replacement records
+            if new_records:
+                from pipelines.fcas_4s_ingest import FCAS_4S_COLUMNS
+
+                columns = FCAS_4S_COLUMNS
+                col_names = ", ".join(columns)
+                placeholders = ", ".join("?" for _ in columns)
+                insert_sql = (
+                    f"INSERT OR REPLACE INTO {self.FCAS_4S_TABLE} ({col_names}) "
+                    f"VALUES ({placeholders})"
+                )
+                batch = [
+                    tuple(record.get(col) for col in columns)
+                    for record in new_records
+                ]
+                cursor.executemany(insert_sql, batch)
+
+            conn.commit()
+            logger.info(
+                f"replace_fcas_records: deleted {deleted} old records, "
+                f"inserted {len(new_records)} downsampled records"
+            )
+            return len(new_records)
+
+    def insert_fcas_4s_batch(self, records: list[dict]) -> int:
+        """Batch insert 4-second FCAS records into the fcas_4s_data table.
+
+        Uses INSERT OR REPLACE to handle duplicates gracefully.
+
+        Args:
+            records: List of dicts with keys matching FCAS_4S_COLUMNS.
+
+        Returns:
+            Number of records inserted.
+        """
+        if not records:
+            return 0
+
+        from pipelines.fcas_4s_ingest import FCAS_4S_COLUMNS
+
+        with self.get_connection() as conn:
+            self.ensure_fcas_4s_table(conn)
+
+            columns = FCAS_4S_COLUMNS
+            col_names = ", ".join(columns)
+            placeholders = ", ".join("?" for _ in columns)
+            insert_sql = (
+                f"INSERT OR REPLACE INTO {self.FCAS_4S_TABLE} ({col_names}) "
+                f"VALUES ({placeholders})"
+            )
+
+            batch = [
+                tuple(record.get(col) for col in columns)
+                for record in records
+            ]
+            cursor = conn.cursor()
+            cursor.executemany(insert_sql, batch)
+            conn.commit()
+
+            logger.info(f"insert_fcas_4s_batch: inserted {len(batch)} records")
+            return len(batch)

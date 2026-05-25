@@ -15,7 +15,8 @@ import {
   getFingridCopy,
   localizeFingridDataset,
 } from '../lib/fingridUi';
-import PageWorkspaceNav from '../components/PageWorkspaceNav';
+import DataQualityBadge from '../components/DataQualityBadge';
+import PageSection from '../components/PageSection';
 import FingridHeader from '../components/fingrid/FingridHeader';
 import FingridHourlyBoard from '../components/fingrid/FingridHourlyBoard';
 import FingridYearlyPlanBoard from '../components/fingrid/FingridYearlyPlanBoard';
@@ -243,12 +244,6 @@ export default function FingridPage() {
     [timeWindow, tz, aggregation, requestLimit, customDateRangeValidationCode],
   );
   const isYearlyPlanBoard = selectedDataset?.groupKey === 'yearly_plans';
-  const workspaceLinks = [
-    { key: 'home', href: '/', label: workspaceLinkCopy.home || 'Home' },
-    { key: 'finland', href: '/finland', label: workspaceLinkCopy.finland || 'Finland Board' },
-    { key: 'fingrid', href: '/fingrid', label: workspaceLinkCopy.fingrid || 'Fingrid' },
-    { key: 'developer', href: '/developer', label: workspaceLinkCopy.developer || 'Developer Portal' },
-  ];
   const toolbar = (
     <FingridHeader
       datasets={localizedDatasets}
@@ -284,18 +279,30 @@ export default function FingridPage() {
       }`}
     >
       <div className="mx-auto grid grid-cols-1 max-w-7xl gap-8">
-        <PageWorkspaceNav
-          brand={copy.brand}
-          title={null}
-          subtitle={null}
-          current="fingrid"
-          links={workspaceLinks}
-          languageLabel={copy.toggleLanguage}
-          languageAriaLabel={copy.toggleLanguageAriaLabel}
-          onToggleLanguage={() => setLang((current) => (current === 'zh' ? 'en' : 'zh'))}
-          compact
-          meta={null}
-        />
+        <PageSection
+          id="fingrid-workspace-shell"
+          fullWidthInGrid={false}
+          title={copy.brand}
+          description={workspaceLinkCopy.fingrid || copy.subtitle}
+          showDivider={false}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)]/85 px-5 py-4">
+            <div className="space-y-1">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-muted)]">
+                {copy.toggleLanguage}
+              </div>
+              <div className="text-sm text-[var(--color-muted)]">{copy.subtitle}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLang((current) => (current === 'zh' ? 'en' : 'zh'))}
+              aria-label={copy.toggleLanguageAriaLabel}
+              className="rounded-full border border-[var(--color-border)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text)] transition-colors hover:border-[var(--color-text)]"
+            >
+              {copy.toggleLanguage}
+            </button>
+          </div>
+        </PageSection>
 
         {isYearlyPlanBoard ? (
           <>
@@ -327,6 +334,23 @@ export default function FingridPage() {
           </>
         ) : (
           <>
+            <PageSection
+              id="fingrid-passive-status"
+              fullWidthInGrid={false}
+              title={copy.syncStatus}
+              description={null}
+              showDivider={false}
+            >
+              <div id="price-trend" className="sr-only" />
+              <div id="market-supporting-signals" className="sr-only" />
+              <div className="grid gap-4 rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)]/78 p-5">
+                <DataQualityBadge metadata={statusMetadata} lang={lang} />
+                <div className="text-sm leading-6 text-[var(--color-muted)]">
+                  {marketModelCopy.noSignals}
+                </div>
+              </div>
+            </PageSection>
+
             <FingridHourlyBoard
               summaryPayload={summaryPayload}
               seriesPayload={seriesPayload}

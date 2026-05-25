@@ -90,12 +90,12 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.35 }}
-      className="col-span-12 mt-16 pt-12 border-t-2 border-[var(--color-text)]"
+      className="col-span-12 mt-12 pt-8 border-t-2 border-[var(--color-text)]"
     >
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-10">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div>
-          <h2 className="text-3xl font-serif font-bold mb-1">{t.cwTitle}</h2>
-          <p className="text-sm text-[var(--color-muted)] font-sans">
+          <h2 className="text-2xl font-serif font-bold md:text-[1.75rem]">{t.cwTitle}</h2>
+          <p className="text-xs leading-5 text-[var(--color-muted)] font-sans md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">
             {t.cwSubtitle}
           </p>
         </div>
@@ -112,7 +112,7 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
         <div className="grid grid-cols-1 gap-6">
           <RegimeCompactInline compact={data?.regime_compact} copy={regimeCompactCopy} />
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2 flex justify-center">
               <svg ref={svgRef} viewBox={`0 0 ${size} ${size}`} className="w-full max-w-[500px]" aria-label={t.cwChartAria}>
                 {hourlyData.map((hour, index) => {
@@ -197,7 +197,7 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
               </svg>
             </div>
 
-            <div className="lg:col-span-1 space-y-6">
+            <div className="lg:col-span-1 space-y-4">
               <div className={`rounded border p-4 ${
                 overlayNotice.variant === 'warning'
                   ? 'border-amber-500/40 bg-amber-50 text-amber-900'

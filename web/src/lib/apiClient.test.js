@@ -44,3 +44,24 @@ test('fetchJson does not deduplicate POST requests', async () => {
 
   assert.equal(callCount, 2);
 });
+
+test('fetchJson evicts older GET cache entries when the cache grows beyond the cap', async () => {
+  clearFetchJsonCache();
+
+  const callCounts = new Map();
+  globalThis.fetch = async (url) => {
+    callCounts.set(url, (callCounts.get(url) || 0) + 1);
+    return {
+      json: async () => ({ url, callCount: callCounts.get(url) }),
+    };
+  };
+
+  for (let index = 0; index < 65; index += 1) {
+    await fetchJson(`http://example.test/api/items/${index}`);
+  }
+
+  const refetched = await fetchJson('http://example.test/api/items/0');
+
+  assert.equal(callCounts.get('http://example.test/api/items/0'), 2);
+  assert.equal(refetched.callCount, 2);
+});

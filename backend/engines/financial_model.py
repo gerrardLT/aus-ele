@@ -5,7 +5,9 @@ from models.financial_params import (
     InvestmentParams, ScenarioConfig, FinancialMetrics,
     CashFlowYear, ScenarioResult, MonteCarloResult, BatterySpecs
 )
+from models.cost_structure_models import ConnectionType, AnnualCostBreakdown
 from engines.battery_model import BatteryModel
+from engines.cost_structure_engine import CostStructureEngine
 
 
 class FinancialModel:
@@ -85,6 +87,7 @@ class FinancialModel:
         cash_flow_years: List[CashFlowYear] = []
         net_cfs = [-total_capex]
         cumulative = -total_capex
+        cost_breakdown: Optional[AnnualCostBreakdown] = None
 
         for yr in range(1, params.financial.project_life_years + 1):
             soh = soh_history[yr - 1]
@@ -96,18 +99,39 @@ class FinancialModel:
             total_rev = yr_arb + yr_fcas + yr_cap
 
             # Opex
-            fixed_om = (
-                params.financial.fixed_om_per_mw_year * params.battery.power_mw
-                + params.financial.land_lease_per_year
-            )
             expected_cycles = (
                 annual_cycles_history[yr - 1]
                 if (yr - 1) < len(annual_cycles_history)
                 else (sum(annual_cycles_history) / len(annual_cycles_history) if annual_cycles_history else 365.0)
             )
             throughput_mwh = expected_cycles * params.battery.capacity_mwh * soh
-            var_om = params.financial.variable_om_per_mwh * throughput_mwh
-            total_opex = fixed_om + var_om
+
+            if params.cost_structure_overrides is not None:
+                # Use CostStructureEngine for component-level opex calculation
+                connection_type = (
+                    params.cost_structure_overrides.connection_type
+                    if params.cost_structure_overrides.connection_type is not None
+                    else ConnectionType.TRANSMISSION
+                )
+                yr_cost_breakdown = CostStructureEngine.calculate_annual_costs(
+                    battery=params.battery,
+                    region=params.region,
+                    annual_throughput_mwh=throughput_mwh,
+                    connection_type=connection_type,
+                    overrides=params.cost_structure_overrides,
+                )
+                total_opex = yr_cost_breakdown.total_annual_cost
+                # Store year-1 breakdown as representative for the scenario
+                if yr == 1:
+                    cost_breakdown = yr_cost_breakdown
+            else:
+                # Legacy simplified opex calculation (backward compatible)
+                fixed_om = (
+                    params.financial.fixed_om_per_mw_year * params.battery.power_mw
+                    + params.financial.land_lease_per_year
+                )
+                var_om = params.financial.variable_om_per_mwh * throughput_mwh
+                total_opex = fixed_om + var_om
 
             # Augmentation Capex
             aug_pct = aug_schedule[yr - 1]
@@ -183,6 +207,7 @@ class FinancialModel:
             scenario_name=scenario.name,
             metrics=metrics,
             cash_flows=cash_flow_years,
+            cost_breakdown=cost_breakdown,
         )
 
     @staticmethod
