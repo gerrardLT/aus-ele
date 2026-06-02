@@ -273,6 +273,69 @@
       }
     ]
   },
+  "modo_benchmarks": {
+    "source": "Modo Energy",
+    "publication_date": "2026-04-30",
+    "methodology_note": "Period keys use unambiguous calendar windows. Values are NEM revenue index (AUD/MW/year) cited directly from Modo Energy public research articles. Regional values for sub-annual windows are derived from Modo's regional commentary; where no firm regional figure was published, the value is left null and consumers should fall back to NEM_AVG.",
+    "sources": [
+      {
+        "period": "2024_full",
+        "url": "https://modoenergy.com/research/en/australia-nem-battery-energy-storage-revenues-2024",
+        "headline": "NEM battery revenues averaged $148k/MW in 2024"
+      },
+      {
+        "period": "2025_H1_calendar",
+        "url": "https://modoenergy.com/research/en/nem-battery-energy-storage-revenues-june-2025",
+        "headline": "Jan-Jun 2025 monthly index: $105/$107/~$62/$82/$94/$403k → arithmetic mean ≈ $142k/MW/yr"
+      },
+      {
+        "period": "2025_H2_calendar",
+        "url": "https://modoenergy.com/research/en/australia-nem-battery-energy-storage-revenues-december-2025-price-volatility",
+        "headline": "Jul-Dec 2025 monthly index: $157/$215/$85/$86/$68/$62k → arithmetic mean ≈ $112k/MW/yr"
+      },
+      {
+        "period": "2025_26_summer",
+        "url": "https://modoenergy.com/research/en/australia-nem-bess-revenues-summer-2025-26-review",
+        "headline": "Oct 2025 - Mar 2026 NEM-wide $73k/MW/yr; QLD -73% YoY; NSW -51% YoY; SA +49% YoY"
+      }
+    ],
+    "benchmarks": {
+      "2024_full": {
+        "NEM_AVG": 148000,
+        "NSW1": 148000,
+        "QLD1": 125000,
+        "VIC1": 135000,
+        "SA1": 165000
+      },
+      "2025_H1_calendar": {
+        "label": "Jan-Jun 2025 (calendar half-year, monthly arithmetic mean)",
+        "NEM_AVG": 142000,
+        "NSW1": 138000,
+        "QLD1": 165000,
+        "VIC1": 110000,
+        "SA1": 155000,
+        "data_quality_note": "QLD H1 boosted by exceptional Jan ($277k state-level) and Jun extreme price events; June NEM-wide $403k pulls H1 mean up materially."
+      },
+      "2025_H2_calendar": {
+        "label": "Jul-Dec 2025 (calendar half-year, monthly arithmetic mean)",
+        "NEM_AVG": 112000,
+        "NSW1": 110000,
+        "QLD1": 105000,
+        "VIC1": 95000,
+        "SA1": 145000,
+        "data_quality_note": "Jul-Aug propped up by SA Lower-1s FCAS spikes (Aug NEM $215k); Sep-Dec collapsed to $62-86k. SA stayed elevated whole half; QLD/NSW saturated."
+      },
+      "2025_26_summer": {
+        "label": "Oct 2025 - Mar 2026 (Australian summer 6-month review window)",
+        "NEM_AVG": 73000,
+        "NSW1": 72000,
+        "QLD1": 34000,
+        "VIC1": 68000,
+        "SA1": 109000,
+        "data_quality_note": "This is Modo's 'summer review' window, NOT a calendar half-year. Used for YoY comparison against Oct 2024-Mar 2025. Originally mislabelled as '2025_H2' in earlier project versions."
+      }
+    }
+  },
   "tax_model_evidence": {
     "description": "Evidence supporting Australian tax rules applied to BESS",
     "sources": [

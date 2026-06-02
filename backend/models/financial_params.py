@@ -34,6 +34,38 @@ class MonteCarloConfig(BaseModel):
     market_volatility: float = 0.20  # 20% std dev for revenue
     degradation_volatility: float = 0.05
 
+
+class RevenueModel(str, Enum):
+    """收入模型类型 — 反映项目商业结构。"""
+    PURE_MERCHANT = "pure_merchant"           # 100% 市场套利（无合约）
+    CIS_CONTRACTED = "cis_contracted"         # CIS 合约（floor + ceiling + cap）
+    OFFTAKE_CONTRACTED = "offtake_contracted" # 长期 offtake（固定价格）
+    HYBRID = "hybrid"                         # 部分容量合约 + 部分 merchant
+
+
+class CISContract(BaseModel):
+    """Capacity Investment Scheme 合约参数。
+
+    实际 CIS 三层结构（基于 DCCEEW 官方机制）:
+    - Revenue Floor: 政府补贴 floor_share 比例（默认 90%）的差额
+    - Revenue Ceiling: 项目交回 ceiling_share 比例（默认 50%）给政府
+    - Annual Payment Cap: 双向支付的年度上限
+
+    收入计算:
+        adjusted = merchant
+                 + max(0, floor_share × (floor × eligible_MWh − merchant))   # 政府补 floor
+                 - max(0, ceiling_share × (merchant − ceiling × eligible_MWh)) # 项目交 ceiling
+        其中 floor 和 ceiling 支付都受 annual_payment_cap_aud 限制。
+    """
+    revenue_floor_per_mwh: float = 80.0       # bid floor price ($/MWh of eligible energy)
+    revenue_ceiling_per_mwh: float = 200.0    # bid ceiling price ($/MWh of eligible energy)
+    annual_payment_cap_aud: float = 15_000_000.0  # 年度支付上限（双向适用）
+    floor_share: float = 0.90                 # 政府补贴 floor 差额的比例
+    ceiling_share: float = 0.50               # 项目交回 ceiling 超额的比例
+    eligible_mwh_per_mw_year: float = 800.0   # 每 MW 容量的 eligible energy（标准 4h × 200 cycles ≈ 800MWh/MW）
+    contract_years: int = 13                  # CIS 合约期限（默认 13 年）
+
+
 class BatterySpecs(BaseModel):
     power_mw: float = 100.0
     duration_hours: float = 4.0
@@ -42,7 +74,13 @@ class BatterySpecs(BaseModel):
     base_cycle_degradation_rate: float = 0.00003  # % degradation per full equivalent cycle
     dod_non_linear_factor: float = 1.2 # Exponent for Depth of Discharge impact (Rainflow equivalent)
     augmentation_threshold_soc: float = 0.60 # Augment when capacity drops to 60%
-    
+
+    # --- 收入结构（CIS 合约支持）---
+    revenue_model: RevenueModel = RevenueModel.PURE_MERCHANT
+    contracted_capacity_share: float = 0.0    # 合约容量比例 [0, 1]，hybrid 项目用
+    cis_contract: Optional[CISContract] = None  # CIS 合约参数（仅 cis_contracted/hybrid 项目）
+    offtake_price_per_mwh: Optional[float] = None  # 固定 offtake 价格（offtake_contracted 项目）
+
     @property
     def capacity_mwh(self) -> float:
         return self.power_mw * self.duration_hours

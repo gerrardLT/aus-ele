@@ -196,6 +196,7 @@ export const translations = {
         storage: '储能参数',
         cost: '成本参数',
         finance: '财务参数',
+        projectFinance: '项目融资',
       },
       fields: {
         power_mw: '功率',
@@ -500,6 +501,7 @@ export const translations = {
         storage: 'Storage',
         cost: 'Cost',
         finance: 'Finance',
+        projectFinance: 'Project Finance',
       },
       fields: {
         power_mw: 'Power',

@@ -9,6 +9,7 @@ services:
       AUS_ELE_DB_PATH: /app/data/aemo_data.db
       AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_ENABLE_SCHEDULER:-false}
       AUS_ELE_ENABLE_JOB_WORKER: ${AUS_ELE_ENABLE_JOB_WORKER:-false}
+      AUS_ELE_RECONCILIATION_ENABLED: ${AUS_ELE_RECONCILIATION_ENABLED:-false}
       AUS_ELE_CORS_ALLOW_ORIGINS: ${AUS_ELE_CORS_ALLOW_ORIGINS:-http://localhost:${WEB_HOST_PORT:-18080},http://127.0.0.1:${WEB_HOST_PORT:-18080}}
       AUS_ELE_CORS_ALLOW_CREDENTIALS: ${AUS_ELE_CORS_ALLOW_CREDENTIALS:-false}
       REDIS_URL: redis://redis:6379/0
@@ -23,6 +24,7 @@ services:
       - ./output:/app/output
       - ./data_lake:/app/data_lake
       - ./logs:/app/logs
+      - ./reports:/app/reports
     ports:
       - "${API_HOST_PORT:-18085}:8085"
     depends_on:
@@ -38,6 +40,7 @@ services:
       AUS_ELE_DB_PATH: /app/data/aemo_data.db
       AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_WORKER_ENABLE_SCHEDULER:-true}
       AUS_ELE_ENABLE_JOB_WORKER: ${AUS_ELE_WORKER_ENABLE_JOB_WORKER:-true}
+      AUS_ELE_RECONCILIATION_ENABLED: ${AUS_ELE_RECONCILIATION_ENABLED:-false}
       AUS_ELE_CORS_ALLOW_ORIGINS: ${AUS_ELE_CORS_ALLOW_ORIGINS:-http://localhost:${WEB_HOST_PORT:-18080},http://127.0.0.1:${WEB_HOST_PORT:-18080}}
       AUS_ELE_CORS_ALLOW_CREDENTIALS: ${AUS_ELE_CORS_ALLOW_CREDENTIALS:-false}
       REDIS_URL: redis://redis:6379/0
@@ -52,6 +55,7 @@ services:
       - ./output:/app/output
       - ./data_lake:/app/data_lake
       - ./logs:/app/logs
+      - ./reports:/app/reports
     depends_on:
       - redis
 

@@ -9,6 +9,8 @@ Uses the CoOptimizationEngine from engines/co_optimization_engine.py.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import sqlite3
 
@@ -23,6 +25,32 @@ from network_fees import get_settlement_interval
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/co-optimization", tags=["Co-Optimization"])
+
+# ---------------------------------------------------------------------------
+# In-memory cache for co-optimization results
+# Key: hash of (region, year, month, resolution, power_mw, duration_hours, rte)
+# Value: CoOptimizationResponse dict
+# ---------------------------------------------------------------------------
+_COOPT_CACHE: dict[str, dict] = {}
+_COOPT_CACHE_MAX_SIZE = 50
+
+
+def _build_cache_key(params: CoOptimizationParams) -> str:
+    """Build a deterministic cache key from request parameters."""
+    key_data = {
+        "market": params.market,
+        "region": params.region,
+        "year": params.year,
+        "month": params.month,
+        "resolution": params.resolution,
+        "power_mw": params.power_mw,
+        "duration_hours": params.duration_hours,
+        "round_trip_efficiency": params.round_trip_efficiency,
+        "fcas_services": sorted(params.fcas_services),
+        "fcas_max_capacity_pct": params.fcas_max_capacity_pct,
+    }
+    serialized = json.dumps(key_data, sort_keys=True)
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16]
 
 # ---------------------------------------------------------------------------
 # Valid regions per market
@@ -62,18 +90,7 @@ def _load_energy_prices(
 ) -> list[dict]:
     """Load energy price data from the trading_price table.
 
-    Args:
-        db: DatabaseManager instance.
-        region: Market region identifier.
-        year: Data year.
-        month: Optional month filter (1-12). None loads full year.
-        interval_minutes: Settlement interval in minutes.
-
-    Returns:
-        List of dicts with keys: timestamp, price, interval_hours.
-
-    Raises:
-        HTTPException: If table or data not found.
+    Returns empty list if no data found (graceful degradation).
     """
     table_name = f"trading_price_{year}"
     interval_hours = interval_minutes / 60.0
@@ -88,10 +105,7 @@ def _load_energy_prices(
                 (table_name,),
             )
             if not cursor.fetchone():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No price data available for year {year}",
-                )
+                return []
 
             # Build query with optional month filter
             query = f"""
@@ -102,7 +116,6 @@ def _load_energy_prices(
             params: list = [region]
 
             if month is not None:
-                # Filter by month using substring of settlement_date (YYYY-MM-DD format)
                 month_prefix = f"{year}-{month:02d}"
                 query += " AND settlement_date LIKE ?"
                 params.append(f"{month_prefix}%")
@@ -111,13 +124,6 @@ def _load_energy_prices(
 
             cursor.execute(query, params)
             rows = cursor.fetchall()
-
-            if not rows:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No price data found for region {region} in year {year}"
-                    + (f" month {month}" if month else ""),
-                )
 
             return [
                 {
@@ -280,6 +286,12 @@ async def run_co_optimization(
         )
 
     db = get_db()
+
+    # --- Cache lookup ---
+    cache_key = _build_cache_key(params)
+    if cache_key in _COOPT_CACHE:
+        logger.info(f"Co-optimization cache hit: {params.region}/{params.year}-{params.month} ({params.resolution})")
+        return CoOptimizationResponse(**_COOPT_CACHE[cache_key])
     interval_minutes = get_settlement_interval(params.region)
 
     # Load energy prices
@@ -292,6 +304,59 @@ async def run_co_optimization(
         db, params.region, params.year, params.month, params.fcas_services
     )
 
+    # Graceful degradation: if no energy price data available, return empty result
+    if not energy_prices:
+        return CoOptimizationResponse(
+            status="infeasible",
+            optimality_gap=None,
+            energy_revenue=0.0,
+            fcas_revenue=0.0,
+            total_gross_revenue=0.0,
+            total_net_revenue=0.0,
+            energy_only_revenue=0.0,
+            co_optimization_uplift=0.0,
+            binding_constraints=[],
+            monthly_breakdown=[],
+            solve_time_seconds=0.0,
+            solver_status=f"No price data available for {params.region} in {params.year}"
+            + (f" month {params.month}" if params.month else ""),
+        )
+
+    # Downsample to 30-minute intervals for MILP performance (fast mode only)
+    # 5-min data → 30-min: reduces problem size by 6x (from ~9000 to ~1500 variables per month)
+    # In precise mode, keep original 5-min data for higher accuracy
+    if params.resolution == "fast" and len(energy_prices) > 2000 and interval_minutes <= 5:
+        downsampled = []
+        bucket_size = 6  # 6 × 5min = 30min
+        for i in range(0, len(energy_prices), bucket_size):
+            bucket = energy_prices[i:i + bucket_size]
+            avg_price = sum(p["price"] for p in bucket) / len(bucket)
+            downsampled.append({
+                "timestamp": bucket[0]["timestamp"],
+                "price": avg_price,
+                "interval_hours": 0.5,  # 30 minutes
+            })
+        energy_prices = downsampled
+        # Also downsample FCAS prices
+        if fcas_prices:
+            for service in list(fcas_prices.keys()):
+                prices = fcas_prices[service]
+                if len(prices) > 2000:
+                    ds_prices = []
+                    for i in range(0, len(prices), bucket_size):
+                        bucket = prices[i:i + bucket_size]
+                        ds_prices.append(sum(bucket) / len(bucket))
+                    fcas_prices[service] = ds_prices
+        logger.info(
+            f"Downsampled {params.region} {params.year}-{params.month} from "
+            f"{len(energy_prices) * bucket_size} to {len(energy_prices)} intervals (30-min)"
+        )
+    elif params.resolution == "precise":
+        logger.info(
+            f"Precise mode: keeping original {interval_minutes}-min data "
+            f"({len(energy_prices)} intervals) for {params.region} {params.year}-{params.month}"
+        )
+
     # Build BatterySpecs for the engine
     battery_specs = BatterySpecs(
         power_mw=params.power_mw,
@@ -300,10 +365,15 @@ async def run_co_optimization(
     )
 
     # Build CoOptConfig
+    # In precise mode, allow up to 120s time limit for larger problem size
+    effective_time_limit = params.time_limit_seconds
+    if params.resolution == "precise":
+        effective_time_limit = min(params.time_limit_seconds, 120)
+
     config = CoOptConfig(
         fcas_services=params.fcas_services,
         fcas_max_capacity_pct=params.fcas_max_capacity_pct,
-        time_limit_seconds=params.time_limit_seconds,
+        time_limit_seconds=effective_time_limit,
         optimality_gap_tolerance=params.optimality_gap_tolerance,
         monthly_segmentation=(params.month is None),  # segment by month only for full year
     )
@@ -329,7 +399,7 @@ async def run_co_optimization(
             detail=f"Optimization engine error: {e}",
         )
 
-    return CoOptimizationResponse(
+    response = CoOptimizationResponse(
         status=result.status,
         optimality_gap=result.optimality_gap,
         energy_revenue=result.energy_revenue,
@@ -343,3 +413,14 @@ async def run_co_optimization(
         solve_time_seconds=result.solve_time_seconds,
         solver_status=result.solver_status,
     )
+
+    # --- Cache store ---
+    if response.status in ("optimal", "feasible"):
+        if len(_COOPT_CACHE) >= _COOPT_CACHE_MAX_SIZE:
+            # Evict oldest entry
+            oldest_key = next(iter(_COOPT_CACHE))
+            del _COOPT_CACHE[oldest_key]
+        _COOPT_CACHE[cache_key] = response.model_dump()
+        logger.info(f"Co-optimization cached: {params.region}/{params.year}-{params.month} ({params.resolution}) in {result.solve_time_seconds:.1f}s")
+
+    return response

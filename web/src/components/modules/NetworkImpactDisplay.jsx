@@ -56,7 +56,7 @@ const LABELS = {
   },
 };
 
-export default function NetworkImpactDisplay({ config, lang = 'en', region }) {
+export default function NetworkImpactDisplay({ config, lang = 'zh', region }) {
   const { filters } = useFilters();
   const t = LABELS[lang] || LABELS.en;
   const [data, setData] = useState(null);

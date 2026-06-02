@@ -154,7 +154,7 @@ function ForecastDeskPanel({ payload, locale = 'en', sectionCopy, fallbackMarket
 
 export default function GridForecast({ apiBase, region, locale = 'en', t, regimeCompactCopy }) {
   const market = region === 'WEM' ? 'WEM' : 'NEM';
-  const [horizon, setHorizon] = useState('24h');
+  const [horizon, setHorizon] = useState('30d');
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);

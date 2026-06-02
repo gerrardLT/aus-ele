@@ -1,8 +1,9 @@
 {
   "metadata": {
-    "last_updated": "2025-06-15T10:30:00+10:00",
-    "source": "AEMO Generation Information Report Q2 2025",
-    "version": 3
+    "last_updated": "2026-05-29T10:00:00+10:00",
+    "source": "AEMO Generation Information Report + Modo Energy NEM Q4 2025 Buildout Report",
+    "version": 4,
+    "notes": "v4: QLD BESS data corrected — Bouldercombe fixed to 50MW (was 200MW), added confirmed QLD projects (Chinchilla, Swanbank, Ulinda Park, Smithfield, Brendale, Broadsound, Woolooga) + aggregated entry to match Modo Q4 2025 anchor of 1.86GW operational QLD BESS. Added 2027+ pipeline (Edify, Teebar, Belah, Central BESS)."
   },
   "projects": [
     {
@@ -176,13 +177,157 @@
     {
       "region": "QLD1",
       "project_name": "Bouldercombe Battery",
+      "capacity_mw": 50,
+      "duration_hours": 2,
+      "energy_mwh": 100,
+      "status": "registered",
+      "expected_commissioning_date": "2023-06-01",
+      "actual_commissioning_date": "2023-07-01",
+      "owner": "Genex Power",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Chinchilla BESS",
+      "capacity_mw": 100,
+      "duration_hours": 2,
+      "energy_mwh": 200,
+      "status": "registered",
+      "expected_commissioning_date": "2024-03-01",
+      "actual_commissioning_date": "2025-04-14",
+      "owner": "CS Energy",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Swanbank Battery",
+      "capacity_mw": 250,
+      "duration_hours": 2,
+      "energy_mwh": 500,
+      "status": "registered",
+      "expected_commissioning_date": "2025-10-01",
+      "actual_commissioning_date": "2026-02-01",
+      "owner": "CleanCo Queensland",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Ulinda Park BESS",
+      "capacity_mw": 155,
+      "duration_hours": 2,
+      "energy_mwh": 298,
+      "status": "registered",
+      "expected_commissioning_date": "2025-11-01",
+      "actual_commissioning_date": "2025-11-15",
+      "owner": "Akaysha Energy",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Smithfield BESS",
+      "capacity_mw": 300,
+      "duration_hours": 2,
+      "energy_mwh": 600,
+      "status": "registered",
+      "expected_commissioning_date": "2025-09-01",
+      "actual_commissioning_date": "2025-10-01",
+      "owner": "Various",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "QLD Distributed & Other BESS (aggregated)",
+      "capacity_mw": 905,
+      "duration_hours": 2,
+      "energy_mwh": 1810,
+      "status": "registered",
+      "expected_commissioning_date": "2025-09-01",
+      "actual_commissioning_date": "2025-12-01",
+      "owner": "Various (aggregated per Modo Q4 2025 Buildout Report)",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Brendale BESS",
+      "capacity_mw": 205,
+      "duration_hours": 2,
+      "energy_mwh": 410,
+      "status": "registered",
+      "expected_commissioning_date": "2026-06-01",
+      "actual_commissioning_date": "2026-01-20",
+      "owner": "Akaysha Energy",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Broadsound BESS",
+      "capacity_mw": 180,
+      "duration_hours": 2,
+      "energy_mwh": 360,
+      "status": "construction",
+      "expected_commissioning_date": "2026-06-01",
+      "actual_commissioning_date": null,
+      "owner": "Iberdrola",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Woolooga BESS",
       "capacity_mw": 200,
       "duration_hours": 2,
       "energy_mwh": 400,
-      "status": "committed",
-      "expected_commissioning_date": "2025-12-01",
+      "status": "construction",
+      "expected_commissioning_date": "2026-09-01",
       "actual_commissioning_date": null,
-      "owner": "Genex Power",
+      "owner": "Lightsource bp",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Edify Smoky Creek & Guthries Gap BESS",
+      "capacity_mw": 600,
+      "duration_hours": 4,
+      "energy_mwh": 2400,
+      "status": "committed",
+      "expected_commissioning_date": "2028-06-01",
+      "actual_commissioning_date": null,
+      "owner": "Edify Energy",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Teebar BESS",
+      "capacity_mw": 400,
+      "duration_hours": 4,
+      "energy_mwh": 1600,
+      "status": "committed",
+      "expected_commissioning_date": "2027-12-01",
+      "actual_commissioning_date": null,
+      "owner": "Atmos Renewables",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Belah BESS",
+      "capacity_mw": 400,
+      "duration_hours": 4,
+      "energy_mwh": 1600,
+      "status": "committed",
+      "expected_commissioning_date": "2027-09-01",
+      "actual_commissioning_date": null,
+      "owner": "Various",
+      "technology": "Li-ion LFP"
+    },
+    {
+      "region": "QLD1",
+      "project_name": "Central BESS (Bouldercombe)",
+      "capacity_mw": 500,
+      "duration_hours": 2,
+      "energy_mwh": 1000,
+      "status": "committed",
+      "expected_commissioning_date": "2027-06-01",
+      "actual_commissioning_date": null,
+      "owner": "AC Energy",
       "technology": "Li-ion LFP"
     },
     {

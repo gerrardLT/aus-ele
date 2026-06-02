@@ -115,7 +115,7 @@ function generateLabel(config) {
   return `For YOUR ${config.power_mw}MW/${config.duration_hours}h BESS at ${config.region}`;
 }
 
-export default function AssetConfigPanel({ lang = 'en', onConfigChange }) {
+export default function AssetConfigPanel({ lang = 'zh', onConfigChange }) {
   const t = LABELS[lang] || LABELS.en;
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [errors, setErrors] = useState({});

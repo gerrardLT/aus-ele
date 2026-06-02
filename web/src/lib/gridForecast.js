@@ -110,6 +110,8 @@ const FORECAST_COPY = {
       core_only_coverage: 'WEM is currently running in core-only mode and does not represent full-market coverage.',
       confidence_constrained: 'Forecast confidence is constrained by currently available source coverage.',
       predispatch_missing_fallback: 'Official predispatch data was incomplete, so the model fell back to history plus event signals.',
+      not_backtested: 'This forecast has not been backtested against historical outcomes.',
+      not_calibrated: 'Model parameters have not been calibrated to recent market conditions.',
     },
     generic: {
       notAvailable: 'n/a',
@@ -239,6 +241,8 @@ const FORECAST_COPY = {
       core_only_coverage: '当前 WEM 仍为核心覆盖模式，不代表全市场完整覆盖。',
       confidence_constrained: '当前预测置信度受限于可用数据覆盖范围。',
       predispatch_missing_fallback: '官方预调度数据不完整，当前结果已回退为历史加事件信号估计。',
+      not_backtested: '该预测尚未经过历史数据回测验证。',
+      not_calibrated: '模型参数尚未针对近期市场状况进行校准。',
     },
     generic: {
       notAvailable: '暂无',

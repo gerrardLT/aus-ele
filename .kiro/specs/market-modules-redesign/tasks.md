@@ -1,5 +1,20 @@
 # Implementation Plan: Market Modules Redesign
 
+## Status: NOT STARTED (待规划)
+
+**当前状态**: 11 个顶层任务全部未启动。spec 三件套(requirements / design / tasks)已完成,但实际编码尚未开始。
+
+**与已完成 spec 的关系**:
+- 部分子模块(marketConfig 形态、阶段配置)已在 `frontend-rewrite` 与 `information-architecture-redesign` 中按 4 阶段架构落地
+- 本 spec 的 5-6 阶段升级 + LP/MILP 联合优化引擎 + 7 个新分析模块**尚未与已落地的代码形态对齐**,启动前需要重审 design.md 是否仍然适用
+
+**建议处理路径**:
+1. **保留待规划** - 本 spec 作为后续大型重构的占位,启动前需要重新评估
+2. **拆分为多个小 spec** - 把"marketConfig 升级"、"NEM 模块端点"、"WEM 模块端点"、"联合优化引擎"等拆成独立 spec 分批落地
+3. **关闭本 spec** - 如果业务优先级已变,可标记 SUPERSEDED 并归档
+
+> 32 个子任务的勾选标记是 spec 创建时的 placeholder,**不代表实际完成**。实施时需要重新核对每个子任务。
+
 ## Overview
 
 将 AEMO Intelligence 平台从现有 4 阶段硬编码分析流程升级为 5-6 阶段动态模块化架构。包括：升级 marketConfig 为数组格式支持动态注册、新增容量数据源、实现 7 个新分析模块的后端 API 和前端组件、引入 LP/MILP 联合优化引擎、以及将 MarketPage 迁移为配置驱动的动态渲染。

@@ -263,7 +263,7 @@ const DEFAULT_INVESTMENT_COPY = {
   },
 };
 
-export function getInvestmentCopy(lang = 'en', overrides = {}) {
+export function getInvestmentCopy(lang = 'zh', overrides = {}) {
   const locale = lang === 'zh' ? 'zh' : 'en';
   return {
     ...DEFAULT_INVESTMENT_COPY[locale],

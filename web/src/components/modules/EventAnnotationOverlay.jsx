@@ -125,7 +125,7 @@ function buildGroupItem(group) {
 // 详情面板组件
 // ---------------------------------------------------------------------------
 
-function EventDetailPanel({ event, onClose, lang = 'en' }) {
+function EventDetailPanel({ event, onClose, lang = 'zh' }) {
   if (!event) return null;
 
   const style = EVENT_STYLES[event.event_type] || {};
@@ -178,7 +178,7 @@ function EventDetailPanel({ event, onClose, lang = 'en' }) {
 }
 
 /** 聚类展开面板 - 显示聚类内所有事件 */
-function ClusterDetailPanel({ cluster, onEventClick, onClose, lang = 'en' }) {
+function ClusterDetailPanel({ cluster, onEventClick, onClose, lang = 'zh' }) {
   if (!cluster) return null;
   const isZh = lang === 'zh';
 
@@ -250,7 +250,7 @@ export default function EventAnnotationOverlay({
   chartHeight,
   yOffset = 20,
   onEventClick: externalOnEventClick,
-  lang = 'en',
+  lang = 'zh',
 }) {
   const { filters } = useFilters();
   const region = regionProp || filters.region;

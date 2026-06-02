@@ -30,6 +30,7 @@ const LABELS = {
     retry: '重试',
     noData: '暂无对比数据',
     staleWarning: '数据已过期（超过12个月未更新）',
+    lastUpdated: '最后更新',
     categories: {
       coal_retirements: '煤电退役日期',
       revenue_benchmarks: '收入基准',
@@ -49,6 +50,7 @@ const LABELS = {
     retry: 'Retry',
     noData: 'No comparison data available',
     staleWarning: 'Data is stale (not updated in 12+ months)',
+    lastUpdated: 'Last updated',
     categories: {
       coal_retirements: 'Coal Retirements',
       revenue_benchmarks: 'Revenue Benchmarks',
@@ -60,7 +62,7 @@ const LABELS = {
 const DISCREPANCY_THRESHOLD = 10;
 
 // eslint-disable-next-line no-unused-vars
-export default function CrossValidationTable({ config, lang = 'en', category: propCategory }) {
+export default function CrossValidationTable({ config, lang = 'zh', category: propCategory }) {
   const t = LABELS[lang] || LABELS.en;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -185,7 +187,7 @@ export default function CrossValidationTable({ config, lang = 'en', category: pr
       {/* Last updated info */}
       {data.last_updated && (
         <p className="text-xs text-[var(--color-muted)] mt-3 font-sans">
-          Last updated: {data.last_updated}
+          {t.lastUpdated}: {data.last_updated}
         </p>
       )}
     </div>

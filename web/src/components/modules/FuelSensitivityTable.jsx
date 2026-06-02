@@ -52,7 +52,7 @@ const LABELS = {
   },
 };
 
-export default function FuelSensitivityTable({ config, lang = 'en', region }) {
+export default function FuelSensitivityTable({ config, lang = 'zh', region }) {
   const { filters } = useFilters();
   const t = LABELS[lang] || LABELS.en;
   const [data, setData] = useState(null);

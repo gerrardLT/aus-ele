@@ -44,6 +44,17 @@ const LABELS = {
     retry: '重试',
     noData: '暂无数据',
     noHistorical: '历史数据不可用，仅显示预测',
+    directionAccuracy: '方向准确率',
+    aiCalibrated: 'AI 校准',
+    calibrationBadge: 'AI 校准',
+    r2Label: 'R²',
+    maeLabel: 'MAE',
+    directionLabel: '方向准确率',
+    validationTitle: '收入反推验证',
+    modelRevenue: '模型收入',
+    benchmark: 'Modo 基准',
+    dataSource: '数据来源: Modo Energy',
+    validationUnavailable: '验证数据不可用',
   },
   en: {
     title: 'Forward Spread Curve',
@@ -60,8 +71,30 @@ const LABELS = {
     retry: 'Retry',
     noData: 'No data available',
     noHistorical: 'Historical data unavailable, showing projection only',
+    directionAccuracy: 'Direction Acc.',
+    aiCalibrated: 'AI Calibrated',
+    calibrationBadge: 'AI Calibrated',
+    r2Label: 'R²',
+    maeLabel: 'MAE',
+    directionLabel: 'Direction Accuracy',
+    validationTitle: 'Revenue Backvalidation',
+    modelRevenue: 'Model Revenue',
+    benchmark: 'Modo Benchmark',
+    dataSource: 'Source: Modo Energy',
+    validationUnavailable: 'Validation data unavailable',
   },
 };
+
+/**
+ * 偏差颜色编码：绿色(≤15%)、琥珀色(15-30%)、红色(>30%)
+ */
+function _getDeviationColor(deviation) {
+  if (deviation == null) return 'bg-gray-100 text-gray-600';
+  const abs = Math.abs(deviation);
+  if (abs <= 15) return 'bg-green-100 text-green-800';
+  if (abs <= 30) return 'bg-amber-100 text-amber-800';
+  return 'bg-red-100 text-red-800';
+}
 
 export default function ForwardSpreadCurve({ config, lang = 'zh', region: regionProp }) {
   const { filters } = useFilters();
@@ -70,6 +103,8 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [calibrationStatus, setCalibrationStatus] = useState(null);
+  const [backvalidation, setBackvalidation] = useState(null);
 
   const region = regionProp || filters.region;
 
@@ -85,6 +120,43 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
       })
       .catch(() => {
         if (!cancelled) { setError(true); setLoading(false); }
+      });
+
+    return () => { cancelled = true; };
+  }, [region]);
+
+  // 加载校准状态（精度指标）— 仅 mount 时触发一次
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchJson(`${API_BASE}/v1/narrative/calibration-status`)
+      .then((res) => {
+        if (!cancelled) {
+          if (res && res.status && res.status !== 'not_available' && res.status !== 'not_run') {
+            setCalibrationStatus(res);
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCalibrationStatus(null);
+      });
+
+    return () => { cancelled = true; };
+  }, []);
+
+  // 加载反推验证数据
+  useEffect(() => {
+    if (!region) return;
+    let cancelled = false;
+
+    fetchJson(`${API_BASE}/v1/narrative/backvalidation/${region}`)
+      .then((res) => {
+        if (!cancelled && res && res.model_revenue) {
+          setBackvalidation(res);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBackvalidation(null);
       });
 
     return () => { cancelled = true; };
@@ -118,8 +190,32 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
 
   return (
     <div data-testid="forward-spread-curve" className="mt-3">
-      <h3 className="text-xl font-serif font-bold mb-1">{t.title}</h3>
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="text-xl font-serif font-bold">{t.title}</h3>
+        {calibrationStatus && calibrationStatus.status && calibrationStatus.status !== 'not_available' && calibrationStatus.status !== 'not_run' && (
+          <span
+            className={`inline-block px-2 py-0.5 text-xs rounded font-sans ${
+              calibrationStatus.status === 'calibrated'
+                ? 'bg-green-100 text-green-800'
+                : 'bg-amber-100 text-amber-800'
+            }`}
+            title={calibrationStatus.status !== 'calibrated'
+              ? `${calibrationStatus.status}${calibrationStatus.calibrated_at ? ` (${calibrationStatus.calibrated_at})` : ''}`
+              : undefined}
+          >
+            {t.calibrationBadge}
+          </span>
+        )}
+      </div>
       <p className="text-xs text-[var(--color-muted)] font-sans mb-4">{t.subtitle}</p>
+
+      {calibrationStatus && calibrationStatus.validation_r2 != null && (
+        <div className="flex gap-4 text-xs text-[var(--color-muted)] font-sans mb-2">
+          <span>{t.r2Label}: {calibrationStatus.validation_r2.toFixed(2)}</span>
+          <span>{t.maeLabel}: ${calibrationStatus.validation_mae?.toFixed(1)}/MWh</span>
+          <span>{t.directionLabel}: {(calibrationStatus.direction_accuracy * 100).toFixed(0)}%</span>
+        </div>
+      )}
 
       {!data.historical_available && (
         <p className="text-xs text-[var(--color-muted)] italic mb-2">{t.noHistorical}</p>
@@ -215,6 +311,27 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+
+      {/* 反推验证摘要 */}
+      {backvalidation ? (
+        <div className="mt-4 p-3 border border-[var(--color-border)] rounded text-xs font-sans">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-bold">{t.validationTitle}</span>
+            <span className={`px-2 py-0.5 rounded-full ${_getDeviationColor(backvalidation.deviation_percent)}`}>
+              {backvalidation.status === 'within_range' ? '✓' : '⚠'} {backvalidation.deviation_percent != null ? `${backvalidation.deviation_percent > 0 ? '+' : ''}${backvalidation.deviation_percent.toFixed(1)}%` : 'N/A'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-[var(--color-muted)]">
+            <div>{t.modelRevenue}: <span className="text-[var(--color-text)]">${backvalidation.model_revenue?.toLocaleString(undefined, {maximumFractionDigits: 0})}/MW</span></div>
+            <div>{t.benchmark}: <span className="text-[var(--color-text)]">${backvalidation.benchmark_revenue?.toLocaleString(undefined, {maximumFractionDigits: 0})}/MW</span></div>
+          </div>
+          <p className="mt-2 text-[var(--color-muted)] italic">{t.dataSource}</p>
+        </div>
+      ) : (
+        calibrationStatus && (
+          <p className="mt-3 text-xs text-[var(--color-muted)]">{t.validationUnavailable}</p>
+        )
+      )}
     </div>
   );
 }

@@ -133,7 +133,7 @@ export default function ModuleRenderer({ moduleEntry, config, lang }) {
     FcasAnalysis: { t: { ...t.fcas, ...t.peak_analysis, loadingMsg: t.loading_states?.fcas }, month: filters.months?.[0] || 'ALL', quarter: filters.quarter, dayType: filters.dayType, regimeCompactCopy: t.regime_compact },
     ChargingWindow: { t: { ...t.charging, ...t.peak_analysis, loadingMsg: t.loading_states?.charging }, regimeCompactCopy: t.regime_compact },
     GridForecast: { locale: lang, t: t.forecast, regimeCompactCopy: t.regime_compact },
-    InvestmentAnalysis: { t, showDecisionPanel: false },
+    InvestmentAnalysis: { t, showDecisionPanel: false, regimeCompactCopy: t.regime_compact },
     CycleCost: { t: { ...t.cycleCost, ...t.peak_analysis, loadingMsg: t.loading_states?.cycleCost }, month: filters.months?.[0] || 'ALL', quarter: filters.quarter, dayType: filters.dayType, regimeCompactCopy: t.regime_compact },
     ReportPreview: { t: t.reportPreview || { title: lang === 'zh' ? '报告预览' : 'Report Preview' }, month: filters.months?.[0] || 'ALL' },
     WemEssAnalysis: {},

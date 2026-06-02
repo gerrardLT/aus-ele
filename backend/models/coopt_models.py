@@ -35,6 +35,12 @@ class CoOptimizationParams(BaseModel):
         default=0.5, ge=0, le=1, description="FCAS 最大预留比例"
     )
 
+    # 求解精度模式
+    resolution: Literal["fast", "precise"] = Field(
+        default="fast",
+        description="fast=30min intervals (~6s), precise=5min intervals (~60-90s)",
+    )
+
     # 求解器参数
     time_limit_seconds: int = Field(default=60, ge=10, le=300)
     optimality_gap_tolerance: float = Field(default=0.01, ge=0, le=0.1)

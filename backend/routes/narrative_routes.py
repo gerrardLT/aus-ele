@@ -20,8 +20,9 @@ Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 10.1, 10.2, 10.3, 10.4, 10.5
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -89,6 +90,93 @@ def _validate_region(region: str) -> None:
                 f"Supported regions: {sorted(SUPPORTED_REGIONS)}"
             ),
         )
+
+
+def _get_modo_benchmark(region: str, period: str = None) -> dict:
+    """Load Modo Energy benchmark data for a region.
+
+    Falls back to NEM_AVG if region-specific data is missing.
+    """
+    evidence_path = _DATA_DIR / "financial_evidence.json"
+    if not evidence_path.exists():
+        return {"revenue": 0, "period": "unknown", "source": "unavailable"}
+
+    with open(evidence_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    benchmarks = data.get("modo_benchmarks", {}).get("benchmarks", {})
+
+    # Use most recent period if not specified
+    if period is None:
+        available = sorted(benchmarks.keys(), reverse=True)
+        period = available[0] if available else "2024_full"
+
+    period_data = benchmarks.get(period, {})
+    revenue = period_data.get(region, period_data.get("NEM_AVG", 0))
+
+    return {
+        "revenue": revenue,
+        "period": period,
+        "source": data.get("modo_benchmarks", {}).get("source", "Modo Energy"),
+    }
+
+
+def _compute_backvalidation(engine: ForwardPriceEngine, region: str) -> dict:
+    """Compute backvalidation: mean_spread → annualized revenue → compare to Modo benchmark."""
+    from engines.forward_price_engine import PEAK_DEMAND
+
+    current_year = date.today().year
+    target_year = current_year + 1
+
+    # Get current mean_spread from the engine
+    bess_capacity = engine._get_cumulative_bess_capacity(
+        region, ScenarioType.CENTRAL, target_year
+    )
+    peak_demand = PEAK_DEMAND.get(region, 10000.0)
+    bess_ratio = bess_capacity / peak_demand
+
+    dist = engine.calculate_price_distribution(
+        region=region,
+        scenario=ScenarioType.CENTRAL,
+        year=target_year,
+        bess_capacity_ratio=bess_ratio,
+    )
+
+    mean_spread = dist.mean_spread
+
+    # Revenue formula: spread × 365 × 4h × capture_rate(0.65) × RTE(0.87)
+    model_revenue = mean_spread * 365 * 4 * 0.65 * 0.87
+
+    # Get Modo benchmark
+    benchmark_info = _get_modo_benchmark(region)
+    benchmark_revenue = benchmark_info["revenue"]
+
+    # Compute deviation
+    if benchmark_revenue > 0:
+        deviation_percent = (model_revenue - benchmark_revenue) / benchmark_revenue * 100
+        status = "out_of_range" if abs(deviation_percent) > 30 else "within_range"
+    else:
+        deviation_percent = None
+        status = "benchmark_unavailable"
+
+    # Get confidence interval from calibration if available
+    confidence_interval = None
+    if hasattr(engine, '_calibration') and engine._calibration:
+        ci = engine._calibration.get("confidence_interval")
+        if ci:
+            confidence_interval = ci
+
+    return {
+        "region": region,
+        "model_revenue": round(model_revenue, 2),
+        "benchmark_revenue": benchmark_revenue,
+        "deviation_percent": round(deviation_percent, 1) if deviation_percent is not None else None,
+        "status": status,
+        "mean_spread": round(mean_spread, 2),
+        "confidence_interval": confidence_interval,
+        "benchmark_period": benchmark_info["period"],
+        "benchmark_source": benchmark_info["source"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -592,3 +680,131 @@ async def get_network_impact(
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/narrative/backvalidation/summary
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/backvalidation/summary",
+    summary="Get backvalidation summary for all regions",
+    description=(
+        "Returns revenue backvalidation results for all NEM regions, "
+        "comparing model predictions against Modo Energy benchmarks."
+    ),
+)
+async def get_backvalidation_summary():
+    """返回全区域反推验证摘要。"""
+    engine = _get_forward_price_engine()
+
+    # Check ML calibration availability
+    if not engine._calibration or engine._calibration.get("status") == "not_available":
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "calibration_not_available"},
+        )
+
+    backvalidation_regions = ["NSW1", "QLD1", "VIC1", "SA1"]
+    results = []
+
+    for region in backvalidation_regions:
+        try:
+            result = _compute_backvalidation(engine, region)
+            results.append(result)
+        except Exception as e:
+            logger.warning(f"Backvalidation failed for {region}: {e}")
+            results.append({
+                "region": region,
+                "model_revenue": None,
+                "benchmark_revenue": None,
+                "deviation_percent": None,
+                "status": "error",
+                "mean_spread": None,
+                "confidence_interval": None,
+                "benchmark_period": None,
+                "benchmark_source": "Modo Energy",
+            })
+
+    # Sort by absolute deviation descending
+    results.sort(
+        key=lambda r: abs(r.get("deviation_percent") or 0),
+        reverse=True,
+    )
+
+    # Count statuses
+    within_range = sum(1 for r in results if r.get("status") == "within_range")
+    out_of_range = sum(1 for r in results if r.get("status") in ("out_of_range", "direction_mismatch"))
+
+    return {
+        "regions": results,
+        "within_range_count": within_range,
+        "out_of_range_count": out_of_range,
+        "benchmark_source": "Modo Energy",
+        "validated_at": datetime.now().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/narrative/backvalidation/{region}
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/backvalidation/{region}",
+    summary="Get backvalidation for a single region",
+    description=(
+        "Returns revenue backvalidation result for a specific NEM region, "
+        "comparing model prediction against Modo Energy benchmark."
+    ),
+)
+async def get_backvalidation_region(
+    region: str = PathParam(description="NEM region: NSW1, QLD1, VIC1, SA1"),
+):
+    """返回单区域反推验证结果。"""
+    backvalidation_regions = ["NSW1", "QLD1", "VIC1", "SA1"]
+    if region not in backvalidation_regions:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid region '{region}' for backvalidation. "
+                f"Supported regions: {backvalidation_regions}"
+            ),
+        )
+
+    engine = _get_forward_price_engine()
+
+    # Check if ML calibration is available
+    if not engine._calibration or engine._calibration.get("status") == "not_available":
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "calibration_not_available"},
+        )
+
+    try:
+        return _compute_backvalidation(engine, region)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backvalidation computation failed: {e}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/narrative/calibration-status
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/calibration-status",
+    summary="Get ML calibration status",
+    description=(
+        "Returns the current ML parameter calibration status, including "
+        "validation metrics and calibration timestamp."
+    ),
+)
+async def get_calibration_status():
+    """返回 ML 校准状态。"""
+    engine = _get_forward_price_engine()
+    return engine._calibration or {"status": "not_available"}

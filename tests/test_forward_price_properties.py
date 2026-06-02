@@ -544,14 +544,14 @@ class TestRevenueEfficiencyMetamorphic:
         target_year = date.today().year + 5
         soh = 1.0
 
-        revenue_low = engine.estimate_annual_revenue(
+        revenue_low, _ = engine.estimate_annual_revenue(
             region=region,
             scenario=scenario,
             year=target_year,
             battery=battery_low,
             soh=soh,
         )
-        revenue_high = engine.estimate_annual_revenue(
+        revenue_high, _ = engine.estimate_annual_revenue(
             region=region,
             scenario=scenario,
             year=target_year,

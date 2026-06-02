@@ -70,7 +70,7 @@ const LABELS = {
   },
 };
 
-export default function RevenueStratificationChart({ config, lang = 'en', region: regionProp }) {
+export default function RevenueStratificationChart({ config, lang = 'zh', region: regionProp }) {
   const { filters } = useFilters();
   const t = LABELS[lang] || LABELS.en;
   const [data, setData] = useState(null);

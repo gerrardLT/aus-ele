@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -107,6 +107,25 @@ class PriceDistribution(BaseModel):
 
 
 # =============================================================================
+# FCAS Revenue Models
+# =============================================================================
+
+
+class FcasRevenueComponent(BaseModel):
+    """FCAS 收入分量（独立于能量套利）。
+
+    Represents the Frequency Control Ancillary Services revenue component
+    for a specific year, separated from energy arbitrage revenue.
+    When computation fails, degraded=True and revenue defaults to 0.0.
+    """
+
+    year: int
+    fcas_revenue_per_mw: float = Field(ge=0.0, description="FCAS 年收入 $/MW")
+    ceiling_per_mw_year: float = Field(ge=0.0, description="FCAS 价格天花板 $/MW/yr")
+    degraded: bool = Field(default=False, description="是否降级（计算失败时为 True）")
+
+
+# =============================================================================
 # Revenue Projection Models
 # =============================================================================
 
@@ -124,6 +143,12 @@ class AnnualRevenueProjection(BaseModel):
     state_of_health: float
     mean_spread: float
     capture_rate: float
+    # --- 新增可选字段（向后兼容）---
+    fcas_revenue_per_mw: Optional[float] = None
+    structural_risks: List[str] = Field(default_factory=list)
+    effective_peak_demand: Optional[float] = None
+    duration_efficiency_factor: Optional[float] = None
+    autobidder_decay: Optional[float] = None
 
 
 class ScenarioProjection(BaseModel):
@@ -139,6 +164,8 @@ class ScenarioProjection(BaseModel):
     annual_projections: List[AnnualRevenueProjection]
     total_revenue_per_mw: float
     npv_per_mw: float
+    # --- 新增可选字段 ---
+    metadata: Optional[Dict[str, Any]] = None
 
 
 # =============================================================================
@@ -185,3 +212,32 @@ class ScenarioComparisonResult(BaseModel):
     central: ScenarioProjection
     high: ScenarioProjection
     low: ScenarioProjection
+
+
+# =============================================================================
+# ML Calibration Metadata Models
+# =============================================================================
+
+
+class CalibrationMetadata(BaseModel):
+    """ML 校准元数据。
+
+    Contains metadata about the ML calibration process, including
+    quality metrics, drift detection results, and regime indicators.
+    All new fields are Optional to maintain backward compatibility.
+    """
+
+    status: str
+    train_period: Optional[str] = None
+    validation_period: Optional[str] = None
+    validation_mae: Optional[float] = None
+    validation_r2: Optional[float] = None
+    direction_accuracy: Optional[float] = None
+    confidence_interval_coverage: Optional[float] = None
+    sample_count: Optional[int] = None
+    calibrated_at: Optional[str] = None
+    # --- 新增字段（Concept Drift & Quantile Regression）---
+    regime_indicator: Optional[str] = None  # "low" | "medium" | "high"
+    extrapolation_warning: Optional[bool] = None
+    concept_drift_detected: Optional[bool] = None
+    pinball_loss: Optional[Dict[str, float]] = None  # {"p10": x, "p50": y, "p90": z}

@@ -68,6 +68,10 @@ def _scheduler_enabled() -> bool:
     return _env_flag("AUS_ELE_ENABLE_SCHEDULER", True)
 
 
+def _reconciliation_enabled() -> bool:
+    return _env_flag("AUS_ELE_RECONCILIATION_ENABLED", True)
+
+
 def _scheduler_timezone() -> ZoneInfo:
     return ZoneInfo(os.environ.get("AUS_ELE_SCHEDULER_TIMEZONE", "UTC"))
 
@@ -132,6 +136,13 @@ async def lifespan(application: FastAPI):
         from pipelines.wem_ess_sync import enqueue_wem_ess_sync_job
         scheduler.add_job(enqueue_wem_ess_sync_job, "cron", hour=wem_ess_h, minute=wem_ess_m,
                           id="wem-ess-daily-sync", max_instances=1, coalesce=True, misfire_grace_time=3600)
+
+        if _reconciliation_enabled():
+            rh = _cron_hour("AUS_ELE_RECONCILIATION_HOUR", 3)
+            from engines.backtest_expansion import run_monthly_reconciliation
+            scheduler.add_job(run_monthly_reconciliation, "cron", day=1, hour=rh,
+                              id="monthly-reconciliation", max_instances=1, coalesce=True, misfire_grace_time=3600)
+            logger.info("Monthly reconciliation job registered (day=1, hour=%02d, tz=%s)", rh, tz.key)
 
         scheduler.start()
         application.state.scheduler = scheduler

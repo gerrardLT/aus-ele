@@ -12,7 +12,6 @@ import FunnelStage from '../../components/funnel/FunnelStage';
 import CollapsibleModule from '../../components/funnel/CollapsibleModule';
 import DeferredSection from '../../components/DeferredSection';
 import { useFilters } from '../../contexts/FilterContext';
-import { STAGE_DEFINITIONS } from '../../lib/marketConfig';
 import { getApiBase } from '../../lib/apiBase';
 import { translations } from '../../translations';
 
@@ -49,16 +48,19 @@ function renderModule(moduleName, filters, lang, t) {
 
 export default function InvestmentDecisionStage({ config, conclusionData, isLoading, onVisible, lang }) {
   const { filters } = useFilters();
-  const stageDef = STAGE_DEFINITIONS[3];
-  const modules = config.stages['investment-decision'].modules;
+  const stageConfig = config.stages?.find?.((s) => s.id === 'investment-decision') || config.stages?.['investment-decision'];
+  const stageDef = stageConfig || { title: { zh: '投资决策', en: 'Investment Decision' }, coreQuestion: { zh: '最终投资建议是什么？', en: "What's the final investment recommendation?" } };
+  const modules = Array.isArray(stageConfig?.modules)
+    ? stageConfig.modules.map((m) => typeof m === 'string' ? m : m.component)
+    : (config.stages?.['investment-decision']?.modules || ['InvestmentAnalysis', 'ReportPreview']);
   const t = translations[lang] || translations.zh;
 
   return (
     <FunnelStage
       stageId="investment-decision"
       stageNumber={4}
-      title={stageDef.title[lang]}
-      coreQuestion={stageDef.coreQuestion[lang]}
+      title={stageDef.title?.[lang] || stageDef.title?.zh || 'Investment Decision'}
+      coreQuestion={stageDef.coreQuestion?.[lang] || stageDef.coreQuestion?.zh || ''}
       conclusionData={conclusionData}
       isLoading={isLoading}
       onVisible={onVisible}

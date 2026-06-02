@@ -85,7 +85,7 @@ const DEFAULT_ASSUMPTIONS = [
 
 const CATEGORY_ORDER = ['battery', 'cost', 'tax', 'forward_price', 'scenario'];
 
-export default function AssumptionPanel({ lang = 'en', onRecalculate }) {
+export default function AssumptionPanel({ lang = 'zh', onRecalculate }) {
   const t = LABELS[lang] || LABELS.en;
 
   const [values, setValues] = useState(() => {
