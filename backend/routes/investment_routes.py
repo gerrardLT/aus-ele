@@ -469,10 +469,10 @@ def _enrich_with_financial_accuracy_modules(
     # 3. If forward_scenario is provided, run ForwardPriceEngine for all 3 scenarios
     if params.forward_scenario is not None:
         try:
-            from engines.forward_price_engine import ForwardPriceEngine
+            from deps import get_forward_price_engine
             from models.forward_price_models import ScenarioComparisonResult, ScenarioType
 
-            engine = ForwardPriceEngine()
+            engine = get_forward_price_engine()
 
             central_projection = engine.generate_20year_projection(
                 region=params.region,

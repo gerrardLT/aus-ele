@@ -147,6 +147,19 @@ def get_job_orchestrator() -> JobOrchestrator:
 # ---------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=1)
+def get_forward_price_engine():
+    """Return the singleton ForwardPriceEngine instance (process-level cache).
+
+    ML calibration runs once on first call (~16s); all subsequent calls
+    return the same instance instantly. The engine is effectively read-only
+    after initialization, so sharing across requests is safe.
+    """
+    from engines.forward_price_engine import ForwardPriceEngine
+
+    return ForwardPriceEngine()
+
+
 async def db_dependency() -> DatabaseManager:
     """FastAPI dependency that yields the shared DatabaseManager."""
     return get_db()

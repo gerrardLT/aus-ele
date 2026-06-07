@@ -70,9 +70,10 @@ _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 
 def _get_forward_price_engine() -> ForwardPriceEngine:
-    """Instantiate ForwardPriceEngine, raising 503 if data files are missing."""
+    """Return the cached singleton ForwardPriceEngine (ML trains once on first call)."""
     try:
-        return ForwardPriceEngine()
+        from deps import get_forward_price_engine
+        return get_forward_price_engine()
     except FileNotFoundError as e:
         raise HTTPException(
             status_code=503,

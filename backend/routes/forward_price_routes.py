@@ -44,7 +44,8 @@ router = APIRouter(prefix="/api", tags=["Forward Price Scenarios"])
 async def get_forward_scenarios() -> List[ScenarioDefinition]:
     """返回可用的前瞻价格情景定义列表。"""
     try:
-        engine = ForwardPriceEngine()
+        from deps import get_forward_price_engine
+        engine = get_forward_price_engine()
         return engine.get_scenarios()
     except FileNotFoundError as e:
         raise HTTPException(
@@ -78,7 +79,8 @@ async def get_forward_scenarios_by_region(
         )
 
     try:
-        engine = ForwardPriceEngine()
+        from deps import get_forward_price_engine
+        engine = get_forward_price_engine()
         battery = BatterySpecs()  # Use default battery specs
 
         central = engine.generate_20year_projection(
