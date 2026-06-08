@@ -358,6 +358,20 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
             <div className="mb-4 rounded border border-red-300 bg-red-50 p-4 text-red-700">{error}</div>
           )}
 
+          {loading && !result && (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-16 text-center">
+              <div className="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-blue-500" />
+              <p className="text-sm font-medium text-[var(--color-text)]">
+                {lang === 'zh' ? '正在计算 20 年投资预测...' : 'Computing 20-year investment projection...'}
+              </p>
+              <p className="mt-2 text-xs text-[var(--color-muted)]">
+                {lang === 'zh'
+                  ? '首次加载需要 30–60 秒（模型校准中），后续请求会快很多'
+                  : 'First load takes 30–60s (model calibrating), subsequent requests will be much faster'}
+              </p>
+            </div>
+          )}
+
           {result && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
               {/* KPI 仪表盘 */}
