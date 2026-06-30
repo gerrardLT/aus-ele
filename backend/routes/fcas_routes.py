@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Query
 from deps import get_db, get_cache
 from network_fees import get_settlement_interval
 from result_metadata import build_result_metadata
+from sql_safe import trading_price_table
 from pipelines.fcas_4s_ingest import (
     FCAS_4S_SERVICES,
     FCAS_4S_TABLE,
@@ -340,14 +341,15 @@ def get_fcas_analysis(
             logger.error(f"WEM ESS analysis error: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
 
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
-                f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,)
             )
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail=f"No data for year {year}")

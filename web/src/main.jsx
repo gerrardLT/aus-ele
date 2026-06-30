@@ -1,8 +1,20 @@
 import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import { resolveRootPage } from './lib/pageRouter.js'
 import { FilterProvider } from './contexts/FilterContext'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,       // 30s — matches apiClient cache TTL
+      gcTime: 5 * 60_000,      // 5min — garbage collect after 5min unused
+      retry: 1,                // 1 retry on failure
+      refetchOnWindowFocus: false,
+    },
+  },
+})
 
 const rootPage = resolveRootPage(globalThis.location?.pathname || '/')
 const MarketPage = lazy(() => import('./pages/MarketPage.jsx'))
@@ -32,8 +44,10 @@ const rootElement = rootPage === 'wem'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <Suspense fallback={<BootFallback />}>
-      {rootElement}
-    </Suspense>
+    <QueryClientProvider client={queryClient}>
+      <Suspense fallback={<BootFallback />}>
+        {rootElement}
+      </Suspense>
+    </QueryClientProvider>
   </StrictMode>,
 )

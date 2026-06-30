@@ -10,8 +10,13 @@ via APScheduler cron or manually through the jobs API.
 
 from __future__ import annotations
 
+import io
 import logging
+import sys
+import time
+import zipfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Protocol
 
 from database import DatabaseManager
@@ -22,9 +27,24 @@ logger = logging.getLogger(__name__)
 # Default start date for initial sync when no previous sync exists
 _DEFAULT_SYNC_START = "2020-01-01T00:00:00Z"
 
+# Maximum days to fetch in a single sync to avoid timeout
+_MAX_SYNC_DAYS = 90
+
 # System status keys
 _LAST_SYNC_KEY = "wem_ess_last_sync"
 _DATA_COMPLETENESS_KEY = "wem_ess_data_completeness"
+
+# Add scrapers directory to path for importing aemo_wem_ess_scraper
+_SCRAPERS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scrapers")
+if _SCRAPERS_DIR not in sys.path:
+    sys.path.insert(0, _SCRAPERS_DIR)
+
+from aemo_wem_ess_scraper import (  # noqa: E402
+    WEM_BASE,
+    download_bytes,
+    extract_slim_solution_rows,
+    list_current_json_urls,
+)
 
 
 class WemEssSourceClient(Protocol):
@@ -49,28 +69,113 @@ class WemEssSourceClient(Protocol):
 
 
 class WemEssSourceClientStub:
-    """Stub source client for development/testing.
+    """Stub source client for offline development/testing.
 
-    Raises NotImplementedError for actual HTTP calls. Replace with a real
-    implementation that wraps the WEM data API (similar to aemo_wem_ess_scraper).
+    Returns an empty list instead of making HTTP calls.
+    Use WemEssAemoClient for production.
     """
 
     def fetch_ess_data(self, *, since: str) -> list[dict]:
-        """Fetch ESS data from WEM source.
+        logger.warning("WemEssSourceClientStub used — returning empty dataset")
+        return []
 
-        In production, this would:
-        1. Parse the `since` timestamp to determine the date range
-        2. Download dispatch solution files (ZIP for historical, JSON for current)
-        3. Extract slim market rows using extract_slim_solution_rows logic
-        4. Return merged/deduplicated records
 
-        Raises:
-            NotImplementedError: Always, until real HTTP implementation is provided.
+class WemEssAemoClient:
+    """Production WEM ESS data client.
+
+    Fetches dispatch solution files from AEMO's public WEM data portal,
+    extracts slim market rows, and returns them for batch upsert.
+
+    Reuses download/parse logic from scrapers/aemo_wem_ess_scraper.py.
+    """
+
+    def fetch_ess_data(self, *, since: str) -> list[dict]:
+        """Fetch ESS market records since the given ISO timestamp.
+
+        Iterates day-by-day from `since` to yesterday (AWST), downloading
+        dispatch solution ZIP/JSON files and extracting slim market rows.
+
+        Args:
+            since: ISO 8601 timestamp string.
+
+        Returns:
+            Deduplicated list of market row dicts ordered by dispatch_interval.
         """
-        raise NotImplementedError(
-            "WemEssSourceClientStub.fetch_ess_data is not implemented. "
-            "Replace with a real WEM data API client for production use."
+        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        # AWST = UTC+8; use yesterday in AWST as the end date
+        awst_now = datetime.now(timezone.utc) + timedelta(hours=8)
+        end_dt = (awst_now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = since_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Cap to _MAX_SYNC_DAYS to avoid unbounded fetches
+        max_start = end_dt - timedelta(days=_MAX_SYNC_DAYS)
+        if start_dt < max_start:
+            logger.warning(
+                "Sync window capped from %s to %s (%d days max)",
+                start_dt.strftime("%Y-%m-%d"),
+                max_start.strftime("%Y-%m-%d"),
+                _MAX_SYNC_DAYS,
+            )
+            start_dt = max_start
+
+        all_market_rows: dict[str, dict] = {}  # keyed by dispatch_interval for dedup
+        current = start_dt
+        day_count = 0
+
+        while current <= end_dt:
+            day_count += 1
+            date_label = current.strftime("%Y-%m-%d")
+            date_compact = current.strftime("%Y%m%d")
+
+            day_rows = self._fetch_day_rows(current, date_label, date_compact)
+            for row in day_rows:
+                interval = row.get("dispatch_interval")
+                if interval:
+                    all_market_rows[interval] = row
+
+            if day_count % 10 == 0:
+                logger.info("WEM ESS fetch progress: %d days processed, latest=%s", day_count, date_label)
+
+            current += timedelta(days=1)
+            time.sleep(0.5)  # Rate limit politeness
+
+        result = sorted(all_market_rows.values(), key=lambda r: r.get("dispatch_interval", ""))
+        logger.info(
+            "WEM ESS fetch complete: %d days scanned, %d unique market rows",
+            day_count,
+            len(result),
         )
+        return result
+
+    @staticmethod
+    def _fetch_day_rows(target_date: datetime, date_label: str, date_compact: str) -> list[dict]:
+        """Download and extract market rows for a single day (no DB write)."""
+        market_rows: list[dict] = []
+
+        # Try historical ZIP first
+        zip_url = f"{WEM_BASE}/previous/DispatchSolutionReference_{date_compact}.zip"
+        raw_zip = download_bytes(zip_url, date_label, stream=True, max_retries=2)
+        if raw_zip:
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw_zip)) as zipped:
+                    for name in sorted(n for n in zipped.namelist() if n.endswith(".json")):
+                        with zipped.open(name) as handle:
+                            rows, _ = extract_slim_solution_rows(handle.read())
+                            market_rows.extend(rows)
+            except zipfile.BadZipFile:
+                logger.warning("%s: bad zip file, trying current JSON listing", date_label)
+                raw_zip = None
+
+        # Fallback to current JSON listing (for today / recent days)
+        if not raw_zip:
+            for url in list_current_json_urls(target_date):
+                raw_json = download_bytes(url, url.rsplit("/", 1)[-1], stream=False, max_retries=1)
+                if not raw_json:
+                    continue
+                rows, _ = extract_slim_solution_rows(raw_json)
+                market_rows.extend(rows)
+
+        return market_rows
 
 
 class WemEssSyncJob:
@@ -97,10 +202,11 @@ class WemEssSyncJob:
         Args:
             db: DatabaseManager instance for data persistence.
             source_client: Client for fetching WEM ESS data. If None,
-                          uses WemEssSourceClientStub (development mode).
+                          uses WemEssAemoClient (production mode).
+                          Pass WemEssSourceClientStub() for offline dev.
         """
         self.db = db
-        self.source = source_client or WemEssSourceClientStub()
+        self.source = source_client or WemEssAemoClient()
 
     def run(self, context: JobContext) -> dict:
         """Execute the WEM ESS incremental sync.

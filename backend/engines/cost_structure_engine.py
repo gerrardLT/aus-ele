@@ -8,6 +8,9 @@ Requirements: 1.1-1.7, 2.1-2.5, 3.1-3.6
 
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
 from typing import Optional
 
 from models.cost_structure_models import (
@@ -27,71 +30,109 @@ from models.cost_structure_models import (
 )
 from models.financial_params import BatterySpecs
 
+logger = logging.getLogger(__name__)
 
-# Regional default fee parameter sets based on Australian market data.
+# Path to external fee configuration JSON
+_FEE_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "regional_fee_defaults.json"
+
+
+def _parse_region_config(raw: dict) -> RegionalFeeConfig:
+    """Parse a single region dict from JSON into a RegionalFeeConfig."""
+    return RegionalFeeConfig(
+        region=raw["region"],
+        aemo_participant_fee=AemoParticipantFee(**raw.get("aemo_participant_fee", {})),
+        aemo_registration_fee=AemoRegistrationFee(**raw.get("aemo_registration_fee", {})),
+        tuos_demand=TuosDemandCharge(**raw.get("tuos_demand", {})),
+        tuos_energy=TuosEnergyCharge(**raw.get("tuos_energy", {})),
+        duos=DuosCharge(**raw.get("duos", {})),
+        mlf=MlfConfig(**raw.get("mlf", {})),
+        fpp=FppConfig(**raw.get("fpp", {})),
+    )
+
+
+def _load_regional_defaults() -> dict[str, RegionalFeeConfig]:
+    """Load regional fee defaults from external JSON, falling back to hardcoded values."""
+    hardcoded = {
+        "NSW1": RegionalFeeConfig(
+            region="NSW1",
+            aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.40),
+            aemo_registration_fee=AemoRegistrationFee(amount=10000.0),
+            tuos_demand=TuosDemandCharge(rate_per_mw_year=12000.0),
+            tuos_energy=TuosEnergyCharge(rate_per_mwh=2.0),
+            duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
+            mlf=MlfConfig(value=0.97),
+            fpp=FppConfig(net_earning_per_mw_year=1000.0),
+        ),
+        "QLD1": RegionalFeeConfig(
+            region="QLD1",
+            aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.38),
+            aemo_registration_fee=AemoRegistrationFee(amount=10000.0),
+            tuos_demand=TuosDemandCharge(rate_per_mw_year=10000.0),
+            tuos_energy=TuosEnergyCharge(rate_per_mwh=1.8),
+            duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
+            mlf=MlfConfig(value=0.98),
+            fpp=FppConfig(net_earning_per_mw_year=900.0),
+        ),
+        "VIC1": RegionalFeeConfig(
+            region="VIC1",
+            aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.40),
+            aemo_registration_fee=AemoRegistrationFee(amount=10000.0),
+            tuos_demand=TuosDemandCharge(rate_per_mw_year=9000.0),
+            tuos_energy=TuosEnergyCharge(rate_per_mwh=1.5),
+            duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
+            mlf=MlfConfig(value=0.99),
+            fpp=FppConfig(net_earning_per_mw_year=1100.0),
+        ),
+        "SA1": RegionalFeeConfig(
+            region="SA1",
+            aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.42),
+            aemo_registration_fee=AemoRegistrationFee(amount=12000.0),
+            tuos_demand=TuosDemandCharge(rate_per_mw_year=14000.0),
+            tuos_energy=TuosEnergyCharge(rate_per_mwh=2.5),
+            duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
+            mlf=MlfConfig(value=0.95),
+            fpp=FppConfig(net_earning_per_mw_year=1200.0),
+        ),
+        "TAS1": RegionalFeeConfig(
+            region="TAS1",
+            aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.38),
+            aemo_registration_fee=AemoRegistrationFee(amount=8000.0),
+            tuos_demand=TuosDemandCharge(rate_per_mw_year=11000.0),
+            tuos_energy=TuosEnergyCharge(rate_per_mwh=2.2),
+            duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
+            mlf=MlfConfig(value=0.96),
+            fpp=FppConfig(net_earning_per_mw_year=800.0),
+        ),
+        "WEM": RegionalFeeConfig(
+            region="WEM",
+            aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.35),
+            aemo_registration_fee=AemoRegistrationFee(amount=15000.0),
+            tuos_demand=TuosDemandCharge(rate_per_mw_year=8000.0),
+            tuos_energy=TuosEnergyCharge(rate_per_mwh=1.5),
+            duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
+            mlf=MlfConfig(value=1.00),
+            fpp=FppConfig(net_earning_per_mw_year=1000.0),
+        ),
+    }
+    if not _FEE_CONFIG_PATH.exists():
+        return hardcoded
+    try:
+        raw = json.loads(_FEE_CONFIG_PATH.read_text(encoding="utf-8"))
+        loaded = {}
+        for key, value in raw.items():
+            if key.startswith("_"):
+                continue  # skip _comment and metadata keys
+            loaded[key] = _parse_region_config(value)
+        logger.info("Loaded fee defaults from %s (%d regions)", _FEE_CONFIG_PATH.name, len(loaded))
+        return loaded
+    except Exception as exc:
+        logger.warning("Failed to load %s, using hardcoded defaults: %s", _FEE_CONFIG_PATH.name, exc)
+        return hardcoded
+
+
+# Regional default fee parameter sets — loaded from JSON or fallback to hardcoded.
 # Sources: AEMO published MLFs, TNSP pricing determinations, AER tariff data.
-_REGIONAL_DEFAULTS: dict[str, RegionalFeeConfig] = {
-    "NSW1": RegionalFeeConfig(
-        region="NSW1",
-        aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.40),
-        aemo_registration_fee=AemoRegistrationFee(amount=10000.0),
-        tuos_demand=TuosDemandCharge(rate_per_mw_year=12000.0),
-        tuos_energy=TuosEnergyCharge(rate_per_mwh=2.0),
-        duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
-        mlf=MlfConfig(value=0.97),
-        fpp=FppConfig(net_earning_per_mw_year=1000.0),
-    ),
-    "QLD1": RegionalFeeConfig(
-        region="QLD1",
-        aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.38),
-        aemo_registration_fee=AemoRegistrationFee(amount=10000.0),
-        tuos_demand=TuosDemandCharge(rate_per_mw_year=10000.0),
-        tuos_energy=TuosEnergyCharge(rate_per_mwh=1.8),
-        duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
-        mlf=MlfConfig(value=0.98),
-        fpp=FppConfig(net_earning_per_mw_year=900.0),
-    ),
-    "VIC1": RegionalFeeConfig(
-        region="VIC1",
-        aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.40),
-        aemo_registration_fee=AemoRegistrationFee(amount=10000.0),
-        tuos_demand=TuosDemandCharge(rate_per_mw_year=9000.0),
-        tuos_energy=TuosEnergyCharge(rate_per_mwh=1.5),
-        duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
-        mlf=MlfConfig(value=0.99),
-        fpp=FppConfig(net_earning_per_mw_year=1100.0),
-    ),
-    "SA1": RegionalFeeConfig(
-        region="SA1",
-        aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.42),
-        aemo_registration_fee=AemoRegistrationFee(amount=12000.0),
-        tuos_demand=TuosDemandCharge(rate_per_mw_year=14000.0),
-        tuos_energy=TuosEnergyCharge(rate_per_mwh=2.5),
-        duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
-        mlf=MlfConfig(value=0.95),
-        fpp=FppConfig(net_earning_per_mw_year=1200.0),
-    ),
-    "TAS1": RegionalFeeConfig(
-        region="TAS1",
-        aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.38),
-        aemo_registration_fee=AemoRegistrationFee(amount=8000.0),
-        tuos_demand=TuosDemandCharge(rate_per_mw_year=11000.0),
-        tuos_energy=TuosEnergyCharge(rate_per_mwh=2.2),
-        duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
-        mlf=MlfConfig(value=0.96),
-        fpp=FppConfig(net_earning_per_mw_year=800.0),
-    ),
-    "WEM": RegionalFeeConfig(
-        region="WEM",
-        aemo_participant_fee=AemoParticipantFee(rate_per_mwh=0.35),
-        aemo_registration_fee=AemoRegistrationFee(amount=15000.0),
-        tuos_demand=TuosDemandCharge(rate_per_mw_year=8000.0),
-        tuos_energy=TuosEnergyCharge(rate_per_mwh=1.5),
-        duos=DuosCharge(connection_type=ConnectionType.TRANSMISSION, rate_per_mwh=0.0),
-        mlf=MlfConfig(value=1.00),
-        fpp=FppConfig(net_earning_per_mw_year=1000.0),
-    ),
-}
+_REGIONAL_DEFAULTS: dict[str, RegionalFeeConfig] = _load_regional_defaults()
 
 SUPPORTED_REGIONS = list(_REGIONAL_DEFAULTS.keys())
 

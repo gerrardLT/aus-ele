@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import ssl
 import socket
@@ -6,6 +7,8 @@ import time
 from urllib.parse import urlencode, urlparse
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class FingridClient:
@@ -86,9 +89,13 @@ class FingridClient:
         # Fingrid succeeds with a lower-level HTTPS client on this machine while
         # requests/urllib intermittently EOF during handshake. Keep the fallback
         # local to this connector instead of weakening global TLS behavior.
+        # SSL certificate verification is enabled by default for security.
+        # Set FINGRID_SKIP_SSL_VERIFY=1 only if the host has known CA issues.
         context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        if os.environ.get("FINGRID_SKIP_SSL_VERIFY", "").strip() in {"1", "true", "yes"}:
+            logger.warning("FINGRID_SKIP_SSL_VERIFY is set — SSL certificate verification disabled (not recommended)")
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
 
         host = parsed.hostname
         port = parsed.port or 443
@@ -165,6 +172,7 @@ class FingridClient:
         try:
             rows = self._fetch_via_requests(dataset_id, params=params)
         except requests.exceptions.SSLError:
+            logger.warning("requests SSL failed for dataset %s, falling back to raw socket HTTPS", dataset_id)
             rows = self._fetch_via_https_connection(dataset_id, params=params)
         self._last_request_monotonic = time.monotonic()
         return rows

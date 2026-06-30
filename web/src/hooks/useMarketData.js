@@ -1,44 +1,45 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { fetchJson } from '../lib/apiClient';
 import { getApiBase } from '../lib/apiBase';
 
 const API_BASE = getApiBase();
 
 /**
- * Hook for fetching market price data with window selection support.
+ * Hook for fetching market price data with TanStack Query caching.
  * @param {Object} config - MarketConfig object
  * @param {Object} filters - { region, year, quarter, dayType }
  * @returns {{ chartData, visibleData, loading, error, onWindowChange }}
  */
 export function useMarketData(config, filters) {
-  const [chartData, setChartData] = useState(null);
-  const [visibleData, setVisibleData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const queryKey = [
+    'market-data',
+    filters.year,
+    filters.region,
+    filters.quarter,
+    filters.dayType,
+    config.settlementIntervalMinutes,
+  ];
 
-  useEffect(() => {
-    if (!filters.year || !filters.region) return;
-    setLoading(true);
-    setError(null);
-
+  const queryFn = async () => {
     let url = `${API_BASE}/price-trend?year=${filters.year}&region=${filters.region}&limit=720&interval_minutes=${config.settlementIntervalMinutes}`;
     if (filters.quarter && filters.quarter !== 'ALL') url += `&quarter=${filters.quarter}`;
     if (filters.dayType && filters.dayType !== 'ALL') url += `&day_type=${filters.dayType}`;
+    return fetchJson(url);
+  };
 
-    fetchJson(url)
-      .then(data => {
-        setChartData(data);
-        setVisibleData(Array.isArray(data?.data) ? data.data : []);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError(err.message || 'Failed to load price data');
-        setLoading(false);
-      });
-  }, [filters.year, filters.region, filters.quarter, filters.dayType, config.settlementIntervalMinutes]);
+  const { data: chartData, isLoading: loading, error } = useQuery({
+    queryKey,
+    queryFn,
+    enabled: Boolean(filters.year && filters.region),
+    staleTime: 60_000, // price data is relatively static, 1min stale
+  });
+
+  const visibleData = Array.isArray(chartData?.data) ? chartData.data : [];
 
   const onWindowChange = useCallback((data) => {
-    setVisibleData(data);
+    // Window-level filtering is handled by the component
+    return data;
   }, []);
 
   return { chartData, visibleData, loading, error, onWindowChange };

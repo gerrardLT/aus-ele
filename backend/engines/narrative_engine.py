@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -539,6 +540,9 @@ class NarrativeEngine:
             conclusion_text=conclusion_text,
         )
 
+        # Optionally enhance with LLM if configured
+        narrative = self._maybe_llm_enhance(narrative, region, module_name, factors)
+
         return CausalAttribution(
             metric_name=metric_name,
             metric_value=metric_value,
@@ -548,6 +552,87 @@ class NarrativeEngine:
             region=region,
             year=current_year,
         )
+
+    # -------------------------------------------------------------------------
+    # Optional LLM Enhancement
+    # -------------------------------------------------------------------------
+
+    def _maybe_llm_enhance(
+        self,
+        template_text: str,
+        region: str,
+        module_name: str,
+        factors: List[CausalFactor],
+    ) -> str:
+        """Optionally enhance template narrative with LLM output.
+
+        If AUS_ELE_LLM_API_KEY is set, calls the configured LLM endpoint
+        to produce a more natural narrative. On any failure, falls back to
+        the original template text (deterministic, zero-latency).
+
+        Args:
+            template_text: The template-generated narrative text.
+            region: NEM/WEM region code.
+            module_name: Analysis module name.
+            factors: List of causal factors for context.
+
+        Returns:
+            Enhanced narrative text, or original template_text on failure.
+        """
+        api_key = os.environ.get("AUS_ELE_LLM_API_KEY")
+        if not api_key:
+            return template_text
+
+        base_url = os.environ.get(
+            "AUS_ELE_LLM_BASE_URL", "https://api.openai.com/v1"
+        ).rstrip("/")
+        model = os.environ.get("AUS_ELE_LLM_MODEL", "gpt-4o-mini")
+
+        factor_summary = "; ".join(
+            f"{f.driver_name}: {f.contribution_amount:+.1f}" for f in factors if f.contribution_amount
+        )
+        prompt = (
+            f"You are an energy market analyst. Rewrite the following structured narrative "
+            f"into a concise, professional paragraph (2-3 sentences) for a BESS investment report.\n\n"
+            f"Region: {region}\n"
+            f"Module: {module_name}\n"
+            f"Key drivers: {factor_summary}\n\n"
+            f"Template text: {template_text}\n\n"
+            f"Output only the rewritten paragraph, no preamble."
+        )
+
+        try:
+            import urllib.request
+            import urllib.error
+
+            request_body = json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 300,
+                "temperature": 0.3,
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                f"{base_url}/chat/completions",
+                data=request_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+
+            timeout_seconds = float(os.environ.get("AUS_ELE_LLM_TIMEOUT", "8"))
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                enhanced = result["choices"][0]["message"]["content"].strip()
+                if enhanced:
+                    logger.info("LLM enhancement applied for %s/%s", module_name, region)
+                    return enhanced
+        except Exception as exc:
+            logger.debug("LLM enhancement skipped (fallback to template): %s", exc)
+
+        return template_text
 
     # -------------------------------------------------------------------------
     # Private Helpers for Revenue Attribution

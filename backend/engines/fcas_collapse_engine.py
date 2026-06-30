@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from database import DatabaseManager
+from sql_safe import trading_price_table
 from models.outlook_models import (
     FcasCollapseParams,
     FcasCollapseResponse,
@@ -299,7 +300,7 @@ class FcasCollapseEngine:
             Dict mapping service name to average price (AUD/MW/hr), or None if unavailable
         """
         prices: dict[str, Optional[float]] = {}
-        table_name = f"trading_price_{year}"
+        table_name = trading_price_table(year)
 
         try:
             with self.db.get_connection() as conn:
@@ -312,7 +313,7 @@ class FcasCollapseEngine:
                 )
                 if not cursor.fetchone():
                     # Table doesn't exist - try previous year
-                    table_name = f"trading_price_{year - 1}"
+                    table_name = trading_price_table(year - 1)
                     cursor.execute(
                         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                         (table_name,),

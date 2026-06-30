@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from deps import get_db
+from sql_safe import safe_table_name, trading_price_table
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,7 @@ def _fetch_stem_prices(start_date: str, end_date: str) -> list[tuple[str, float]
 
     # Query each year table that overlaps with the date range
     for year in range(start_dt.year, end_dt.year + 1):
-        table_name = f"trading_price_{year}"
+        table_name = trading_price_table(year)
         try:
             with db.get_connection() as conn:
                 cursor = conn.cursor()
@@ -595,7 +596,7 @@ def _fetch_wem_prices_for_year(year: int) -> list[float]:
     Returns a list of prices ($/MWh) ordered by settlement_date.
     """
     db = get_db()
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -627,7 +628,7 @@ def _check_actual_5min_data_available(year: int) -> bool:
     """
     db = get_db()
     # Convention: actual 5-min WEM data would be stored in a dedicated table
-    table_name = f"wem_5min_price_{year}"
+    table_name = safe_table_name(f"wem_5min_price_{year}")
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -647,7 +648,7 @@ def _check_actual_5min_data_available(year: int) -> bool:
 def _fetch_actual_5min_prices(year: int) -> list[float]:
     """Fetch actual 5-minute WEM prices if available."""
     db = get_db()
-    table_name = f"wem_5min_price_{year}"
+    table_name = safe_table_name(f"wem_5min_price_{year}")
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()

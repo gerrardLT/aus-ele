@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import { autoDownsample } from '../lib/downsample';
 import {
   CartesianGrid,
   Legend,
@@ -88,7 +89,7 @@ export default function PeakAnalysis({
   const chartData = useMemo(() => {
     if (!data?.data) return [];
 
-    return data.data.map((row) => ({
+    const mapped = data.data.map((row) => ({
       period: row.period || row.date || '',
       spread_2h: row.spread_2h,
       spread_4h: row.spread_4h,
@@ -97,6 +98,7 @@ export default function PeakAnalysis({
       net_spread_4h: row.net_spread_4h,
       net_spread_6h: row.net_spread_6h,
     }));
+    return autoDownsample(mapped, { xKey: 'period', yKey: 'net_spread_4h', threshold: 500 });
   }, [data]);
 
   const periodOverlayMap = useMemo(

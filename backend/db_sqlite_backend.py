@@ -57,6 +57,16 @@ class SQLiteBackend(DatabaseBackend):
         """
         return self._manager
 
+    @staticmethod
+    def _connect_with_pragmas(db_path: str, timeout: float = 10.0):
+        """Create a SQLite connection with web-server optimized PRAGMAs."""
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(db_path, timeout=timeout)
+        conn.execute("PRAGMA busy_timeout=60000")
+        conn.execute("PRAGMA cache_size=-65536")  # 64MB cache
+        conn.execute("PRAGMA temp_store=MEMORY")
+        return conn
+
     @contextlib.contextmanager
     def get_connection(self) -> Generator[Any, None, None]:
         """
@@ -75,7 +85,7 @@ class SQLiteBackend(DatabaseBackend):
                 break
 
             try:
-                conn = sqlite3.connect(self._db_path, timeout=10.0)
+                conn = self._connect_with_pragmas(self._db_path)
                 try:
                     yield conn
                     return
@@ -114,7 +124,7 @@ class SQLiteBackend(DatabaseBackend):
                 break
 
             try:
-                conn = sqlite3.connect(self._db_path, timeout=10.0)
+                conn = self._connect_with_pragmas(self._db_path)
                 try:
                     cursor = conn.execute(sql, params)
                     return cursor.fetchall()
@@ -153,7 +163,7 @@ class SQLiteBackend(DatabaseBackend):
                 break
 
             try:
-                conn = sqlite3.connect(self._db_path, timeout=10.0)
+                conn = self._connect_with_pragmas(self._db_path)
                 try:
                     cursor = conn.execute(sql, params)
                     conn.commit()
@@ -192,7 +202,7 @@ class SQLiteBackend(DatabaseBackend):
                 break
 
             try:
-                conn = sqlite3.connect(self._db_path, timeout=10.0)
+                conn = self._connect_with_pragmas(self._db_path)
                 try:
                     cursor = conn.executemany(sql, params_list)
                     conn.commit()
@@ -223,7 +233,7 @@ class SQLiteBackend(DatabaseBackend):
         import sqlite3
 
         try:
-            conn = sqlite3.connect(self._db_path, timeout=5.0)
+            conn = self._connect_with_pragmas(self._db_path, timeout=5.0)
             try:
                 conn.execute("SELECT 1")
                 return True

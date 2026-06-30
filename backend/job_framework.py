@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
@@ -7,6 +8,8 @@ from uuid import uuid4
 
 import telemetry
 import openlineage_support
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -292,6 +295,29 @@ class JobOrchestrator:
         if not job:
             return None
         return self._run_claimed_job(job, now=now)
+
+    def recover_stuck_jobs(self, *, timeout_minutes: int = 120) -> int:
+        """Recover jobs stuck in 'running' state from a previous worker crash.
+
+        Jobs locked longer than `timeout_minutes` are reset to 'queued'
+        (or failed if max_attempts exhausted) so they can be retried.
+
+        Call this once at worker startup and optionally on a periodic timer.
+
+        Args:
+            timeout_minutes: Minutes after which a running job is considered stuck.
+
+        Returns:
+            Number of jobs recovered.
+        """
+        cutoff = _utc_now() - timedelta(minutes=timeout_minutes)
+        count = self.db.reset_stuck_jobs(stuck_before_iso=_utc_iso(cutoff))
+        if count:
+            logger.info(
+                "Recovered %d stuck job(s) (locked > %d min ago)",
+                count, timeout_minutes,
+            )
+        return count
 
     def run_once_scoped(
         self,

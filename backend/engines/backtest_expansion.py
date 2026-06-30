@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from sql_safe import safe_table_name
+
 logger = logging.getLogger(__name__)
 
 # 仓库根目录：backend/engines/backtest_expansion.py -> engines -> backend -> repo root
@@ -388,7 +390,7 @@ class MonthlyBenchmarkCalculator:
         for (name,) in rows:
             suffix = name.rsplit("_", 1)[-1]
             if suffix.isdigit():
-                tables.append((int(suffix), name))
+                tables.append((int(suffix), safe_table_name(name)))
         tables.sort(key=lambda t: t[0])
         return tables
 

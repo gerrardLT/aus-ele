@@ -21,6 +21,8 @@ from datetime import datetime
 
 import pulp
 
+from sql_safe import safe_table_name, trading_price_table
+
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -49,6 +51,7 @@ def get_available_tables(conn):
 
 
 def get_available_regions(conn, table):
+    table = safe_table_name(table)
     regions = conn.execute(
         f"SELECT DISTINCT region_id FROM {table} ORDER BY region_id"
     ).fetchall()
@@ -56,7 +59,7 @@ def get_available_regions(conn, table):
 
 
 def analyze_daily_spreads(conn, region, year):
-    table = f"trading_price_{year}"
+    table = trading_price_table(year)
     try:
         rows = conn.execute(
             f"""
@@ -97,7 +100,7 @@ def analyze_daily_spreads(conn, region, year):
 
 
 def backtest_arbitrage(conn, region, year, storage_config):
-    table = f"trading_price_{year}"
+    table = trading_price_table(year)
     duration_h = storage_config["duration_hours"]
     capacity_mwh = storage_config["capacity_mwh"]
     power_mw = storage_config["power_mw"]

@@ -23,6 +23,7 @@ from engines.price_analysis_engine import AnalysisMetadata
 from engines.revenue_analysis_engine import RevenueAnalysisEngine
 from engines.exceptions import DimensionMismatchError
 from network_fees import get_default_fee, get_settlement_interval
+from sql_safe import trading_price_table
 from result_metadata import build_result_metadata
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,7 @@ def get_revenue_analysis(
         )
 
     fee = network_fee if network_fee is not None else get_default_fee(region)
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
     interval_minutes = get_settlement_interval(region)
 
     try:

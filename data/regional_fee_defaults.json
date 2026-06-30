@@ -1,0 +1,63 @@
+{
+  "_comment": "Regional fee defaults for BESS cost structure engine. Edit values here to update fees without code changes. Sources: AEMO published MLFs, TNSP pricing determinations, AER tariff data.",
+  "NSW1": {
+    "region": "NSW1",
+    "aemo_participant_fee": {"rate_per_mwh": 0.40},
+    "aemo_registration_fee": {"amount": 10000.0},
+    "tuos_demand": {"rate_per_mw_year": 12000.0},
+    "tuos_energy": {"rate_per_mwh": 2.0},
+    "duos": {"connection_type": "transmission", "rate_per_mwh": 0.0},
+    "mlf": {"value": 0.97},
+    "fpp": {"net_earning_per_mw_year": 1000.0}
+  },
+  "QLD1": {
+    "region": "QLD1",
+    "aemo_participant_fee": {"rate_per_mwh": 0.38},
+    "aemo_registration_fee": {"amount": 10000.0},
+    "tuos_demand": {"rate_per_mw_year": 10000.0},
+    "tuos_energy": {"rate_per_mwh": 1.8},
+    "duos": {"connection_type": "transmission", "rate_per_mwh": 0.0},
+    "mlf": {"value": 0.98},
+    "fpp": {"net_earning_per_mw_year": 900.0}
+  },
+  "VIC1": {
+    "region": "VIC1",
+    "aemo_participant_fee": {"rate_per_mwh": 0.40},
+    "aemo_registration_fee": {"amount": 10000.0},
+    "tuos_demand": {"rate_per_mw_year": 9000.0},
+    "tuos_energy": {"rate_per_mwh": 1.5},
+    "duos": {"connection_type": "transmission", "rate_per_mwh": 0.0},
+    "mlf": {"value": 0.99},
+    "fpp": {"net_earning_per_mw_year": 1100.0}
+  },
+  "SA1": {
+    "region": "SA1",
+    "aemo_participant_fee": {"rate_per_mwh": 0.42},
+    "aemo_registration_fee": {"amount": 12000.0},
+    "tuos_demand": {"rate_per_mw_year": 14000.0},
+    "tuos_energy": {"rate_per_mwh": 2.5},
+    "duos": {"connection_type": "transmission", "rate_per_mwh": 0.0},
+    "mlf": {"value": 0.95},
+    "fpp": {"net_earning_per_mw_year": 1200.0}
+  },
+  "TAS1": {
+    "region": "TAS1",
+    "aemo_participant_fee": {"rate_per_mwh": 0.38},
+    "aemo_registration_fee": {"amount": 8000.0},
+    "tuos_demand": {"rate_per_mw_year": 11000.0},
+    "tuos_energy": {"rate_per_mwh": 2.2},
+    "duos": {"connection_type": "transmission", "rate_per_mwh": 0.0},
+    "mlf": {"value": 0.96},
+    "fpp": {"net_earning_per_mw_year": 800.0}
+  },
+  "WEM": {
+    "region": "WEM",
+    "aemo_participant_fee": {"rate_per_mwh": 0.35},
+    "aemo_registration_fee": {"amount": 15000.0},
+    "tuos_demand": {"rate_per_mw_year": 8000.0},
+    "tuos_energy": {"rate_per_mwh": 1.5},
+    "duos": {"connection_type": "transmission", "rate_per_mwh": 0.0},
+    "mlf": {"value": 1.00},
+    "fpp": {"net_earning_per_mw_year": 1000.0}
+  }
+}

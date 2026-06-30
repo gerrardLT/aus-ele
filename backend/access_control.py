@@ -53,7 +53,13 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def _jwt_secret() -> str:
-    return os.environ.get("AUS_ELE_JWT_SECRET", "aus-ele-dev-jwt-secret")
+    secret = os.environ.get("AUS_ELE_JWT_SECRET")
+    if not secret:
+        raise RuntimeError(
+            "AUS_ELE_JWT_SECRET environment variable is required. "
+            "Generate one with: python -c 'import secrets; print(secrets.token_hex(32))'"
+        )
+    return secret
 
 
 def _access_token_ttl_seconds() -> int:

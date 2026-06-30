@@ -23,6 +23,7 @@ from deps import get_db, get_cache
 from engines.price_analysis_engine import PriceAnalysisEngine
 from network_fees import get_default_fee, get_settlement_interval, get_window_sizes
 from result_metadata import build_result_metadata
+from sql_safe import trading_price_table
 
 logger = logging.getLogger(__name__)
 
@@ -491,7 +492,7 @@ def get_price_trend(
     quarter = _cacheable_param(quarter)
     day_type = _cacheable_param(day_type)
     limit = _cacheable_param(limit)
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
 
     try:
         cache_payload = {
@@ -511,7 +512,7 @@ def get_price_trend(
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail=f"No data available for year {year}")
 
@@ -673,7 +674,7 @@ def get_peak_analysis(
     month = _cacheable_param(month)
     quarter = _cacheable_param(quarter)
     day_type = _cacheable_param(day_type)
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
     fee = network_fee if network_fee is not None else get_default_fee(region)
     windows = get_window_sizes(region)
 
@@ -791,7 +792,7 @@ def get_hourly_price_profile(
     """Returns average, min, max prices for each hour of the day."""
     db = get_db()
     month = _cacheable_param(month)
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
     try:
         cache_payload = {
             "year": year,

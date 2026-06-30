@@ -152,7 +152,12 @@ async def lifespan(application: FastAPI):
         logger.info("Scheduler disabled (AUS_ELE_ENABLE_SCHEDULER)")
 
     if _job_worker_enabled():
-        worker = _server.JobWorkerService(get_job_orchestrator(), queue_names=_job_worker_queue_names())
+        orchestrator = get_job_orchestrator()
+        # Recover jobs stuck in 'running' from a previous crash
+        recovered = orchestrator.recover_stuck_jobs(timeout_minutes=120)
+        if recovered:
+            logger.info("Recovered %d stuck job(s) at startup", recovered)
+        worker = _server.JobWorkerService(orchestrator, queue_names=_job_worker_queue_names())
         worker.start()
         application.state.job_worker = worker
         logger.info("Job worker enabled (poll=%ss, queues=%s)",

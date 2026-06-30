@@ -2532,6 +2532,63 @@ class DatabaseManager:
             )
             conn.commit()
 
+    def reset_stuck_jobs(self, *, stuck_before_iso: str) -> int:
+        """Reset jobs stuck in 'running' status back to 'queued' for retry.
+
+        A job is considered stuck if it has been in 'running' status since
+        before `stuck_before_iso` (typically now minus a timeout).
+
+        Jobs that have exhausted their max_attempts are failed instead.
+
+        Args:
+            stuck_before_iso: ISO timestamp threshold; jobs locked before
+                              this time are considered stuck.
+
+        Returns:
+            Number of jobs reset to queued.
+        """
+        with self.get_connection() as conn:
+            self.ensure_job_tables(conn)
+            cursor = conn.cursor()
+            # First: fail jobs that exceeded max_attempts
+            cursor.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET status = 'failed',
+                    finished_at = ?,
+                    error_text = 'stuck in running state, max attempts exhausted',
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    progress_message = 'failed (stuck recovery)'
+                WHERE status = 'running'
+                  AND locked_at < ?
+                  AND attempt_count >= max_attempts
+                """,
+                (stuck_before_iso, stuck_before_iso),
+            )
+            failed_count = cursor.rowcount
+            # Then: reset remaining stuck jobs to queued for retry
+            cursor.execute(
+                f"""
+                UPDATE {self.JOB_TABLE}
+                SET status = 'queued',
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    progress_message = 'recovered from stuck state'
+                WHERE status = 'running'
+                  AND locked_at < ?
+                """,
+                (stuck_before_iso,),
+            )
+            reset_count = cursor.rowcount
+            conn.commit()
+        if failed_count or reset_count:
+            logger.info(
+                "Stuck job recovery: %d reset to queued, %d failed (exhausted)",
+                reset_count, failed_count,
+            )
+        return reset_count
+
     def cancel_job(self, job_id: str) -> bool:
         with self.get_connection() as conn:
             self.ensure_job_tables(conn)
