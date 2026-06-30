@@ -352,7 +352,29 @@ def get_fcas_analysis(
                 (table_name,)
             )
             if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"No data for year {year}")
+                response = {
+                    "region": region,
+                    "year": year,
+                    "has_fcas_data": False,
+                    "message": f"No data available for year {year}",
+                    "data": [],
+                    "summary": {},
+                    "hourly": [],
+                    "service_breakdown": [],
+                }
+                response = _attach_fcas_analysis_metadata(
+                    response,
+                    region=region,
+                    interval_seconds=actual_interval_seconds,
+                    fallback_used=fallback_used,
+                )
+                response = _attach_regime_layer(response, market="NEM", region=region)
+                return _store_response_cache(
+                    FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
+                    cache_payload,
+                    response,
+                    DEFAULT_RESPONSE_CACHE_TTL_SECONDS,
+                )
 
             # Check if FCAS columns exist in the table
             cursor.execute(f"PRAGMA table_info({table_name})")

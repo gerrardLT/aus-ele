@@ -199,7 +199,22 @@ def get_revenue_analysis(
 
             cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
             if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"No data available for year {year}")
+                response = {
+                    "region": region,
+                    "year": year,
+                    "total_revenue": 0.0,
+                    "gross_revenue": 0.0,
+                    "net_revenue": 0.0,
+                    "costs": {"network_fees": 0.0, "degradation": 0.0},
+                    "summary": {
+                        "total_intervals": 0,
+                        "power_mw": power_mw,
+                        "energy_mwh": energy_mwh,
+                    },
+                }
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                response = _attach_revenue_metadata(response, region=region, computation_time_ms=elapsed_ms)
+                return response
 
             # Build query filters
             where = "region_id = ?"

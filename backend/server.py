@@ -5955,22 +5955,22 @@ def get_price_trend(
             cursor = conn.cursor()
             
             cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
-            if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"No data available for year {year}")
+            table_exists = cursor.fetchone()
 
-            where_clause, params = _build_temporal_filters(
-                year,
-                month,
-                quarter,
-                day_type,
-                time_field="settlement_date",
-                region=region,
-                region_field="region_id",
-            )
-
-            # Get total count for the region and applied filters
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {where_clause}", tuple(params))
-            total_rows = cursor.fetchone()[0]
+            if not table_exists:
+                total_rows = 0
+            else:
+                where_clause, params = _build_temporal_filters(
+                    year,
+                    month,
+                    quarter,
+                    day_type,
+                    time_field="settlement_date",
+                    region=region,
+                    region_field="region_id",
+                )
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {where_clause}", tuple(params))
+                total_rows = cursor.fetchone()[0]
             
             if total_rows == 0:
                 response = {
@@ -6156,7 +6156,18 @@ def get_peak_analysis(
             # Check table exists
             cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"No data for year {year}")
+                response = {
+                    "region": region, "year": year, "aggregation": aggregation,
+                    "network_fee": fee, "data": [], "summary": {}
+                }
+                response = _attach_peak_analysis_metadata(response, region=region)
+                response = _attach_regime_layer(response, market="WEM" if region == "WEM" else "NEM", region=region)
+                return _store_response_cache(
+                    PEAK_ANALYSIS_RESPONSE_CACHE_SCOPE,
+                    cache_payload,
+                    response,
+                    DEFAULT_RESPONSE_CACHE_TTL_SECONDS,
+                )
 
             # Fetch all data for this year+region, ordered by time
             where_clause, params = _build_temporal_filters(
@@ -6387,7 +6398,18 @@ def get_hourly_price_profile(
 
             cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
             if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"No data for year {year}")
+                response = {
+                    "region": region, "year": year, "month": month,
+                    "data": [], "summary": {},
+                }
+                response = _attach_hourly_price_profile_metadata(response, region=region)
+                response = _attach_regime_layer(response, market="WEM" if region == "WEM" else "NEM", region=region)
+                return _store_response_cache(
+                    HOURLY_PROFILE_RESPONSE_CACHE_SCOPE,
+                    cache_payload,
+                    response,
+                    DEFAULT_RESPONSE_CACHE_TTL_SECONDS,
+                )
 
             where = "region_id = ?"
             params = [region]
@@ -6873,7 +6895,19 @@ def get_fcas_analysis(
 
             cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if not cursor.fetchone():
-                raise HTTPException(status_code=404, detail=f"No data for year {year}")
+                response = {
+                    "region": region, "year": year, "has_fcas_data": False,
+                    "message": f"No data available for year {year}",
+                    "data": [], "summary": {}, "hourly": [], "service_breakdown": []
+                }
+                response = _attach_fcas_analysis_metadata(response, region=region)
+                response = _attach_regime_layer(response, market="NEM", region=region)
+                return _store_response_cache(
+                    FCAS_ANALYSIS_RESPONSE_CACHE_SCOPE,
+                    cache_payload,
+                    response,
+                    DEFAULT_RESPONSE_CACHE_TTL_SECONDS,
+                )
 
             # Check if FCAS columns exist in the table
             cursor.execute(f"PRAGMA table_info({table_name})")
