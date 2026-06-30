@@ -22,6 +22,10 @@ var/
 .installed.cfg
 *.egg
 .env
+# 忽略所有环境变量文件（含生产 .env.prod），但保留示例文件被追踪
+.env.*
+!.env.example
+!.env.docker.example
 .venv
 venv/
 ENV/

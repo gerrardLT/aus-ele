@@ -7,10 +7,15 @@ on:
     branches: [main, develop]
 
 env:
+  # 权威 Python 版本：与 Dockerfile.backend 的 python:3.11-slim 对齐（R1.5/R8.2）
   PYTHON_VERSION: "3.11"
   NODE_VERSION: "20"
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
+  # CD（部署）相关默认值；与服务器侧脚本默认一致（deploy/verify/rollback）。
+  APP_DIR: /www/wwwroot/aus-ele
+  API_HOST_PORT: "18085"
+  WEB_HOST_PORT: "18080"
 
 jobs:
   # ─────────────────────────────────────────────
@@ -50,6 +55,15 @@ jobs:
         env:
           AUS_ELE_DB_PATH: ":memory:"
 
+      # 可观测性（R9.2/R9.5）：向作业摘要写入阶段状态（成功/失败/跳过）。
+      - name: 阶段状态汇总
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          STATUS=$(python3 -c "from lib.status import classify_stage; print(classify_stage('${{ job.status }}'))")
+          echo "- **backend（CI 后端质量门）**：$STATUS" >> "$GITHUB_STEP_SUMMARY"
+
   # ─────────────────────────────────────────────
   # Frontend checks: ESLint + build verification
   # ─────────────────────────────────────────────
@@ -76,17 +90,46 @@ jobs:
         run: npm run lint
 
       - name: Run frontend tests
-        run: node --test src/lib/*.test.js || true
+        run: node --test src/lib/*.test.js
 
       - name: Build frontend
         run: npm run build
 
+      # 可观测性（R9.2/R9.5）：向作业摘要写入阶段状态（成功/失败/跳过）。
+      - name: 阶段状态汇总
+        if: always()
+        working-directory: ${{ github.workspace }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          STATUS=$(python3 -c "from lib.status import classify_stage; print(classify_stage('${{ job.status }}'))")
+          echo "- **frontend（CI 前端质量门）**：$STATUS" >> "$GITHUB_STEP_SUMMARY"
+
+  # ═════════════════════════════════════════════════════════════════════
+  # CD（持续交付）阶段 —— 仅在 main 分支 push 时触发
+  # ---------------------------------------------------------------------
+  # 作业拓扑（见 design.md Architecture，6-job 拓扑）：
+  #   backend ┐
+  #           ├─> build-push ──> deploy ──> verify
+  #   frontend┘                     │          │
+  #                                 └──(failure)┴──> rollback
+  #
+  # 必需的 GitHub Secrets（在仓库 Settings → Secrets and variables → Actions 配置）：
+  #   SSH_HOST            生产服务器主机名/IP
+  #   SSH_USER            SSH 登录用户名
+  #   SSH_KEY             SSH 私钥（PEM）
+  #   SSH_PORT            SSH 端口（可选，缺省 22）
+  #   AUS_ELE_JWT_SECRET  后端 JWT 密钥
+  #   FINGRID_API_KEY     Fingrid API Key
+  # 说明：GHCR 登录复用内置 GITHUB_TOKEN（packages: write），无需额外 Secret。
+  # ═════════════════════════════════════════════════════════════════════
+
   # ─────────────────────────────────────────────
-  # Docker image build and push (only on main branch)
+  # build-push（Image_Builder，R3）：构建并推送 GHCR 镜像（latest + 完整 SHA）
   # ─────────────────────────────────────────────
-  docker:
+  build-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: [backend, frontend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
@@ -95,36 +138,296 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to Container Registry
+      - name: 登录 GHCR（R3.5/R3.9）
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Preflight：不可变标签覆盖保护（R3.6）。逐镜像用 `docker manifest inspect`
+      # 探测目标 SHA 标签是否已存在，再交由 lib/smoke.py::decide_push 做权威判定；
+      # 只要任一目标标签已存在便失败，绝不覆盖既有镜像。
+      - name: Preflight 不可变标签校验（R3.6）
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          set -uo pipefail
+          SHA="${{ github.sha }}"
+          PREFIX="${REGISTRY}/${IMAGE_PREFIX}"
+          targets=""
+          existing=""
+          for svc in backend web; do
+            ref="${PREFIX}/${svc}:${SHA}"
+            targets="${targets}${targets:+,}${ref}"
+            if docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "检测到已存在的不可变标签: $ref"
+              existing="${existing}${existing:+,}${ref}"
+            else
+              echo "标签未存在，允许推送: $ref"
+            fi
+          done
+          python3 - "$targets" "$existing" <<'PY'
+          import sys
+          from lib.smoke import decide_push
+          targets = [t for t in sys.argv[1].split(",") if t]
+          existing = [t for t in sys.argv[2].split(",") if t]
+          blocked = [t for t in targets if not decide_push(existing, t)]
+          if blocked:
+              for ref in blocked:
+                  print(f"::error::镜像标签已存在，拒绝覆盖（不可变标签保护 R3.6）: {ref}")
+              sys.exit(1)
+          print("Preflight 通过：所有目标 SHA 标签均不存在，可安全推送")
+          PY
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.backend
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # 暴露 GitHub Actions runtime token/URL，使下方原生 buildx 可使用 gha 缓存。
+      - name: 暴露 Actions runtime（gha 缓存）
+        uses: crazy-max/ghaction-github-runtime@v3
 
-      - name: Build and push web image
-        uses: docker/build-push-action@v6
+      # 构建并推送 backend 与 web 镜像，每镜像同时打 latest 与完整 40 位 SHA（R3.2）。
+      # 构建失败则不推送（buildx build --push 为原子操作，R3.7）；
+      # 推送/构建包裹重试：最多 3 次、每次间隔 ≥10s（R3.8）。
+      - name: 构建并推送镜像（latest + SHA，含重试）
+        env:
+          RETRY_MAX: "3"
+          RETRY_INTERVAL_S: "10"
+        run: |
+          set -uo pipefail
+          SHA="${{ github.sha }}"
+          PREFIX="${REGISTRY}/${IMAGE_PREFIX}"
+
+          build_push() {
+            local svc="$1" file="$2"
+            docker buildx build \
+              --file "$file" \
+              --tag "${PREFIX}/${svc}:latest" \
+              --tag "${PREFIX}/${svc}:${SHA}" \
+              --cache-from "type=gha,scope=${svc}" \
+              --cache-to "type=gha,mode=max,scope=${svc}" \
+              --push \
+              .
+          }
+
+          retry_build_push() {
+            local svc="$1" file="$2" attempt=1
+            until build_push "$svc" "$file"; do
+              if [ "$attempt" -ge "$RETRY_MAX" ]; then
+                echo "::error::镜像构建/推送失败（已重试 ${RETRY_MAX} 次）: ${svc}（R3.7/R3.8）"
+                return 1
+              fi
+              echo "第 ${attempt}/${RETRY_MAX} 次构建/推送失败，${RETRY_INTERVAL_S}s 后重试..."
+              sleep "$RETRY_INTERVAL_S"
+              attempt=$((attempt + 1))
+            done
+            echo "镜像构建并推送成功: ${svc}（标签 latest + ${SHA}）"
+          }
+
+          retry_build_push backend Dockerfile.backend
+          retry_build_push web web/Dockerfile
+
+      - name: 阶段状态汇总
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          STATUS=$(python3 -c "from lib.status import classify_stage; print(classify_stage('${{ job.status }}'))")
+          echo "- **build-push（构建并推送镜像）**：$STATUS" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────
+  # deploy（Deployer，R4/R5）：SSH 远程拉取 SHA 镜像并重启
+  # ─────────────────────────────────────────────
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [build-push]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+    outputs:
+      # deploy_attempted 仅在 SSH 连接成功、即将开始拉取/重启时置为 true，
+      # 用于区分 R4.4（不可达，不回滚）与 R4.5（已开始变更，需回滚）。
+      deploy_attempted: ${{ steps.mark.outputs.deploy_attempted }}
+      image_tag: ${{ steps.mark.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 前置 Secret 校验（R5.5）：在任何 SSH / 拉取 / 重启之前进行，
+      # 缺失/为空则立即失败，且仅报告缺失名称、绝不输出 secret 值。
+      - name: 校验必需 Secret（任何 SSH 之前，R5.5）
+        env:
+          AUS_ELE_JWT_SECRET: ${{ secrets.AUS_ELE_JWT_SECRET }}
+          FINGRID_API_KEY: ${{ secrets.FINGRID_API_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          python3 - <<'PY'
+          import os
+          import sys
+          from lib.validate import validate_secrets
+
+          required = [
+              "AUS_ELE_JWT_SECRET",
+              "FINGRID_API_KEY",
+              "SSH_HOST",
+              "SSH_USER",
+              "SSH_KEY",
+          ]
+          result = validate_secrets(os.environ, required)
+          if not result.ok:
+              # 仅报告名称，不包含任何 secret 值（R5.5）。
+              print("::error::缺失或为空的必需 Secret: " + ", ".join(result.missing))
+              sys.exit(1)
+          print("所有必需 Secret 均已配置且非空")
+          PY
+
+      # SSH 连接性检查（R4.1/R4.4）：连接超时 30s。
+      # 若服务器完全不可达，此步失败 → 作业失败且未标记 deploy_attempted
+      # → rollback 门控为假 → 不触发回滚（服务未改动，R4.4）。
+      - name: SSH 连接性检查（R4.1/R4.4）
+        uses: appleboy/ssh-action@v1
         with:
-          context: .
-          file: web/Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/web:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/web:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 30s
+          command_timeout: 1m
+          script: echo "SSH 连接成功，准备开始部署"
+
+      # 连接成功 → 即将开始拉取/重启，标记 deploy_attempted（R4.5 回滚门控依据）。
+      - name: 标记 deploy_attempted
+        id: mark
+        run: |
+          echo "deploy_attempted=true" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      # 远程执行 deploy.sh：写 .env.prod、检出 SHA、登录 GHCR、pull（300s 超时）、
+      # up -d、在 120s 内确认四服务 running（R4.2/R4.3）。失败即作业失败并触发回滚（R4.5）。
+      - name: SSH 部署（拉取 SHA 镜像并重启，R4.2/R4.3/R4.5）
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 30s
+          command_timeout: 20m
+          envs: AUS_ELE_JWT_SECRET,FINGRID_API_KEY,IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_USERNAME,GHCR_TOKEN,API_HOST_PORT,WEB_HOST_PORT,APP_DIR
+          script: |
+            set -e
+            bash "${APP_DIR}/deploy/scripts/deploy.sh"
+        env:
+          AUS_ELE_JWT_SECRET: ${{ secrets.AUS_ELE_JWT_SECRET }}
+          FINGRID_API_KEY: ${{ secrets.FINGRID_API_KEY }}
+          IMAGE_TAG: ${{ github.sha }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API_HOST_PORT: ${{ env.API_HOST_PORT }}
+          WEB_HOST_PORT: ${{ env.WEB_HOST_PORT }}
+          APP_DIR: ${{ env.APP_DIR }}
+
+      - name: 阶段状态汇总
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          STATUS=$(python3 -c "from lib.status import classify_stage; print(classify_stage('${{ job.status }}'))")
+          echo "- **deploy（远程部署）**：$STATUS" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────
+  # verify（Post_Deploy_Verification，R6/R8.3）：Health_Check + Smoke_Test
+  # ─────────────────────────────────────────────
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # 远程执行 verify.sh：Health_Check（10 次/间隔 5s/窗口 60s）→ Smoke_Test，
+      # 通过后写入 Last_Stable_Tag；失败即作业失败并触发回滚（R6.3/R6.4）。
+      - name: SSH 部署后验证（Health + Smoke，R6/R8.3）
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 30s
+          command_timeout: 10m
+          envs: APP_DIR,API_HOST_PORT,IMAGE_TAG
+          script: |
+            set -e
+            bash "${APP_DIR}/deploy/scripts/verify.sh"
+        env:
+          APP_DIR: ${{ env.APP_DIR }}
+          API_HOST_PORT: ${{ env.API_HOST_PORT }}
+          IMAGE_TAG: ${{ github.sha }}
+
+      - name: 阶段状态汇总
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          STATUS=$(python3 -c "from lib.status import classify_stage; print(classify_stage('${{ job.status }}'))")
+          echo "- **verify（部署后验证）**：$STATUS" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────
+  # rollback（R7/R9.3/R9.4）：失败时回滚到 Last_Stable_Tag
+  # 门控：failure() 且 deploy_attempted == 'true'（已开始变更才回滚）。
+  # rollback.sh 总以非零退出 → 本作业失败 → 流水线整体判定为失败。
+  # ─────────────────────────────────────────────
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [deploy, verify]
+    if: failure() && needs.deploy.outputs.deploy_attempted == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # 计算触发回滚的失败阶段，作为 ROLLBACK_REASON 传入 rollback.sh 记录（R9.3）。
+      - name: 计算回滚原因
+        id: reason
+        run: |
+          if [ "${{ needs.verify.result }}" = "failure" ]; then
+            echo "reason=verify 阶段失败（Health_Check 或 Smoke_Test 未通过）" >> "$GITHUB_OUTPUT"
+          else
+            echo "reason=deploy 阶段失败（镜像拉取超时或服务未在窗口内 running）" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: SSH 回滚到 Last_Stable_Tag（R7）
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 30s
+          command_timeout: 10m
+          envs: APP_DIR,API_HOST_PORT,ROLLBACK_REASON
+          script: |
+            bash "${APP_DIR}/deploy/scripts/rollback.sh"
+        env:
+          APP_DIR: ${{ env.APP_DIR }}
+          API_HOST_PORT: ${{ env.API_HOST_PORT }}
+          ROLLBACK_REASON: ${{ steps.reason.outputs.reason }}
+
+      - name: 阶段状态汇总
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}/deploy/scripts
+        run: |
+          STATUS=$(python3 -c "from lib.status import classify_stage; print(classify_stage('${{ job.status }}'))")
+          echo "- **rollback（失败回滚）**：$STATUS（原因：${{ steps.reason.outputs.reason }}）" >> "$GITHUB_STEP_SUMMARY"

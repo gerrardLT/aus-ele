@@ -1,3 +1,34 @@
+"""
+AEMO Intelligence Platform — main API server.
+
+MIGRATION STATUS (2026-06):
+  Migrated to routes/ modules:
+    - price_routes, revenue_routes, fcas_routes, wem_modules_routes
+    - admin_routes, aggregation_routes, coopt_routes, cost_structure_routes
+    - data_quality_routes, external_api_routes, finland_routes
+    - forward_price_routes, health, investment_routes, narrative_routes
+    - outlook_routes, ranking_routes, saturation_routes, spike_routes
+
+  Remaining in server.py (~115 endpoints):
+    - P0 dataset endpoints (15x /api/p0/datasets/*)
+    - Investment simulator helpers & endpoints
+    - FCAS analysis (NEM variant)
+    - Price trend / peak analysis (legacy duplicates)
+    - Grid events, alerts, capacity data
+    - Job orchestration admin endpoints
+    - Market screening, backtest, reports
+
+  Plan: Extract remaining endpoint groups into routes/p0_datasets_routes.py,
+        routes/investment_v2_routes.py, routes/grid_events_routes.py.
+        Each extraction should preserve API contract and include sql_safe validation.
+
+  STATUS (postponed): The remaining route modularization above is DEFERRED for now.
+        The ~115 endpoints still living in server.py are intentionally left in place
+        and are NOT scheduled for extraction at this time. Do not refactor them out
+        unless this decision is explicitly revisited. Existing routes/ modules remain
+        the pattern for any brand-new endpoints.
+"""
+
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ConfigDict
@@ -27,6 +58,7 @@ from data_quality import compute_quality_snapshots, summarize_quality_snapshots
 from alerts import evaluate_alert_rules as run_alert_evaluation
 from database import DatabaseManager
 from fcas_opportunity import summarize_nem_fcas_opportunity
+from sql_safe import safe_table_name, trading_price_table
 import grid_events
 import grid_forecast
 from fingrid import catalog as fingrid_catalog
@@ -677,7 +709,7 @@ def _fetch_bess_backtest_intervals(params: BessBacktestParams) -> list[dict]:
                 ).fetchall()
                 default_interval_minutes = 5
             else:
-                table_name = f"trading_price_{params.year}"
+                table_name = trading_price_table(params.year)
                 rows = conn.execute(
                     f"""
                     SELECT settlement_date, rrp_aud_mwh
@@ -2272,6 +2304,7 @@ def _fetch_settlement_rows(region: str, *, limit: int = 288) -> list[dict]:
     table_name = _latest_trading_price_table()
     if not table_name:
         return []
+    table_name = safe_table_name(table_name)
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -5902,7 +5935,7 @@ def get_price_trend(
     quarter = _cacheable_param(quarter)
     day_type = _cacheable_param(day_type)
     limit = _cacheable_param(limit)
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
     try:
         cache_payload = {
             "year": year,
@@ -5921,7 +5954,7 @@ def get_price_trend(
         with db.get_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail=f"No data available for year {year}")
 
@@ -6090,7 +6123,7 @@ def get_peak_analysis(
     month = _cacheable_param(month)
     quarter = _cacheable_param(quarter)
     day_type = _cacheable_param(day_type)
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
     fee = network_fee if network_fee is not None else get_default_fee(region)
     windows = get_window_sizes(region)
 
@@ -6121,7 +6154,7 @@ def get_peak_analysis(
             cursor = conn.cursor()
 
             # Check table exists
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail=f"No data for year {year}")
 
@@ -6330,7 +6363,7 @@ def get_hourly_price_profile(
     Used for the Clock Heatmap / Negative Pricing Window visualization.
     """
     month = _cacheable_param(month)
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
     try:
         if access_scope:
             _assert_scope_allows_internal_query(
@@ -6832,13 +6865,13 @@ def get_fcas_analysis(
             logger.error(f"WEM ESS analysis error: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
-    table_name = f"trading_price_{year}"
+    table_name = trading_price_table(year)
 
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if not cursor.fetchone():
                 raise HTTPException(status_code=404, detail=f"No data for year {year}")
 
@@ -7213,7 +7246,7 @@ def _estimate_nem_fcas_baseline(params: InvestmentParams) -> tuple[float, str]:
 
     with db.get_connection() as conn:
         for year in params.backtest_years:
-            table_name = f"trading_price_{year}"
+            table_name = trading_price_table(year)
             try:
                 cursor = conn.execute(
                     f"""
