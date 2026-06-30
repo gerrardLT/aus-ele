@@ -41,7 +41,7 @@ jobs:
 
       - name: Run mypy type checking
         run: |
-          mypy backend/ --ignore-missing-imports --no-strict-optional
+          mypy backend/ --ignore-missing-imports --no-strict-optional --explicit-package-bases
 
       - name: Run unit tests
         run: |

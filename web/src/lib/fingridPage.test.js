@@ -99,7 +99,7 @@ test('FingridPage wires language state and dynamic request limits', () => {
   assert.match(source, /import PageSection from '\.\.\/components\/PageSection';/);
   assert.match(source, /copy\.toggleLanguage/);
   assert.match(source, /copy\.toggleLanguageAriaLabel/);
-  assert.match(source, /id=\"fingrid-workspace-shell\"/);
+  assert.match(source, /id="fingrid-workspace-shell"/);
   assert.match(source, /const toolbar = \(/);
   assert.match(source, /toolbarOnly/);
   assert.match(source, /mode="hero"/);

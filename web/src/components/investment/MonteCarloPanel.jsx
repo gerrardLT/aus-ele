@@ -69,11 +69,10 @@ function generateApproximateHistogram(p10, p50, p90, binCount = 20) {
 }
 
 export default function MonteCarloPanel({ mc, decisionAdjustedMonteCarlo, copy, lang = 'zh' }) {
-  if (!mc) return null;
-
   const t = LABELS[lang] || LABELS.zh;
 
   const histogramData = useMemo(() => {
+    if (!mc) return [];
     // 如果后端返回了 histogram 数据，直接使用
     if (mc.histogram && Array.isArray(mc.histogram) && mc.histogram.length > 0) {
       return mc.histogram.map((bin) => ({
@@ -84,6 +83,8 @@ export default function MonteCarloPanel({ mc, decisionAdjustedMonteCarlo, copy, 
     // 否则用 P10/P50/P90 生成近似分布
     return generateApproximateHistogram(mc.npv_p10, mc.npv_p50, mc.npv_p90);
   }, [mc]);
+
+  if (!mc) return null;
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
