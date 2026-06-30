@@ -13,6 +13,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
   # CD（部署）相关默认值；与服务器侧脚本默认一致（deploy/verify/rollback）。
+  # IMAGE_PREFIX 在各作业中通过 step 转为小写（GHCR 要求 lowercase）。
   APP_DIR: /www/wwwroot/aus-ele
   API_HOST_PORT: "18085"
   WEB_HOST_PORT: "18080"
@@ -138,6 +139,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 规范化 IMAGE_PREFIX 为小写（GHCR 要求）
+        run: echo "IMAGE_PREFIX=${IMAGE_PREFIX,,}" >> "$GITHUB_ENV"
+
       - name: 登录 GHCR（R3.5/R3.9）
         uses: docker/login-action@v3
         with:
@@ -253,6 +257,9 @@ jobs:
       image_tag: ${{ steps.mark.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: 规范化 IMAGE_PREFIX 为小写
+        run: echo "IMAGE_PREFIX=${IMAGE_PREFIX,,}" >> "$GITHUB_ENV"
 
       # 前置 Secret 校验（R5.5）：在任何 SSH / 拉取 / 重启之前进行，
       # 缺失/为空则立即失败，且仅报告缺失名称、绝不输出 secret 值。
