@@ -40,7 +40,7 @@ RUNNING_INTERVAL_S="${RUNNING_INTERVAL_S:-5}"
 GIT_SHA="${GIT_SHA:-${IMAGE_TAG:-}}"
 
 # 必需进入 running 状态的服务集合（R4.3）。
-REQUIRED_SERVICES="backend worker web redis"
+REQUIRED_SERVICES="backend worker web redis postgres"
 
 # lib 目录（deploy/scripts/lib），用于通过 python3 调用 services_all_running。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -129,8 +129,10 @@ write_env_file() {
         echo "IMAGE_TAG=${IMAGE_TAG:-${GIT_SHA}}"
         echo "API_HOST_PORT=${API_HOST_PORT:-18085}"
         echo "WEB_HOST_PORT=${WEB_HOST_PORT:-18080}"
+        echo "PG_HOST_PORT=${PG_HOST_PORT:-15432}"
         echo "AUS_ELE_JWT_SECRET=${AUS_ELE_JWT_SECRET}"
         echo "FINGRID_API_KEY=${FINGRID_API_KEY}"
+        echo "AUS_ELE_PG_PASSWORD=${AUS_ELE_PG_PASSWORD:-aemo_pg_pass_2026}"
     } >>"${ENV_FILE}"
 
     log ".env.prod 写入完成（含变量: REGISTRY, IMAGE_PREFIX, IMAGE_TAG, API_HOST_PORT, WEB_HOST_PORT, AUS_ELE_JWT_SECRET, FINGRID_API_KEY）"

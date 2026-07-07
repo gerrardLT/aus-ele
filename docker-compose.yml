@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    mem_limit: 1024m
+    environment:
+      POSTGRES_DB: aemo_data
+      POSTGRES_USER: aemo
+      POSTGRES_PASSWORD: ${AUS_ELE_PG_PASSWORD:?AUS_ELE_PG_PASSWORD is required}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "${PG_HOST_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aemo -d aemo_data"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: .
@@ -6,6 +24,13 @@ services:
     restart: unless-stopped
     mem_limit: 1200m
     environment:
+      AUS_ELE_DB_BACKEND: postgresql
+      AUS_ELE_PG_HOST: postgres
+      AUS_ELE_PG_PORT: 5432
+      AUS_ELE_PG_DATABASE: aemo_data
+      AUS_ELE_PG_USER: aemo
+      AUS_ELE_PG_PASSWORD: ${AUS_ELE_PG_PASSWORD:?AUS_ELE_PG_PASSWORD is required}
+      AUS_ELE_PG_MAX_CONNECTIONS: 10
       AUS_ELE_DB_PATH: /app/data/aemo_data.db
       AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_ENABLE_SCHEDULER:-false}
       AUS_ELE_ENABLE_JOB_WORKER: ${AUS_ELE_ENABLE_JOB_WORKER:-false}
@@ -29,7 +54,10 @@ services:
     ports:
       - "${API_HOST_PORT:-18085}:8085"
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   worker:
     build:
@@ -38,6 +66,13 @@ services:
     restart: unless-stopped
     mem_limit: 1536m
     environment:
+      AUS_ELE_DB_BACKEND: postgresql
+      AUS_ELE_PG_HOST: postgres
+      AUS_ELE_PG_PORT: 5432
+      AUS_ELE_PG_DATABASE: aemo_data
+      AUS_ELE_PG_USER: aemo
+      AUS_ELE_PG_PASSWORD: ${AUS_ELE_PG_PASSWORD:?AUS_ELE_PG_PASSWORD is required}
+      AUS_ELE_PG_MAX_CONNECTIONS: 10
       AUS_ELE_DB_PATH: /app/data/aemo_data.db
       AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_WORKER_ENABLE_SCHEDULER:-true}
       AUS_ELE_ENABLE_JOB_WORKER: ${AUS_ELE_WORKER_ENABLE_JOB_WORKER:-true}
@@ -59,7 +94,10 @@ services:
       - ./logs:/app/logs
       - ./reports:/app/reports
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   web:
     build:
@@ -87,3 +125,4 @@ services:
 
 volumes:
   redis_data:
+  pg_data:
