@@ -40,6 +40,7 @@ export const MODULE_REGISTRY = {
   CapacityCreditsAnalysis: { category: 'wem', description: 'WEM capacity credits analysis' },
   WemEssAnalysis: { category: 'wem', description: 'WEM ESS market analysis' },
   FiveMinSettlementImpact: { category: 'wem', description: '5-minute settlement impact analysis' },
+  WemCsvUploader: { category: 'wem', description: 'WEM CSV data upload/import tool' },
 };
 
 // --- Market Configurations ---
@@ -162,6 +163,7 @@ export const MARKET_CONFIGS = {
           { component: 'PriceChart', dataDependencies: ['/api/price-trend'], loadPriority: 1, enabled: true },
           { component: 'SummaryStats', dataDependencies: ['/api/price-trend'], loadPriority: 1, enabled: true },
           { component: 'StemBalancingSpread', dataDependencies: ['/api/v1/wem/stem-balancing'], loadPriority: 2, enabled: true },
+          { component: 'WemCsvUploader', dataDependencies: [], loadPriority: 3, enabled: true },
         ],
       },
       {

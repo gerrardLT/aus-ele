@@ -50,6 +50,7 @@ const MODULE_REGISTRY = {
   CycleCost: lazy(() => import('../CycleCost')),
   ReportPreview: lazy(() => import('../ReportPreview')),
   WemEssAnalysis: lazy(() => import('../wem/WemEssAnalysis')),
+  WemCsvUploader: lazy(() => import('../wem/WemCsvUploader')),
 };
 
 // --- ErrorBoundary ---
@@ -137,6 +138,7 @@ export default function ModuleRenderer({ moduleEntry, config, lang }) {
     CycleCost: { t: { ...t.cycleCost, ...t.peak_analysis, loadingMsg: t.loading_states?.cycleCost }, month: filters.months?.[0] || 'ALL', quarter: filters.quarter, dayType: filters.dayType, regimeCompactCopy: t.regime_compact },
     ReportPreview: { t: t.reportPreview || { title: lang === 'zh' ? '报告预览' : 'Report Preview' }, month: filters.months?.[0] || 'ALL' },
     WemEssAnalysis: {},
+    WemCsvUploader: {},
   };
 
   const extraProps = legacyPropsMap[moduleEntry.component] || {};

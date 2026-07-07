@@ -35,6 +35,7 @@ ROUTE_MODULES = [
     "routes.ranking_routes",
     "routes.coopt_routes",
     "routes.wem_modules_routes",
+    "routes.wem_csv_upload",
     "routes.outlook_routes",
     "routes.cost_structure_routes",
     "routes.forward_price_routes",
