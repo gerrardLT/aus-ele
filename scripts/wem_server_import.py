@@ -39,11 +39,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ── 配置 ──────────────────────────────────────────────────────────────
-BASE_DIR = "/www/wwwroot/wem_raw_data"
-PROGRESS_FILE = "/www/wwwroot/aus-ele/data/.wem_import_progress.json"
+# BASE_DIR 和 PROGRESS_FILE 由 --base-dir 参数动态设置（支持宿主机和 Docker 两种模式）
+BASE_DIR = None
+PROGRESS_FILE = None
 
-# PostgreSQL 连接（通过宿主机暴露的端口）
-PG_DSN = "postgresql://aemo:{password}@localhost:{port}/aemo_data"
+# PostgreSQL 连接（通过宿主机暴露的端口或 Docker 内网）
+PG_DSN = "postgresql://aemo:{password}@{host}:{port}/aemo_data"
 
 BATCH_SIZE = 50_000  # COPY 每批行数
 AWST = timezone(timedelta(hours=8))
@@ -724,10 +725,25 @@ def main():
     parser.add_argument("--skip-fcess", action="store_true", help="跳过 FCAS")
     parser.add_argument("--skip-sqlite-migration", action="store_true", help="跳过 SQLite 存量迁移")
     parser.add_argument("--pg-password", default="aemo_pg_pass_2026", help="PG 密码")
-    parser.add_argument("--pg-port", type=int, default=15432, help="PG 宿主机端口")
+    parser.add_argument("--pg-host", default="localhost", help="PG 主机地址（Docker 内用 postgres）")
+    parser.add_argument("--pg-port", type=int, default=15432, help="PG 端口（宿主机 15432，Docker 内 5432）")
+    parser.add_argument("--base-dir", default=None,
+                        help="WEM 原始数据目录（默认自动检测）")
     parser.add_argument("--sqlite-db", default="/www/wwwroot/aus-ele/data/aemo_data.db",
                         help="已有 SQLite 数据库路径（用于存量迁移）")
     args = parser.parse_args()
+
+    # 自动检测 BASE_DIR
+    if args.base_dir:
+        BASE_DIR = args.base_dir
+    elif os.path.isdir("/www/wwwroot/wem_raw_data"):
+        BASE_DIR = "/www/wwwroot/wem_raw_data"
+    elif os.path.isdir("/app/data/wem_raw_data"):
+        BASE_DIR = "/app/data/wem_raw_data"
+    else:
+        print("错误: 找不到 WEM 数据目录，请用 --base-dir 指定", file=sys.stderr)
+        sys.exit(1)
+    PROGRESS_FILE = os.path.join(BASE_DIR, ".wem_import_progress.json")
 
     # 安装 psycopg2（如果需要）
     try:
@@ -737,7 +753,7 @@ def main():
         os.system(f"{sys.executable} -m pip install psycopg2-binary -q")
         import psycopg2
 
-    dsn = PG_DSN.format(password=args.pg_password, port=args.pg_port)
+    dsn = PG_DSN.format(password=args.pg_password, host=args.pg_host, port=args.pg_port)
     log.info("=" * 60)
     log.info("WEM 数据批量导入 → PostgreSQL")
     log.info("数据目录: %s", BASE_DIR)
