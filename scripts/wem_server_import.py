@@ -729,6 +729,8 @@ def main():
     parser.add_argument("--pg-port", type=int, default=15432, help="PG 端口（宿主机 15432，Docker 内 5432）")
     parser.add_argument("--base-dir", default=None,
                         help="WEM 原始数据目录（默认自动检测）")
+    parser.add_argument("--progress-file", default=None,
+                        help="进度文件路径（默认写到可写目录，避开只读数据目录）")
     parser.add_argument("--sqlite-db", default="/www/wwwroot/aus-ele/data/aemo_data.db",
                         help="已有 SQLite 数据库路径（用于存量迁移）")
     args = parser.parse_args()
@@ -744,7 +746,17 @@ def main():
     else:
         print("错误: 找不到 WEM 数据目录，请用 --base-dir 指定", file=sys.stderr)
         sys.exit(1)
-    PROGRESS_FILE = os.path.join(BASE_DIR, ".wem_import_progress.json")
+
+    # 进度文件需写入可写目录（BASE_DIR 可能是只读挂载）
+    if args.progress_file:
+        PROGRESS_FILE = args.progress_file
+    else:
+        for cand_dir in ("/app/data", "/www/wwwroot/aus-ele/data", "/tmp"):
+            if os.path.isdir(cand_dir) and os.access(cand_dir, os.W_OK):
+                PROGRESS_FILE = os.path.join(cand_dir, ".wem_import_progress.json")
+                break
+        else:
+            PROGRESS_FILE = os.path.join(os.getcwd(), ".wem_import_progress.json")
 
     # 安装 psycopg2（如果需要）
     try:
