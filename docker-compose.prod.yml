@@ -52,6 +52,7 @@ services:
       - ./data_lake:/app/data_lake
       - ./logs:/app/logs
       - ./reports:/app/reports
+      - ./scripts:/app/scripts
       - ${WEM_RAW_DATA_DIR:-/www/wwwroot/wem_raw_data}:/app/wem_raw_data:ro
     ports:
       - "${API_HOST_PORT:-18085}:8085"
