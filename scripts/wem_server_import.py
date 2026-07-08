@@ -733,7 +733,8 @@ def main():
                         help="已有 SQLite 数据库路径（用于存量迁移）")
     args = parser.parse_args()
 
-    # 自动检测 BASE_DIR
+    # 自动检测 BASE_DIR（声明 global 才能在函数内修改模块级变量）
+    global BASE_DIR, PROGRESS_FILE
     if args.base_dir:
         BASE_DIR = args.base_dir
     elif os.path.isdir("/www/wwwroot/wem_raw_data"):
