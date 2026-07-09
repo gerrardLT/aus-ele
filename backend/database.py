@@ -28,21 +28,36 @@ def _pg_pool():
 
 
 _QUESTION_MARK_RE = re.compile(r"\?(?=(?:[^']*'[^']*')*[^']*$)")
-_PERCENT_LIT_RE = re.compile(r"(?<!%)%(?!%)(?=(?:[^']*'[^']*')*[^']*$)")
+_PCT_PAT_RE = re.compile(
+    r"""(?P<doubled>%%)          # already-escaped literal %
+       |(?P<pct_s>%s)            # psycopg2 parameter marker
+       |(?P<pct_lone>%(?!%)(?=(?:[^']*'[^']*')*[^']*$))   # literal % (modulo etc.)
+       |(?P<qmark>\?(?=(?:[^']*'[^']*')*[^']*$))           # sqlite-style ? param
+    """,
+    re.VERBOSE,
+)
 
 
 def _translate_sql(sql: str) -> str:
-    """Translate parameter placeholders from ? to %s for psycopg2.
+    """Translate parameter placeholders for psycopg2 in a single pass.
 
-    1. Escape literal ``%`` (modulo etc.) to ``%%`` so psycopg2 does not
-       confuse them with parameter markers.  ``%%`` is left untouched.
-    2. Convert ``?`` to ``%s``.
+    Handles mixed ``?`` and ``%s`` styles:
+    * ``%%``  → kept (already-escaped literal ``%``)
+    * ``%s``  → kept (psycopg2 parameter marker)
+    * ``%``   → ``%%`` (escape literal ``%`` such as modulo)
+    * ``?``   → ``%s`` (sqlite-style parameter marker)
 
-    Both regexes skip ``?`` / ``%`` that appear inside single-quoted string
-    literals (odd number of quotes before end-of-string).
+    The regex skips markers / ``%`` inside single-quoted string literals.
     """
-    sql = _PERCENT_LIT_RE.sub("%%", sql)
-    return _QUESTION_MARK_RE.sub("%s", sql)
+    def _replace(m):
+        if m.group("doubled"):
+            return "%%"
+        if m.group("pct_s"):
+            return "%s"
+        if m.group("pct_lone"):
+            return "%%"
+        return "%s"  # qmark
+    return _PCT_PAT_RE.sub(_replace, sql)
 
 
 class _DictRow:
