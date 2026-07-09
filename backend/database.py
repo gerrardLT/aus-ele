@@ -28,13 +28,20 @@ def _pg_pool():
 
 
 _QUESTION_MARK_RE = re.compile(r"\?(?=(?:[^']*'[^']*')*[^']*$)")
+_PERCENT_LIT_RE = re.compile(r"(?<!%)%(?!%)(?=(?:[^']*'[^']*')*[^']*$)")
 
 
 def _translate_sql(sql: str) -> str:
     """Translate parameter placeholders from ? to %s for psycopg2.
 
-    Uses a regex that skips ? inside single-quoted string literals.
+    1. Escape literal ``%`` (modulo etc.) to ``%%`` so psycopg2 does not
+       confuse them with parameter markers.  ``%%`` is left untouched.
+    2. Convert ``?`` to ``%s``.
+
+    Both regexes skip ``?`` / ``%`` that appear inside single-quoted string
+    literals (odd number of quotes before end-of-string).
     """
+    sql = _PERCENT_LIT_RE.sub("%%", sql)
     return _QUESTION_MARK_RE.sub("%s", sql)
 
 
