@@ -17,7 +17,7 @@ const DAY_TYPES = ['ALL', 'WEEKDAY', 'WEEKEND'];
 
 export default function FilterBar({ config, years, lang }) {
   const { filters, setFilter } = useFilters();
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(true);
   const t = translations[lang]?.filters || {};
 
   const btnBase = 'px-3.5 py-1.5 min-h-[36px] text-[13px] font-sans transition-colors rounded-full border';
