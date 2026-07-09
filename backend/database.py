@@ -75,8 +75,10 @@ class _PGCursorWrapper:
     def execute(self, sql, params=None):
         sql = _translate_sql(sql)
         if params:
-            return self._cur.execute(sql, params)
-        return self._cur.execute(sql)
+            self._cur.execute(sql, params)
+        else:
+            self._cur.execute(sql)
+        return self  # match sqlite3 cursor.execute() which returns self
 
     def executemany(self, sql, params_seq):
         sql = _translate_sql(sql)
@@ -144,7 +146,8 @@ class _PGConnWrapper:
 
     def execute(self, sql, params=None):
         cur = self.cursor()
-        return cur.execute(sql, params)
+        cur.execute(sql, params)
+        return cur  # match sqlite3 connection.execute() which returns cursor
 
     def executemany(self, sql, params_seq):
         cur = self.cursor()
