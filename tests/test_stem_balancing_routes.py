@@ -12,7 +12,6 @@ Tests the GET /api/v1/wem/stem-balancing endpoint including:
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 import tempfile
 import unittest

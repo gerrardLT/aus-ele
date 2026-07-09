@@ -197,8 +197,10 @@ class Fcas4sIngestJob:
             cursor.execute(CREATE_FCAS_4S_TABLE_SQL)
 
             insert_sql = (
-                f"INSERT OR REPLACE INTO {FCAS_4S_TABLE} ({col_names}) "
-                f"VALUES ({placeholders})"
+                f"INSERT INTO {FCAS_4S_TABLE} ({col_names}) "
+                f"VALUES ({placeholders}) "
+                f"ON CONFLICT (timestamp, region_id) DO UPDATE SET "
+                + ", ".join(f"{c} = EXCLUDED.{c}" for c in columns if c not in ("timestamp", "region_id"))
             )
 
             batch = []
@@ -233,7 +235,7 @@ def check_4s_data_available(db, *, region: str, year: int) -> bool:
             cursor = conn.cursor()
             # Check if table exists
             cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (FCAS_4S_TABLE,),
             )
             if not cursor.fetchone():

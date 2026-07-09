@@ -14,8 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Sync official grid event sources into SQLite.")
-    parser.add_argument("--db", default="../data/aemo_data.db", help="SQLite database path")
+    parser = argparse.ArgumentParser(description="Sync official grid event sources into PostgreSQL.")
     parser.add_argument("--days", type=int, default=180, help="Lookback window in days for rolling sources")
     args = parser.parse_args()
 
@@ -25,7 +24,7 @@ def main():
     except Exception:
         pass
 
-    db = DatabaseManager(args.db)
+    db = DatabaseManager()
     result = grid_events.sync_event_sources(db, days=args.days)
     logger.info("Grid event sync completed: %s", result)
 

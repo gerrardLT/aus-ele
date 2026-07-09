@@ -54,12 +54,8 @@ _load_env_file()
 
 @lru_cache(maxsize=1)
 def get_db() -> DatabaseManager:
-    """Return the singleton DatabaseManager instance."""
-    db_path = os.environ.get(
-        "AUS_ELE_DB_PATH",
-        str((_REPO_ROOT / "data" / "aemo_data.db").resolve()),
-    )
-    return DatabaseManager(db_path)
+    """Return the singleton DatabaseManager instance (PostgreSQL)."""
+    return DatabaseManager()
 
 
 @lru_cache(maxsize=1)

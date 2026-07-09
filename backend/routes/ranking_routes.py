@@ -13,7 +13,6 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 12.3
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -91,7 +90,7 @@ def _compute_arbitrage_scores(cursor, year: int) -> dict[str, float]:
                     scores[region] = std_dev  # fallback for near-zero average
             else:
                 scores[region] = 0.0
-        except sqlite3.Error:
+        except Exception:
             scores[region] = 0.0
 
     return scores
@@ -117,7 +116,7 @@ def _compute_spike_scores(cursor, year: int) -> dict[str, float]:
             )
             row = cursor.fetchone()
             scores[region] = float(row[0]) if row else 0.0
-        except sqlite3.Error:
+        except Exception:
             scores[region] = 0.0
 
     return scores
@@ -156,7 +155,7 @@ def _compute_fcas_scores(cursor, year: int) -> dict[str, float]:
                 scores[region] = sum(fcas_values) / len(fcas_values) if fcas_values else 0.0
             else:
                 scores[region] = 0.0
-        except sqlite3.Error:
+        except Exception:
             scores[region] = 0.0
 
     return scores
@@ -301,7 +300,7 @@ async def get_regional_ranking(
 
             # Check if price data table exists for the requested year
             cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (table_name,),
             )
             has_price_data = cursor.fetchone() is not None
@@ -427,9 +426,6 @@ async def get_regional_ranking(
 
     except HTTPException:
         raise
-    except sqlite3.Error as e:
-        logger.error("Database error in regional-ranking: %s", e)
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
     except Exception as e:
-        logger.error("Unexpected error in regional-ranking: %s", e)
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error("Error in regional-ranking: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))

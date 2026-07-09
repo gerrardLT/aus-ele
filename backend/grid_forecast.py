@@ -226,7 +226,7 @@ def fetch_nem_predispatch_window(region: str, as_of: str) -> list[dict]:
 
 def _available_year_tables(conn, market: str, region: str) -> list[str]:
     cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%'")
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'trading_price_%' ORDER BY table_name")
     tables = []
     for (name,) in cursor.fetchall():
         try:
@@ -321,15 +321,18 @@ def build_recent_market_features(db, market: str, region: str, as_of: str) -> di
     with db.get_connection() as conn:
         table_name = f"trading_price_{as_of_dt.year}"
         cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (table_name,))
+        cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
         if not cursor.fetchone():
             tables = _available_year_tables(conn, market, region)
             if not tables:
                 return empty_nem_history
             table_name = tables[-1]
 
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        existing_cols = {row[1] for row in cursor.fetchall()}
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+            (table_name,),
+        )
+        existing_cols = {row[0] for row in cursor.fetchall()}
         fcas_expr = " + ".join(f"COALESCE({col}, 0)" for col in FCAS_COLUMNS if col in existing_cols)
         if not fcas_expr:
             fcas_expr = "0"
@@ -496,7 +499,7 @@ def _fetch_recent_operational_demand_values(db, region: str, as_of: str, *, limi
     as_of_dt = parse_as_of(as_of)
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name = 'operational_demand_actual_hh'")
+        cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", ('operational_demand_actual_hh',))
         if not cursor.fetchone():
             return []
         cursor.execute(
@@ -604,7 +607,7 @@ def _fetch_forward_actual_price_rows(db, market: str, region: str, start_time: s
     with db.get_connection() as conn:
         table_name = f"trading_price_{start_dt.year}"
         cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (table_name,))
+        cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
         if not cursor.fetchone():
             tables = _available_year_tables(conn, market, region)
             if not tables:

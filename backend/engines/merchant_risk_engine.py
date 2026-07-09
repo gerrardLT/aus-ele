@@ -338,7 +338,7 @@ class MerchantRiskEngine:
 
                     # Check if table exists
                     cursor.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                         (table_name,),
                     )
                     if not cursor.fetchone():

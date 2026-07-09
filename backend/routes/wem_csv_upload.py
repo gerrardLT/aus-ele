@@ -207,7 +207,7 @@ def _flush_trading_buf(buf: list[tuple], db, created_tables: set):
                 cur = conn.cursor()
                 cur.execute(f"""
                     CREATE TABLE IF NOT EXISTS {table} (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id BIGSERIAL PRIMARY KEY,
                         settlement_date TEXT NOT NULL,
                         region_id TEXT NOT NULL,
                         rrp_aud_mwh REAL NOT NULL,
@@ -226,7 +226,7 @@ def _flush_trading_buf(buf: list[tuple], db, created_tables: set):
             cur = conn.cursor()
             for sd, rid, rrp in rows:
                 cur.execute(
-                    f"INSERT OR REPLACE INTO {table} (settlement_date, region_id, rrp_aud_mwh) VALUES (?,?,?)",
+                    f"INSERT INTO {table} (settlement_date, region_id, rrp_aud_mwh) VALUES (?,?,?) ON CONFLICT (settlement_date, region_id) DO UPDATE SET rrp_aud_mwh = EXCLUDED.rrp_aud_mwh",
                     (sd, rid, rrp),
                 )
             conn.commit()
@@ -303,7 +303,7 @@ def _flush_ess_buf(buf: list[tuple], db):
     with db.get_connection() as conn:
         cur = conn.cursor()
         cur.executemany(
-            f"INSERT OR REPLACE INTO wem_ess_market_price ({fields}) VALUES ({placeholders})",
+            f"INSERT INTO wem_ess_market_price ({fields}) VALUES ({placeholders}) ON CONFLICT (dispatch_interval) DO UPDATE SET energy_price = EXCLUDED.energy_price, regulation_raise_price = EXCLUDED.regulation_raise_price, regulation_lower_price = EXCLUDED.regulation_lower_price, contingency_raise_price = EXCLUDED.contingency_raise_price, contingency_lower_price = EXCLUDED.contingency_lower_price, rocof_price = EXCLUDED.rocof_price",
             buf,
         )
         conn.commit()

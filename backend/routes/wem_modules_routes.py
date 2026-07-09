@@ -217,7 +217,7 @@ def _fetch_stem_prices(start_date: str, end_date: str) -> list[tuple[str, float]
                 cursor = conn.cursor()
                 # Check table exists
                 cursor.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                     (table_name,),
                 )
                 if not cursor.fetchone():
@@ -601,7 +601,7 @@ def _fetch_wem_prices_for_year(year: int) -> list[float]:
         with db.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                f"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (table_name,),
             )
             if not cursor.fetchone():
@@ -633,7 +633,7 @@ def _check_actual_5min_data_available(year: int) -> bool:
         with db.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (table_name,),
             )
             if not cursor.fetchone():

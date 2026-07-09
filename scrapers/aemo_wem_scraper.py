@@ -188,9 +188,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AEMO WEM Data Scraper")
     parser.add_argument("--start", type=str, required=True, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, required=True, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--db", type=str, default="../data/aemo_data.db", help="SQLite database file")
     
     args = parser.parse_args()
     
-    db_manager = DatabaseManager(args.db)
+    db_manager = DatabaseManager()
     scrape_wem_range(args.start, args.end, db_manager)

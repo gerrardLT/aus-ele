@@ -37,8 +37,7 @@ def load_env():
 
 def main() -> int:
     load_env()
-    db_path = os.environ.get("AUS_ELE_DB_PATH", str((REPO_ROOT / "data" / "aemo_data.db").resolve()))
-    db = DatabaseManager(db_path)
+    db = DatabaseManager()
     client = FingridClient(request_interval_seconds=8.0, timeout_seconds=60)
 
     for dataset_id, start in BACKFILL_STARTS.items():

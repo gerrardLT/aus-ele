@@ -414,8 +414,8 @@ def scrape_day(target_date: datetime, db: DatabaseManager) -> tuple[int, int]:
     return market_count, constraint_count
 
 
-def sync_wem_ess_range(start_dt: datetime, end_dt: datetime, db_path: str, *, prune_before_start: bool = False) -> dict:
-    db = DatabaseManager(db_path)
+def sync_wem_ess_range(start_dt: datetime, end_dt: datetime, db_path: str = "", *, prune_before_start: bool = False) -> dict:
+    db = DatabaseManager()
     capability_rows = sync_fcess_capabilities(db)
 
     total_market = 0
@@ -467,7 +467,6 @@ def parse_args():
     parser.add_argument("--start", help="Start date YYYY-MM-DD")
     parser.add_argument("--end", help="End date YYYY-MM-DD")
     parser.add_argument("--days", type=int, help="Rolling latest N days, inclusive")
-    parser.add_argument("--db", default="../data/aemo_data.db", help="SQLite database path")
     return parser.parse_args()
 
 

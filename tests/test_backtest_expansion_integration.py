@@ -115,21 +115,21 @@ class TestRealDatabaseBenchmarks:
         直接查询某个有数据的 region-month 每日 interval 计数，断言典型值 == 288，
         且全部 ≥ 280（容忍极少数因数据缺口偏低的日，但有效基准日应均为满日）。
         """
-        import sqlite3
-
-        conn = sqlite3.connect(calculator.db_path)
-        try:
-            rows = conn.execute(
+        # Use PG connection via the calculator's DatabaseManager
+        from deps import get_db
+        db = get_db()
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
                 """
                 SELECT DATE(settlement_date) AS day, COUNT(*) AS n
                 FROM trading_price_2024
-                WHERE region_id = 'NSW1' AND substr(settlement_date, 1, 7) = '2024-06'
+                WHERE region_id = 'NSW1' AND settlement_date::text LIKE '2024-06%'
                 GROUP BY day
                 ORDER BY day
                 """
-            ).fetchall()
-        finally:
-            conn.close()
+            )
+            rows = cursor.fetchall()
 
         counts = [n for _day, n in rows]
         assert counts, "2024-06 NSW1 无数据，无法验证 5 分钟粒度"

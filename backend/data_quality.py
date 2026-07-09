@@ -82,7 +82,7 @@ def _compute_nem_snapshots(db) -> list[dict[str, Any]] | None:
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%' ORDER BY name DESC"
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'trading_price_%' ORDER BY table_name DESC"
         )
         tables = [row[0] for row in cursor.fetchall()]
 

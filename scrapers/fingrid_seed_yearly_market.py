@@ -9,7 +9,6 @@ from fingrid.yearly_market_seed import seed_fingrid_yearly_market_rows
 
 
 if __name__ == "__main__":
-    db_path = Path(__file__).resolve().parents[1] / "data" / "aemo_data.db"
-    db = DatabaseManager(str(db_path))
+    db = DatabaseManager()
     result = seed_fingrid_yearly_market_rows(db)
     print(result)

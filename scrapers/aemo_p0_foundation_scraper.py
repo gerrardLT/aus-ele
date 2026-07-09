@@ -3,13 +3,13 @@ import io
 import json
 import os
 import re
-import sqlite3
 import sys
 import time
 import zipfile
 from datetime import datetime, timedelta, UTC
 from ftplib import FTP
 from pathlib import Path
+from typing import Any
 import xml.etree.ElementTree as ET
 
 import requests
@@ -118,7 +118,7 @@ def parse_aemo_report(lines: list[str]) -> tuple[list[str], list[dict[str, str]]
     return headers, rows
 
 
-def ensure_tables(conn: sqlite3.Connection):
+def ensure_tables(conn: Any):
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -322,7 +322,7 @@ def _utc_now_iso() -> str:
 
 
 def _upsert_aemo_source_sync_state(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     source_id: str,
     sync_status: str,
@@ -396,7 +396,7 @@ def _fetch_bom_registered_bytes(path: str) -> bytes:
 
 
 def _store_bom_weather_cache(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     region_id: str,
     source_file: str,
@@ -406,9 +406,10 @@ def _store_bom_weather_cache(
 ):
     conn.execute(
         """
-        INSERT OR REPLACE INTO bom_weather_source_cache
+        INSERT INTO bom_weather_source_cache
         (region_id, source_file, payload_xml, fetched_at_utc, fetch_mode, last_error)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id) DO UPDATE SET source_file=EXCLUDED.source_file, payload_xml=EXCLUDED.payload_xml, fetched_at_utc=EXCLUDED.fetched_at_utc, fetch_mode=EXCLUDED.fetch_mode, last_error=EXCLUDED.last_error
         """,
         (
             region_id,
@@ -423,7 +424,7 @@ def _store_bom_weather_cache(
 
 
 def _load_bom_weather_cache(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     region_id: str,
     max_age_hours: int = WEATHER_CACHE_MAX_AGE_HOURS,
@@ -532,7 +533,7 @@ def _parse_bom_observation_file(payload: bytes, *, region_id: str, source_file: 
     return records
 
 
-def sync_bom_weather_observations(conn: sqlite3.Connection):
+def sync_bom_weather_observations(conn: Any):
     records = []
     fallback_region_count = 0
     cached_region_count = 0
@@ -606,9 +607,10 @@ def sync_bom_weather_observations(conn: sqlite3.Connection):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO bom_weather_observation
+        INSERT INTO bom_weather_observation
         (region_id, station_name, observation_time_utc, observation_time_local, air_temperature_c, wind_speed_mps, cloud_cover_pct, apparent_temperature_c, relative_humidity_pct, rainfall_mm, pressure_hpa, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id, observation_time_utc) DO UPDATE SET station_name=EXCLUDED.station_name, observation_time_local=EXCLUDED.observation_time_local, air_temperature_c=EXCLUDED.air_temperature_c, wind_speed_mps=EXCLUDED.wind_speed_mps, cloud_cover_pct=EXCLUDED.cloud_cover_pct, apparent_temperature_c=EXCLUDED.apparent_temperature_c, relative_humidity_pct=EXCLUDED.relative_humidity_pct, rainfall_mm=EXCLUDED.rainfall_mm, pressure_hpa=EXCLUDED.pressure_hpa, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -644,7 +646,7 @@ def sync_bom_weather_observations(conn: sqlite3.Connection):
     return len(records)
 
 
-def sync_pdpasa_duid_availability(conn: sqlite3.Connection, limit: int):
+def sync_pdpasa_duid_availability(conn: Any, limit: int):
     names = fetch_recent_zip_names(PDPASA_DUID_AVAILABILITY_URL, PDPASA_DUID_AVAILABILITY_RE, limit)
     records = []
     for name in names:
@@ -668,9 +670,10 @@ def sync_pdpasa_duid_availability(conn: sqlite3.Connection, limit: int):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO pdpasa_duid_availability
+        INSERT INTO pdpasa_duid_availability
         (run_datetime, duid, interval_datetime, generation_max_availability, generation_pasa_availability, generation_recall_period, load_max_availability, load_pasa_availability, load_recall_period, lastchanged, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (run_datetime, duid, interval_datetime) DO UPDATE SET generation_max_availability=EXCLUDED.generation_max_availability, generation_pasa_availability=EXCLUDED.generation_pasa_availability, generation_recall_period=EXCLUDED.generation_recall_period, load_max_availability=EXCLUDED.load_max_availability, load_pasa_availability=EXCLUDED.load_pasa_availability, load_recall_period=EXCLUDED.load_recall_period, lastchanged=EXCLUDED.lastchanged, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -699,7 +702,7 @@ def _latest_mmsdm_archive_month_url() -> str:
     return f"https://nemweb.com.au{latest_month_url}MMSDM_Historical_Data_SQLLoader/DATA/"
 
 
-def sync_du_detail_summary(conn: sqlite3.Connection):
+def sync_du_detail_summary(conn: Any):
     data_url = _latest_mmsdm_archive_month_url()
     listing = fetch_archive_listing(data_url)
     candidates = [item for item in listing if "DUDETAILSUMMARY" in item.upper() and item.lower().endswith(".zip")]
@@ -728,9 +731,10 @@ def sync_du_detail_summary(conn: sqlite3.Connection):
     ]
     conn.executemany(
         """
-        INSERT OR REPLACE INTO du_detail_summary
+        INSERT INTO du_detail_summary
         (duid, start_date, end_date, dispatch_type, connection_point_id, region_id, station_id, participant_id, schedule_type, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (duid, start_date, end_date) DO UPDATE SET dispatch_type=EXCLUDED.dispatch_type, connection_point_id=EXCLUDED.connection_point_id, region_id=EXCLUDED.region_id, station_id=EXCLUDED.station_id, participant_id=EXCLUDED.participant_id, schedule_type=EXCLUDED.schedule_type, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -747,7 +751,7 @@ def sync_du_detail_summary(conn: sqlite3.Connection):
     return len(records)
 
 
-def sync_wem_reserve_shortfall_snapshot(conn: sqlite3.Connection):
+def sync_wem_reserve_shortfall_snapshot(conn: Any):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM wem_reserve_shortfall_snapshot")
     try:
@@ -769,7 +773,7 @@ def sync_wem_reserve_shortfall_snapshot(conn: sqlite3.Connection):
             LIMIT 288
             """
         ).fetchall()
-    except sqlite3.OperationalError:
+    except Exception:
         conn.commit()
         _upsert_aemo_source_sync_state(
             conn,
@@ -810,9 +814,10 @@ def sync_wem_reserve_shortfall_snapshot(conn: sqlite3.Connection):
             )
     cursor.executemany(
         """
-        INSERT OR REPLACE INTO wem_reserve_shortfall_snapshot
+        INSERT INTO wem_reserve_shortfall_snapshot
         (interval_start_utc, interval_end_utc, reserve_service, shortfall_mw, severity, source_table, source_interval)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (interval_start_utc, reserve_service) DO UPDATE SET interval_end_utc=EXCLUDED.interval_end_utc, shortfall_mw=EXCLUDED.shortfall_mw, severity=EXCLUDED.severity, source_table=EXCLUDED.source_table, source_interval=EXCLUDED.source_interval
         """,
         inserts,
     )
@@ -829,7 +834,7 @@ def sync_wem_reserve_shortfall_snapshot(conn: sqlite3.Connection):
     return len(inserts)
 
 
-def sync_operational_demand_actual(conn: sqlite3.Connection, limit: int):
+def sync_operational_demand_actual(conn: Any, limit: int):
     names = fetch_recent_zip_names(OD_ACTUAL_URL, OD_ACTUAL_RE, limit)
     records = []
     for name in names:
@@ -849,9 +854,10 @@ def sync_operational_demand_actual(conn: sqlite3.Connection, limit: int):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO operational_demand_actual_hh
+        INSERT INTO operational_demand_actual_hh
         (region_id, interval_datetime, operational_demand, operational_demand_adjustment, wdr_estimate, lastchanged, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id, interval_datetime) DO UPDATE SET operational_demand=EXCLUDED.operational_demand, operational_demand_adjustment=EXCLUDED.operational_demand_adjustment, wdr_estimate=EXCLUDED.wdr_estimate, lastchanged=EXCLUDED.lastchanged, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -868,7 +874,7 @@ def sync_operational_demand_actual(conn: sqlite3.Connection, limit: int):
     return len(records)
 
 
-def sync_operational_demand_forecast(conn: sqlite3.Connection, limit: int):
+def sync_operational_demand_forecast(conn: Any, limit: int):
     names = fetch_recent_zip_names(OD_FORECAST_URL, OD_FORECAST_RE, limit)
     records = []
     for name in names:
@@ -889,9 +895,10 @@ def sync_operational_demand_forecast(conn: sqlite3.Connection, limit: int):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO operational_demand_forecast_hh
+        INSERT INTO operational_demand_forecast_hh
         (region_id, interval_datetime, load_date, operational_demand_poe10, operational_demand_poe50, operational_demand_poe90, lastchanged, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id, interval_datetime, load_date) DO UPDATE SET operational_demand_poe10=EXCLUDED.operational_demand_poe10, operational_demand_poe50=EXCLUDED.operational_demand_poe50, operational_demand_poe90=EXCLUDED.operational_demand_poe90, lastchanged=EXCLUDED.lastchanged, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -908,7 +915,7 @@ def sync_operational_demand_forecast(conn: sqlite3.Connection, limit: int):
     return len(records)
 
 
-def sync_rooftop_pv_actual(conn: sqlite3.Connection, limit: int):
+def sync_rooftop_pv_actual(conn: Any, limit: int):
     names = fetch_recent_zip_names(ROOFTOP_ACTUAL_URL, ROOFTOP_ACTUAL_RE, limit)
     records = []
     for name in names:
@@ -928,9 +935,10 @@ def sync_rooftop_pv_actual(conn: sqlite3.Connection, limit: int):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO rooftop_pv_actual_measurement
+        INSERT INTO rooftop_pv_actual_measurement
         (region_id, interval_datetime, power, qi, source_type, lastchanged, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id, interval_datetime) DO UPDATE SET power=EXCLUDED.power, qi=EXCLUDED.qi, source_type=EXCLUDED.source_type, lastchanged=EXCLUDED.lastchanged, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -947,7 +955,7 @@ def sync_rooftop_pv_actual(conn: sqlite3.Connection, limit: int):
     return len(records)
 
 
-def sync_rooftop_pv_forecast(conn: sqlite3.Connection, limit: int):
+def sync_rooftop_pv_forecast(conn: Any, limit: int):
     names = fetch_recent_zip_names(ROOFTOP_FORECAST_URL, ROOFTOP_FORECAST_RE, limit)
     records = []
     for name in names:
@@ -969,9 +977,10 @@ def sync_rooftop_pv_forecast(conn: sqlite3.Connection, limit: int):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO rooftop_pv_forecast
+        INSERT INTO rooftop_pv_forecast
         (region_id, interval_datetime, version_datetime, powermean, powerpoe50, powerpoelow, powerpoehigh, lastchanged, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id, interval_datetime, version_datetime) DO UPDATE SET powermean=EXCLUDED.powermean, powerpoe50=EXCLUDED.powerpoe50, powerpoelow=EXCLUDED.powerpoelow, powerpoehigh=EXCLUDED.powerpoehigh, lastchanged=EXCLUDED.lastchanged, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -988,7 +997,7 @@ def sync_rooftop_pv_forecast(conn: sqlite3.Connection, limit: int):
     return len(records)
 
 
-def sync_dispatch_summary(conn: sqlite3.Connection, limit: int):
+def sync_dispatch_summary(conn: Any, limit: int):
     names = fetch_recent_zip_names(DISPATCH_URL, DISPATCH_RE, limit)
     region_records = []
     interconnector_records = []
@@ -1023,17 +1032,19 @@ def sync_dispatch_summary(conn: sqlite3.Connection, limit: int):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO dispatch_region_summary
+        INSERT INTO dispatch_region_summary
         (region_id, settlement_date, ss_solar_uigf, ss_wind_uigf, ss_solar_clearedmw, ss_wind_clearedmw, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id, settlement_date) DO UPDATE SET ss_solar_uigf=EXCLUDED.ss_solar_uigf, ss_wind_uigf=EXCLUDED.ss_wind_uigf, ss_solar_clearedmw=EXCLUDED.ss_solar_clearedmw, ss_wind_clearedmw=EXCLUDED.ss_wind_clearedmw, source_file=EXCLUDED.source_file
         """,
         region_records,
     )
     conn.executemany(
         """
-        INSERT OR REPLACE INTO dispatch_interconnector_flow
+        INSERT INTO dispatch_interconnector_flow
         (interconnector_id, settlement_date, from_regionid, to_regionid, mwflow, meteredmwflow, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (interconnector_id, settlement_date) DO UPDATE SET from_regionid=EXCLUDED.from_regionid, to_regionid=EXCLUDED.to_regionid, mwflow=EXCLUDED.mwflow, meteredmwflow=EXCLUDED.meteredmwflow, source_file=EXCLUDED.source_file
         """,
         interconnector_records,
     )
@@ -1069,7 +1080,7 @@ def sync_dispatch_summary(conn: sqlite3.Connection, limit: int):
     return len(region_records), len(interconnector_records)
 
 
-def sync_predispatch_summary(conn: sqlite3.Connection, limit: int):
+def sync_predispatch_summary(conn: Any, limit: int):
     names = fetch_recent_zip_names(PREDISPATCH_URL, PREDISPATCH_RE, limit)
     records = []
     for name in names:
@@ -1091,9 +1102,10 @@ def sync_predispatch_summary(conn: sqlite3.Connection, limit: int):
         time.sleep(0.05)
     conn.executemany(
         """
-        INSERT OR REPLACE INTO predispatch_region_solution
+        INSERT INTO predispatch_region_solution
         (region_id, interval_datetime, run_datetime, ss_solar_uigf, ss_wind_uigf, ss_solar_clearedmw, ss_wind_clearedmw, source_file)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (region_id, interval_datetime, run_datetime) DO UPDATE SET ss_solar_uigf=EXCLUDED.ss_solar_uigf, ss_wind_uigf=EXCLUDED.ss_wind_uigf, ss_solar_clearedmw=EXCLUDED.ss_solar_clearedmw, ss_wind_clearedmw=EXCLUDED.ss_wind_clearedmw, source_file=EXCLUDED.source_file
         """,
         records,
     )
@@ -1120,10 +1132,13 @@ def sync_predispatch_summary(conn: sqlite3.Connection, limit: int):
     return len(records)
 
 
-def sync_all(db_path: str, actual_limit: int, forecast_limit: int):
-    conn = sqlite3.connect(db_path)
-    try:
+def sync_all(actual_limit: int, forecast_limit: int):
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+    from deps import get_db
+    db = get_db()
+    with db.get_connection() as conn:
         ensure_tables(conn)
+        conn.commit()
         print("[sync] operational demand actual")
         print(sync_operational_demand_actual(conn, actual_limit))
         print("[sync] operational demand forecast")
@@ -1144,17 +1159,14 @@ def sync_all(db_path: str, actual_limit: int, forecast_limit: int):
         print(sync_du_detail_summary(conn))
         print("[sync] wem reserve shortfall snapshot")
         print(sync_wem_reserve_shortfall_snapshot(conn))
-    finally:
-        conn.close()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Sync AEMO P0 foundation datasets into landing tables.")
-    parser.add_argument("--db-path", required=True)
     parser.add_argument("--actual-limit", type=int, default=192)
     parser.add_argument("--forecast-limit", type=int, default=24)
     args = parser.parse_args()
-    sync_all(args.db_path, args.actual_limit, args.forecast_limit)
+    sync_all(args.actual_limit, args.forecast_limit)
 
 
 if __name__ == "__main__":

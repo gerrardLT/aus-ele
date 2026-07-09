@@ -12,7 +12,6 @@ import itertools
 import json
 import logging
 import math
-import sqlite3
 import time
 from collections import defaultdict
 from typing import Optional
@@ -245,11 +244,11 @@ def _build_temporal_filters(
 
     if day_type == "WEEKDAY":
         clauses.append(
-            f"CAST(strftime('%w', substr({time_field}, 1, 19)) AS INTEGER) IN (1, 2, 3, 4, 5)"
+            f"EXTRACT(DOW FROM CAST(substr({time_field}, 1, 19) AS TIMESTAMP))::INTEGER IN (1, 2, 3, 4, 5)"
         )
     elif day_type == "WEEKEND":
         clauses.append(
-            f"CAST(strftime('%w', substr({time_field}, 1, 19)) AS INTEGER) IN (0, 6)"
+            f"EXTRACT(DOW FROM CAST(substr({time_field}, 1, 19) AS TIMESTAMP))::INTEGER IN (0, 6)"
         )
 
     return " AND ".join(clauses) if clauses else "1=1", params
@@ -512,7 +511,7 @@ def get_price_trend(
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             table_exists = cursor.fetchone()
 
             if not table_exists:
@@ -640,12 +639,9 @@ def get_price_trend(
 
     except HTTPException:
         raise
-    except sqlite3.Error as e:
-        logger.error(f"DB Error in price-trend: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error in price-trend: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error in price-trend: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -699,7 +695,7 @@ def get_peak_analysis(
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             if not cursor.fetchone():
                 response = {
                     "region": region, "year": year, "aggregation": aggregation,
@@ -820,7 +816,7 @@ def get_hourly_price_profile(
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             if not cursor.fetchone():
                 response = {
                     "region": region, "year": year, "month": month,

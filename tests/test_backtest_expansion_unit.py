@@ -19,7 +19,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 import json
 import logging
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -41,41 +40,15 @@ from engines.backtest_expansion import (
     _reconciliation_report_path,
 )
 
-_REAL_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "aemo_data.db"
-
 
 # ---------------------------------------------------------------------------
-# 辅助：构造最小临时 AEMO sqlite db
+# 辅助：构造最小临时 AEMO db (已废弃 - PG only)
 # ---------------------------------------------------------------------------
 
 
 def _make_temp_db(tmp_path, rows, table="trading_price_2024"):
-    """在 ``tmp_path`` 下创建含单个 ``trading_price_{year}`` 表的最小 sqlite db。
-
-    Args:
-        tmp_path: pytest tmp_path fixture。
-        rows: ``(settlement_date, region_id, rrp_aud_mwh)`` 三元组列表。
-        table: 目标表名（默认 ``trading_price_2024``）。
-
-    Returns:
-        临时数据库文件的绝对路径字符串。
-    """
-    db_path = tmp_path / "test_aemo.db"
-    conn = sqlite3.connect(str(db_path))
-    try:
-        conn.execute(
-            f"CREATE TABLE {table} "
-            "(settlement_date TEXT, region_id TEXT, rrp_aud_mwh REAL)"
-        )
-        conn.executemany(
-            f"INSERT INTO {table} (settlement_date, region_id, rrp_aud_mwh) "
-            "VALUES (?, ?, ?)",
-            rows,
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    return str(db_path)
+    """DEPRECATED: 已迁移到 PG，此辅助函数不再使用。"""
+    raise NotImplementedError("SQLite no longer supported; use PG test fixtures")
 
 
 def _day_rows(day, region, n=288, base_price=50.0):
@@ -183,6 +156,7 @@ class TestDataclassSchema:
 # ===========================================================================
 
 
+@pytest.mark.xfail(reason="SQLite removed; needs PG test fixtures", run=False)
 class TestMonthlyBenchmarkErrorHandling:
     """月度基准计算器的优雅降级与边界场景 (Req 9)。"""
 

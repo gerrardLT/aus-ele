@@ -14,10 +14,9 @@ if __name__ == "__main__":
     parser.add_argument("--mode", required=True, choices=["backfill", "incremental"])
     parser.add_argument("--start", help="Optional UTC ISO-8601 start")
     parser.add_argument("--end", help="Optional UTC ISO-8601 end")
-    parser.add_argument("--db", default="../data/aemo_data.db")
     args = parser.parse_args()
 
-    db = DatabaseManager(args.db)
+    db = DatabaseManager()
     result = sync_dataset(
         db,
         dataset_id=args.dataset,

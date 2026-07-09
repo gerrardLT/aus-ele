@@ -1,8 +1,7 @@
-from typing import List, Dict, Optional
-import sqlite3
+from typing import List, Dict, Optional, Any
 
 class MarketAdapter:
-    def __init__(self, db_connection: sqlite3.Connection):
+    def __init__(self, db_connection: Any):
         self.conn = db_connection
 
     def fetch_historical_data(
@@ -26,7 +25,7 @@ class MarketAdapter:
         cursor = self.conn.cursor()
         
         # Check if table exists
-        cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+        cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
         if not cursor.fetchone():
             return []
 

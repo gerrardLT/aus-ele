@@ -36,7 +36,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import hashlib
 import json
 import os
-import sqlite3
 import sys
 import threading
 import copy
@@ -525,8 +524,7 @@ def _load_env_file(env_path: str | os.PathLike[str] | None = None):
 
 
 _load_env_file()
-DB_PATH = os.environ.get("AUS_ELE_DB_PATH", str((REPO_ROOT / "data" / "aemo_data.db").resolve()))
-db = DatabaseManager(DB_PATH)
+db = DatabaseManager()
 response_cache = RedisResponseCache()
 
 SYNC_OWNER = f"{os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', 'host')}:{os.getpid()}"
@@ -582,7 +580,7 @@ def _market_data_version() -> str:
 
 
 def _get_cached_regime_layer_payload(*, market: str, region: str) -> dict:
-    cache_key = (market, region, _market_data_version(), getattr(db, "db_path", "") or "")
+    cache_key = (market, region, _market_data_version())
     now_monotonic = time.monotonic()
 
     with _REGIME_LAYER_CACHE_LOCK:
@@ -720,8 +718,8 @@ def _fetch_bess_backtest_intervals(params: BessBacktestParams) -> list[dict]:
                     (params.region,),
                 ).fetchall()
                 default_interval_minutes = get_settlement_interval(params.region)
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
 
@@ -2295,7 +2293,7 @@ def get_p0_load_actual_dataset(
 def _latest_trading_price_table() -> str | None:
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%' ORDER BY name DESC")
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'trading_price_%' ORDER BY table_name DESC")
         row = cursor.fetchone()
         return row[0] if row else None
 
@@ -2361,8 +2359,8 @@ def _fetch_operational_demand_actual_rows(region: str, *, limit: int = 288) -> l
                 (region, limit),
             )
             rows = cursor.fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
     normalized = []
@@ -2425,8 +2423,8 @@ def _fetch_rooftop_pv_actual_rows(region: str, *, limit: int = 288) -> list[dict
                 (region, limit),
             )
             rows = cursor.fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
     normalized = []
@@ -2457,9 +2455,9 @@ def _fetch_dispatch_region_metric_rows(region: str, value_column: str, *, limit:
                 (region, limit),
             )
             rows = cursor.fetchall()
-        except sqlite3.OperationalError as exc:
+        except Exception as exc:
             lowered = str(exc).lower()
-            if "no such table" in lowered or "no such column" in lowered:
+            if "no such table" in lowered or "no such column" in lowered or "does not exist" in lowered:
                 return []
             raise
     normalized = []
@@ -2550,8 +2548,8 @@ def _fetch_region_interconnector_flow_rows(region: str, *, limit: int = 288) -> 
                 """,
                 (region, region, limit),
             ).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
     normalized = []
@@ -2726,8 +2724,8 @@ def _fetch_wem_reserve_shortfall_snapshot_rows(*, limit: int = 96) -> list[dict]
                 """,
                 (limit,),
             ).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
     return [
@@ -2759,8 +2757,8 @@ def _fetch_weather_rows(region: str, *, limit: int = 96) -> list[dict]:
                 """,
                 (region, limit),
             ).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
     normalized = []
@@ -2816,8 +2814,8 @@ def _fetch_recent_grid_state_rows(market: str, region: str, *, limit: int = 12) 
                 """,
                 (market, region, limit),
             ).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
     return [
@@ -3194,8 +3192,8 @@ def _fetch_unit_availability_rows(region: str, *, limit: int = 240) -> list[dict
     with db.get_connection() as conn:
         try:
             latest_run_row = conn.execute("SELECT MAX(run_datetime) FROM pdpasa_duid_availability").fetchone()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
         latest_run = latest_run_row[0] if latest_run_row else None
@@ -3220,8 +3218,8 @@ def _fetch_unit_availability_rows(region: str, *, limit: int = 240) -> list[dict
                 """,
                 (latest_run, region, limit),
             ).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such table" in str(exc).lower():
+        except Exception as exc:
+            if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
                 return []
             raise
     normalized = []
@@ -5346,10 +5344,10 @@ def run_sync_scrapers(lock_pre_acquired: bool = False):
         today = now_local.strftime('%Y-%m-%d')
         
         logger.info(f"Running WEM Scraper from {two_weeks_ago} to {today}...")
-        _run_scraper("aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today, "--db", DB_PATH)
+        _run_scraper("aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today)
 
         logger.info("Running WEM ESS slim sync for latest 30 days...")
-        _run_scraper("aemo_wem_ess_scraper.py", "--days", "30", "--db", DB_PATH)
+        _run_scraper("aemo_wem_ess_scraper.py", "--days", "30")
         
         logger.info("Running NEM Scraper...")
         start_month = (now_local - datetime.timedelta(days=14)).strftime('%Y-%m')
@@ -5360,13 +5358,11 @@ def run_sync_scrapers(lock_pre_acquired: bool = False):
             start_month,
             "--end",
             end_month,
-            "--db-path",
-            DB_PATH,
             "--fcas",
         )
 
         logger.info("Running Grid Event Scraper...")
-        _run_scraper("aemo_grid_event_scraper.py", "--days", "180", "--db", DB_PATH)
+        _run_scraper("aemo_grid_event_scraper.py", "--days", "180")
 
         
         # Record Success Time
@@ -5882,11 +5878,11 @@ def _build_temporal_filters(
 
     if day_type == "WEEKDAY":
         clauses.append(
-            f"CAST(strftime('%w', substr({time_field}, 1, 19)) AS INTEGER) IN (1, 2, 3, 4, 5)"
+            f"EXTRACT(DOW FROM CAST(substr({time_field}, 1, 19) AS TIMESTAMP))::INTEGER IN (1, 2, 3, 4, 5)"
         )
     elif day_type == "WEEKEND":
         clauses.append(
-            f"CAST(strftime('%w', substr({time_field}, 1, 19)) AS INTEGER) IN (0, 6)"
+            f"EXTRACT(DOW FROM CAST(substr({time_field}, 1, 19) AS TIMESTAMP))::INTEGER IN (0, 6)"
         )
 
     return " AND ".join(clauses) if clauses else "1=1", params
@@ -5898,7 +5894,7 @@ def get_available_years():
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%'")
+            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'trading_price_%' ORDER BY table_name")
             tables = [r[0] for r in cursor.fetchall()]
             years = sorted([int(t.split('_')[-1]) for t in tables], reverse=True)
             return {"years": years}
@@ -5954,7 +5950,7 @@ def get_price_trend(
         with db.get_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             table_exists = cursor.fetchone()
 
             if not table_exists:
@@ -6085,9 +6081,6 @@ def get_price_trend(
 
     except HTTPException:
         raise
-    except sqlite3.Error as e:
-        logger.error(f"DB Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -6154,7 +6147,7 @@ def get_peak_analysis(
             cursor = conn.cursor()
 
             # Check table exists
-            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             if not cursor.fetchone():
                 response = {
                     "region": region, "year": year, "aggregation": aggregation,
@@ -6396,7 +6389,7 @@ def get_hourly_price_profile(
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             if not cursor.fetchone():
                 response = {
                     "region": region, "year": year, "month": month,
@@ -6893,7 +6886,7 @@ def get_fcas_analysis(
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             if not cursor.fetchone():
                 response = {
                     "region": region, "year": year, "has_fcas_data": False,
@@ -6910,8 +6903,11 @@ def get_fcas_analysis(
                 )
 
             # Check if FCAS columns exist in the table
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            existing_cols = {row[1] for row in cursor.fetchall()}
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+                (table_name,),
+            )
+            existing_cols = {row[0] for row in cursor.fetchall()}
             available_fcas = [c for c in FCAS_COLUMNS if c in existing_cols]
 
             if not available_fcas:
@@ -7014,7 +7010,7 @@ def get_fcas_analysis(
             if aggregation == "daily":
                 date_expr = "substr(settlement_date, 1, 10)"
             elif aggregation == "weekly":
-                date_expr = "strftime('%Y-W%W', settlement_date)"
+                date_expr = "TO_CHAR(CAST(settlement_date AS TIMESTAMP), 'YYYY-\"W\"WW')"
             else:  # monthly
                 date_expr = "substr(settlement_date, 1, 7)"
 

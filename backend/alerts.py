@@ -20,7 +20,7 @@ def default_webhook_sender(url: str, payload: dict) -> dict:
 def _latest_nem_price(db, region: str) -> dict | None:
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%' ORDER BY name DESC")
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'trading_price_%' ORDER BY table_name DESC")
         tables = [row[0] for row in cursor.fetchall()]
         for table_name in tables:
             row = conn.execute(

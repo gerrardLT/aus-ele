@@ -1,7 +1,7 @@
 """Backtest Expansion MVP — 月度 AEMO 基准回测扩展模块。
 
 将 Forward Price Engine 的回测框架从 16 个 Modo Energy 基准时段扩展到 96+ 个
-月度数据点，数据源为本地 ``data/aemo_data.db``（AEMO 5 分钟级实测交易价格）。
+月度数据点，数据源为 PostgreSQL 数据库（AEMO 5 分钟级实测交易价格）。
 
 本模块封装三大核心能力（后续任务逐步实现）：
 
@@ -22,11 +22,15 @@ import calendar
 import json
 import logging
 import os
-import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from deps import get_db
 
 from sql_safe import safe_table_name
 
@@ -35,61 +39,30 @@ logger = logging.getLogger(__name__)
 # 仓库根目录：backend/engines/backtest_expansion.py -> engines -> backend -> repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# set_progress_handler 回调的 VM 指令间隔：每执行该条数 SQLite VM 指令调用一次
-# 超时回调。值越小越能及时中止长查询（开销略增），1000 在 30s 量级查询下足够灵敏。
-_PROGRESS_HANDLER_INSTRUCTIONS = 1000
-
-
-def _default_db_path() -> str:
-    """解析默认 AEMO 数据库路径（与 ``db_factory`` / ``server`` 同源）。
-
-    优先读取 ``AUS_ELE_DB_PATH`` 环境变量，缺省回退到 ``<repo>/data/aemo_data.db``。
-    """
-    return os.environ.get(
-        "AUS_ELE_DB_PATH",
-        str((_REPO_ROOT / "data" / "aemo_data.db").resolve()),
-    )
+# PG statement timeout is handled via SET statement_timeout
+_PROGRESS_HANDLER_INSTRUCTIONS = 1000  # kept for backward compat
 
 
 class QueryTimeoutError(Exception):
-    """单 region-month 查询超出 ``QUERY_TIMEOUT_SECONDS`` 时由超时回调触发 (Req 9.5)。
+    """单 region-month 查询超出 ``QUERY_TIMEOUT_SECONDS`` 时触发 (Req 9.5)."""
 
-    ``set_progress_handler`` 回调返回非零值会令 SQLite 中止当前查询并抛出
-    ``sqlite3.OperationalError``；为便于精确区分 "超时中止" 与其他
-    ``OperationalError``（如表缺失），回调内同步置位标志，调用方据此重抛本异常。
-    """
+
+def _is_timeout_error(exc: Exception) -> bool:
+    """Check if an exception is a PG statement timeout."""
+    msg = str(exc).lower()
+    return "statement timeout" in msg or "canceling statement" in msg
 
 
 def _install_timeout(
-    conn: sqlite3.Connection, timeout_seconds: float
+    conn: Any, timeout_seconds: float
 ) -> dict[str, bool]:
-    """为连接安装基于 ``set_progress_handler`` 的纯标准库查询超时 (Req 9.5)。
-
-    回调每执行 ``_PROGRESS_HANDLER_INSTRUCTIONS`` 条 SQLite VM 指令触发一次，比较
-    ``time.monotonic() - start`` 是否超过 ``timeout_seconds``；超时则置位返回的
-    ``state["timed_out"]`` 标志并返回非零值，令 SQLite 抛出 ``OperationalError`` 中止查询。
-    本方案不依赖额外线程，纯标准库实现，便于测试中以很小的阈值稳定触发。
-
-    复用说明：任务 4.1 的 ``CaptureRateCalculator`` 可直接调用本辅助以复用同一超时机制。
-
-    Args:
-        conn: 待安装超时的 SQLite 连接。
-        timeout_seconds: 超时阈值（秒）。
-
-    Returns:
-        共享状态字典 ``{"timed_out": bool}``；查询抛 ``OperationalError`` 后，
-        调用方检查该标志即可区分 "超时" 与其他错误（如表缺失）。
-    """
-    start = time.monotonic()
+    """Set PG statement_timeout for query timeout."""
     state = {"timed_out": False}
-
-    def _handler() -> int:
-        if time.monotonic() - start > timeout_seconds:
-            state["timed_out"] = True
-            return 1  # 非零 -> 中止查询，触发 OperationalError
-        return 0
-
-    conn.set_progress_handler(_handler, _PROGRESS_HANDLER_INSTRUCTIONS)
+    try:
+        cur = conn.cursor() if hasattr(conn, 'cursor') else conn
+        cur.execute(f"SET statement_timeout = '{int(timeout_seconds * 1000)}ms'")
+    except Exception:
+        pass
     return state
 
 
@@ -153,7 +126,7 @@ class MonthlyValidationResult:
 class MonthlyBenchmarkCalculator:
     """从 AEMO 实测数据按 "月 × 区域" 聚合月度 mean_spread 基准 (Req 1)。
 
-    数据源为本地 ``data/aemo_data.db`` 的 ``trading_price_{year}`` 表，列为
+    数据源为 PostgreSQL 数据库的 ``trading_price_{year}`` 表，列为
     ``settlement_date`` (TEXT, 形如 ``2024-01-01 00:05:00``)、``region_id`` (TEXT)、
     ``rrp_aud_mwh`` (REAL, 可为负)。月度基准定义为 "某日历月内每日
     ``max(rrp) - min(rrp)`` 的算术平均值"，仅统计有效日（单日 interval >= 200）。
@@ -169,14 +142,9 @@ class MonthlyBenchmarkCalculator:
     QUERY_TIMEOUT_SECONDS: int = 30    # 单 region-month 超时 (Req 9.5)
     START_MONTH: str = "2024-01"       # 起始月 (Req 1.4)
 
-    def __init__(self, db_path: str | None = None) -> None:
-        """初始化计算器。
-
-        Args:
-            db_path: AEMO 数据库路径。缺省解析 ``AUS_ELE_DB_PATH`` 环境变量，
-                再回退到 ``<repo>/data/aemo_data.db``（与既有引擎同源）。
-        """
-        self.db_path: str = db_path if db_path is not None else _default_db_path()
+    def __init__(self) -> None:
+        """初始化计算器 (PostgreSQL mode)."""
+        self._db = get_db()
 
     # ------------------------------------------------------------------
     # 纯聚合逻辑（与 DB I/O 解耦，便于属性测试）
@@ -228,7 +196,7 @@ class MonthlyBenchmarkCalculator:
     # ------------------------------------------------------------------
 
     def _query_daily_spreads(
-        self, conn: sqlite3.Connection, region: str, year_month: str
+        self, conn: Any, region: str, year_month: str
     ) -> list[tuple[str, float, int]]:
         """查询单 region-month 的每日价差与 interval 计数。
 
@@ -275,58 +243,39 @@ class MonthlyBenchmarkCalculator:
         Returns:
             MonthlyBenchmark；任一降级场景下返回 None。
         """
-        # Req 9.1: 数据库文件不可达 — sqlite3.connect 对不存在路径会静默新建空库，
-        # 故须先用 Path.exists() 显式检查，避免误把缺库当成 "空数据"。
-        if not Path(self.db_path).exists():
-            logger.warning(
-                "AEMO 数据库文件不可达，跳过 region-month: path=%s region=%s year_month=%s",
-                self.db_path,
-                region,
-                year_month,
-            )
-            return None
-
         try:
-            conn = sqlite3.connect(self.db_path)
-        except sqlite3.Error as exc:  # Req 9.1: 连接异常
+            with self._db.get_connection() as conn:
+                timeout_state = _install_timeout(conn, self.QUERY_TIMEOUT_SECONDS)
+                try:
+                    daily_rows = self._query_daily_spreads(conn, region, year_month)
+                except Exception as exc:
+                    if timeout_state["timed_out"] or _is_timeout_error(exc):
+                        logger.warning(
+                            "查询超时（> %ss），跳过 region-month: region=%s year_month=%s",
+                            self.QUERY_TIMEOUT_SECONDS,
+                            region,
+                            year_month,
+                        )
+                        return None
+                    exc_str = str(exc).lower()
+                    if "no such table" in exc_str or "does not exist" in exc_str:
+                        logger.info(
+                            "trading_price 表不存在，跳过 region-month: region=%s "
+                            "year_month=%s err=%s",
+                            region,
+                            year_month,
+                            exc,
+                        )
+                        return None
+                    raise
+        except Exception as exc:
             logger.warning(
-                "连接 AEMO 数据库失败，跳过 region-month: path=%s region=%s "
-                "year_month=%s err=%s",
-                self.db_path,
+                "连接数据库失败，跳过 region-month: region=%s year_month=%s err=%s",
                 region,
                 year_month,
                 exc,
             )
             return None
-
-        timeout_state = _install_timeout(conn, self.QUERY_TIMEOUT_SECONDS)
-        try:
-            daily_rows = self._query_daily_spreads(conn, region, year_month)
-        except sqlite3.OperationalError as exc:
-            if timeout_state["timed_out"]:
-                # Req 9.5: 单查询超时 -> 中止该 region-month，继续其余
-                logger.warning(
-                    "查询超时（> %ss），跳过 region-month: region=%s year_month=%s",
-                    self.QUERY_TIMEOUT_SECONDS,
-                    region,
-                    year_month,
-                )
-                return None
-            if "no such table" in str(exc).lower():
-                # Req 9.2: trading_price_{year} 表缺失 -> 跳过该年/该 region-month
-                logger.info(
-                    "trading_price 表不存在，跳过 region-month: region=%s "
-                    "year_month=%s err=%s",
-                    region,
-                    year_month,
-                    exc,
-                )
-                return None
-            # 其余 OperationalError 不静默吞掉
-            raise
-        finally:
-            conn.set_progress_handler(None, _PROGRESS_HANDLER_INSTRUCTIONS)
-            conn.close()
 
         if not daily_rows:
             # Req 9.3: 区域-月零行 -> 排除该点
@@ -373,7 +322,7 @@ class MonthlyBenchmarkCalculator:
     # ------------------------------------------------------------------
 
     def _existing_trading_tables(
-        self, conn: sqlite3.Connection
+        self, conn: Any
     ) -> list[tuple[int, str]]:
         """返回数据库中存在的 ``trading_price_{year}`` 表 ``(year, table_name)`` 列表。
 
@@ -381,9 +330,9 @@ class MonthlyBenchmarkCalculator:
         """
         rows = conn.execute(
             """
-            SELECT name FROM sqlite_master
-            WHERE type = 'table' AND name LIKE 'trading_price_%'
-            ORDER BY name
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name LIKE 'trading_price_%'
+            ORDER BY table_name
             """
         ).fetchall()
         tables: list[tuple[int, str]] = []
@@ -404,31 +353,22 @@ class MonthlyBenchmarkCalculator:
         Returns:
             最新完整月 ``'YYYY-MM'``；数据库不可达或无任何可用数据时返回 None。
         """
-        # Req 9.1: 文件不存在时 sqlite3.connect 会静默新建空库，先显式检查
-        if not Path(self.db_path).exists():
-            logger.warning("AEMO 数据库文件不可达: %s", self.db_path)
-            return None
-
         try:
-            conn = sqlite3.connect(self.db_path)
-        except sqlite3.Error:
-            logger.warning("无法连接 AEMO 数据库: %s", self.db_path)
+            with self._db.get_connection() as conn:
+                tables = self._existing_trading_tables(conn)
+                placeholders = ",".join("?" for _ in self.NEM_REGIONS)
+                max_date: str | None = None
+                for _year, table in tables:
+                    row = conn.execute(
+                        f"SELECT MAX(settlement_date) FROM {table} "
+                        f"WHERE region_id IN ({placeholders})",
+                        self.NEM_REGIONS,
+                    ).fetchone()
+                    if row and row[0] and (max_date is None or row[0] > max_date):
+                        max_date = row[0]
+        except Exception as exc:
+            logger.warning("数据库查询失败: %s", exc)
             return None
-
-        try:
-            tables = self._existing_trading_tables(conn)
-            placeholders = ",".join("?" for _ in self.NEM_REGIONS)
-            max_date: str | None = None
-            for _year, table in tables:
-                row = conn.execute(
-                    f"SELECT MAX(settlement_date) FROM {table} "
-                    f"WHERE region_id IN ({placeholders})",
-                    self.NEM_REGIONS,
-                ).fetchone()
-                if row and row[0] and (max_date is None or row[0] > max_date):
-                    max_date = row[0]
-        finally:
-            conn.close()
 
         if not max_date:
             logger.warning("AEMO 数据库中无可用 trading_price 数据")
@@ -463,13 +403,8 @@ class MonthlyBenchmarkCalculator:
             无数据的 region-month（``compute_monthly_benchmark`` 返回 None）被跳过。
             当无法确定截止月（数据库无数据）时返回空列表。
         """
-        # Req 9.1: 数据库文件不可达 -> 记 warning 返回空列表，不抛异常
-        if not Path(self.db_path).exists():
-            logger.warning(
-                "AEMO 数据库文件不可达，compute_all_benchmarks 返回空列表: path=%s",
-                self.db_path,
-            )
-            return []
+        # Req 9.1: 数据库不可达 -> 记 warning 返回空列表，不抛异常
+        # (PG mode: always available via connection pool)
 
         if end_month is None:
             end_month = self.latest_complete_month()
@@ -494,7 +429,7 @@ class MonthlyBenchmarkCalculator:
 class CaptureRateCalculator:
     """基于 4 小时电池完美预见策略直算理论最优 capture rate (Req 3)。
 
-    数据源同 :class:`MonthlyBenchmarkCalculator`：本地 ``data/aemo_data.db`` 的
+    数据源同 :class:`MonthlyBenchmarkCalculator`：PostgreSQL 数据库的
     ``trading_price_{year}`` 表（``settlement_date`` / ``region_id`` / ``rrp_aud_mwh``）。
 
     完美预见策略：对每一天，先把 5 分钟价格按小时（``HH = substr(settlement_date, 12, 2)``）
@@ -524,17 +459,10 @@ class CaptureRateCalculator:
     VIOLATION_MARGIN: float = 0.05       # 越界容差 (Req 3.6/4.1)
     LOW_EFFICIENCY_THRESHOLD: float = 0.40  # 低效率告警阈值 (Req 4.4)
 
-    def __init__(self, db_path: str | None = None) -> None:
-        """初始化计算器。
-
-        Args:
-            db_path: AEMO 数据库路径。缺省解析 ``AUS_ELE_DB_PATH`` 环境变量，
-                再回退到 ``<repo>/data/aemo_data.db``（复用 ``_default_db_path()``，
-                与 :class:`MonthlyBenchmarkCalculator` 同源）。
-        """
-        self.db_path: str = db_path if db_path is not None else _default_db_path()
+    def __init__(self) -> None:
+        """初始化计算器 (PostgreSQL mode)."""
         # 复用月度基准计算器获取 monthly_mean_spread（有效日均值）与有效日口径
-        self._benchmark_calc = MonthlyBenchmarkCalculator(self.db_path)
+        self._benchmark_calc = MonthlyBenchmarkCalculator()
 
     # ------------------------------------------------------------------
     # 纯计算逻辑（与 DB I/O 解耦，便于属性测试 — Property 7/8/9）
@@ -620,7 +548,7 @@ class CaptureRateCalculator:
     # ------------------------------------------------------------------
 
     def _query_hourly_prices(
-        self, conn: sqlite3.Connection, region: str, year_month: str
+        self, conn: Any, region: str, year_month: str
     ) -> dict[str, dict[str, object]]:
         """查询单 region-month 每天的逐小时均价与日内 interval 计数。
 
@@ -691,60 +619,43 @@ class CaptureRateCalculator:
         Returns:
             CaptureRateResult；任一降级场景或无月度基准时返回 None。
         """
-        # Req 9.1: 文件不存在时 sqlite3.connect 会静默新建空库，先显式检查
-        if not Path(self.db_path).exists():
-            logger.warning(
-                "AEMO 数据库文件不可达，跳过 capture rate region-month: "
-                "path=%s region=%s year_month=%s",
-                self.db_path,
-                region,
-                year_month,
-            )
-            return None
-
         try:
-            conn = sqlite3.connect(self.db_path)
-        except sqlite3.Error as exc:  # Req 9.1: 连接异常
+            with self._db.get_connection() as conn:
+                timeout_state = _install_timeout(
+                    conn, MonthlyBenchmarkCalculator.QUERY_TIMEOUT_SECONDS
+                )
+                try:
+                    daily = self._query_hourly_prices(conn, region, year_month)
+                except Exception as exc:
+                    if timeout_state["timed_out"] or _is_timeout_error(exc):
+                        logger.warning(
+                            "capture rate 查询超时（> %ss），跳过 region-month: "
+                            "region=%s year_month=%s",
+                            MonthlyBenchmarkCalculator.QUERY_TIMEOUT_SECONDS,
+                            region,
+                            year_month,
+                        )
+                        return None
+                    exc_str = str(exc).lower()
+                    if "no such table" in exc_str or "does not exist" in exc_str:
+                        logger.info(
+                            "trading_price 表不存在，跳过 capture rate region-month: "
+                            "region=%s year_month=%s err=%s",
+                            region,
+                            year_month,
+                            exc,
+                        )
+                        return None
+                    raise
+        except Exception as exc:
             logger.warning(
-                "连接 AEMO 数据库失败，跳过 capture rate region-month: "
-                "path=%s region=%s year_month=%s err=%s",
-                self.db_path,
+                "连接数据库失败，跳过 capture rate region-month: "
+                "region=%s year_month=%s err=%s",
                 region,
                 year_month,
                 exc,
             )
             return None
-
-        timeout_state = _install_timeout(
-            conn, MonthlyBenchmarkCalculator.QUERY_TIMEOUT_SECONDS
-        )
-        try:
-            daily = self._query_hourly_prices(conn, region, year_month)
-        except sqlite3.OperationalError as exc:
-            if timeout_state["timed_out"]:
-                # Req 9.5: 单查询超时 -> 中止该 region-month，继续其余
-                logger.warning(
-                    "capture rate 查询超时（> %ss），跳过 region-month: "
-                    "region=%s year_month=%s",
-                    MonthlyBenchmarkCalculator.QUERY_TIMEOUT_SECONDS,
-                    region,
-                    year_month,
-                )
-                return None
-            if "no such table" in str(exc).lower():
-                # Req 9.2: trading_price_{year} 表缺失 -> 跳过
-                logger.info(
-                    "trading_price 表不存在，跳过 capture rate region-month: "
-                    "region=%s year_month=%s err=%s",
-                    region,
-                    year_month,
-                    exc,
-                )
-                return None
-            raise
-        finally:
-            conn.set_progress_handler(None, _PROGRESS_HANDLER_INSTRUCTIONS)
-            conn.close()
 
         if not daily:
             # Req 9.3: 区域-月零行 -> 排除该点

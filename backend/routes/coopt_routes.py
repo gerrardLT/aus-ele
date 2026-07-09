@@ -12,7 +12,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import sqlite3
 
 from fastapi import APIRouter, HTTPException
 
@@ -101,7 +100,7 @@ def _load_energy_prices(
 
             # Check if table exists
             cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (table_name,),
             )
             if not cursor.fetchone():
@@ -136,7 +135,7 @@ def _load_energy_prices(
 
     except HTTPException:
         raise
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Database error loading energy prices: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
@@ -183,8 +182,11 @@ def _load_fcas_prices(
             cursor = conn.cursor()
 
             # Check which FCAS columns actually exist in the table
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            existing_columns = {row[1] for row in cursor.fetchall()}
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+                (table_name,),
+            )
+            existing_columns = {row[0] for row in cursor.fetchall()}
 
             available_columns = [c for c in columns_to_query if c in existing_columns]
 
@@ -232,7 +234,7 @@ def _load_fcas_prices(
 
             return fcas_prices
 
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.warning(f"Failed to load FCAS prices: {e}, using zeros")
         return {s: [] for s in fcas_services}
 

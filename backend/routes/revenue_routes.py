@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import sqlite3
 import time
 from typing import Optional
 
@@ -197,7 +196,7 @@ def get_revenue_analysis(
         with db.get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
             if not cursor.fetchone():
                 response = {
                     "region": region,
@@ -234,9 +233,9 @@ def get_revenue_analysis(
                 where += f" AND substr(settlement_date, 6, 2) IN ({q_values})"
 
             if day_type == "WEEKDAY":
-                where += " AND CAST(strftime('%w', substr(settlement_date, 1, 19)) AS INTEGER) IN (1, 2, 3, 4, 5)"
+                where += " AND EXTRACT(DOW FROM CAST(substr(settlement_date, 1, 19) AS TIMESTAMP))::INTEGER IN (1, 2, 3, 4, 5)"
             elif day_type == "WEEKEND":
-                where += " AND CAST(strftime('%w', substr(settlement_date, 1, 19)) AS INTEGER) IN (0, 6)"
+                where += " AND EXTRACT(DOW FROM CAST(substr(settlement_date, 1, 19) AS TIMESTAMP))::INTEGER IN (0, 6)"
 
             cursor.execute(
                 f"SELECT settlement_date, rrp_aud_mwh FROM {table_name} "
@@ -320,12 +319,9 @@ def get_revenue_analysis(
         raise
     except DimensionMismatchError as e:
         raise HTTPException(status_code=422, detail=str(e.message))
-    except sqlite3.Error as e:
-        logger.error(f"DB Error in revenue-analysis: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error in revenue-analysis: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error in revenue-analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------

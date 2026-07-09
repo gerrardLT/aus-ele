@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sqlite3
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -22,6 +21,7 @@ from datetime import datetime
 import pulp
 
 from sql_safe import safe_table_name, trading_price_table
+from deps import get_db
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -30,8 +30,6 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
-
-DB_PATH = "aemo_data.db"
 
 STORAGE_CONFIGS = {
     "2h": {"duration_hours": 2, "capacity_mwh": 200, "power_mw": 100},
@@ -45,7 +43,7 @@ CYCLES_PER_DAY = 1
 
 def get_available_tables(conn):
     tables = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%'"
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'trading_price_%' ORDER BY table_name"
     ).fetchall()
     return sorted([row[0] for row in tables])
 
@@ -228,95 +226,94 @@ def backtest_arbitrage(conn, region, year, storage_config):
 
 
 def run_full_analysis(regions=None, years=None):
-    conn = sqlite3.connect(DB_PATH)
-    tables = get_available_tables(conn)
+    db = get_db()
+    with db.get_connection() as conn:
+        tables = get_available_tables(conn)
 
-    if not tables:
-        logger.error("No trading_price tables found in the database.")
-        return
+        if not tables:
+            logger.error("No trading_price tables found in the database.")
+            return
 
-    available_years = [int(table.split("_")[-1]) for table in tables]
-    target_years = [year for year in years if year in available_years] if years else available_years
+        available_years = [int(table.split("_")[-1]) for table in tables]
+        target_years = [year for year in years if year in available_years] if years else available_years
 
-    if not regions:
-        discovered_regions = set()
-        for table in tables:
-            discovered_regions.update(get_available_regions(conn, table))
-        regions = sorted(discovered_regions)
+        if not regions:
+            discovered_regions = set()
+            for table in tables:
+                discovered_regions.update(get_available_regions(conn, table))
+            regions = sorted(discovered_regions)
 
-    logger.info("=" * 60)
-    logger.info("  BESS arbitrage backtest")
-    logger.info(f"  Regions: {', '.join(regions)}")
-    logger.info(f"  Years: {', '.join(str(year) for year in target_years)}")
-    logger.info(f"  Storage configs: {', '.join(STORAGE_CONFIGS.keys())}")
-    logger.info(f"  Round-trip efficiency: {ROUND_TRIP_EFFICIENCY * 100:.0f}%")
-    logger.info("=" * 60)
+        logger.info("=" * 60)
+        logger.info("  BESS arbitrage backtest")
+        logger.info(f"  Regions: {', '.join(regions)}")
+        logger.info(f"  Years: {', '.join(str(year) for year in target_years)}")
+        logger.info(f"  Storage configs: {', '.join(STORAGE_CONFIGS.keys())}")
+        logger.info(f"  Round-trip efficiency: {ROUND_TRIP_EFFICIENCY * 100:.0f}%")
+        logger.info("=" * 60)
 
-    all_results = {
-        "meta": {
-            "generated_at": datetime.now().isoformat(),
-            "round_trip_efficiency": ROUND_TRIP_EFFICIENCY,
-            "cycles_per_day": CYCLES_PER_DAY,
-        },
-        "spread_analysis": {},
-        "arbitrage_backtest": {},
-        "negative_price_trend": {},
-    }
+        all_results = {
+            "meta": {
+                "generated_at": datetime.now().isoformat(),
+                "round_trip_efficiency": ROUND_TRIP_EFFICIENCY,
+                "cycles_per_day": CYCLES_PER_DAY,
+            },
+            "spread_analysis": {},
+            "arbitrage_backtest": {},
+            "negative_price_trend": {},
+        }
 
-    logger.info("\n1/3 Daily spread analysis...")
-    for region in regions:
-        all_results["spread_analysis"][region] = {}
-        for year in target_years:
-            spreads = analyze_daily_spreads(conn, region, year)
-            if not spreads:
-                continue
-            avg_spread = sum(item["spread"] for item in spreads) / len(spreads)
-            max_spread = max(item["spread"] for item in spreads)
-            avg_neg_pct = sum(item["neg_pct"] for item in spreads) / len(spreads)
-            all_results["spread_analysis"][region][year] = {
-                "days": len(spreads),
-                "avg_daily_spread": round(avg_spread, 2),
-                "max_daily_spread": round(max_spread, 2),
-                "median_spread": round(sorted(item["spread"] for item in spreads)[len(spreads) // 2], 2),
-                "avg_neg_price_pct": round(avg_neg_pct, 1),
-            }
-            logger.info(
-                f"  {region} {year}: avg spread=${avg_spread:.0f}, "
-                f"max=${max_spread:.0f}, neg price share={avg_neg_pct:.1f}%"
-            )
+        logger.info("\n1/3 Daily spread analysis...")
+        for region in regions:
+            all_results["spread_analysis"][region] = {}
+            for year in target_years:
+                spreads = analyze_daily_spreads(conn, region, year)
+                if not spreads:
+                    continue
+                avg_spread = sum(item["spread"] for item in spreads) / len(spreads)
+                max_spread = max(item["spread"] for item in spreads)
+                avg_neg_pct = sum(item["neg_pct"] for item in spreads) / len(spreads)
+                all_results["spread_analysis"][region][year] = {
+                    "days": len(spreads),
+                    "avg_daily_spread": round(avg_spread, 2),
+                    "max_daily_spread": round(max_spread, 2),
+                    "median_spread": round(sorted(item["spread"] for item in spreads)[len(spreads) // 2], 2),
+                    "avg_neg_price_pct": round(avg_neg_pct, 1),
+                }
+                logger.info(
+                    f"  {region} {year}: avg spread=${avg_spread:.0f}, "
+                    f"max=${max_spread:.0f}, neg price share={avg_neg_pct:.1f}%"
+                )
 
-    logger.info("\n2/3 Negative price trend...")
-    for region in regions:
-        trend = {}
-        for year in target_years:
-            spreads = analyze_daily_spreads(conn, region, year)
-            if not spreads:
-                continue
-            monthly_neg = defaultdict(list)
-            for item in spreads:
-                monthly_neg[item["date"][:7]].append(item["neg_pct"])
-            for month, values in sorted(monthly_neg.items()):
-                trend[month] = round(sum(values) / len(values), 1)
-        all_results["negative_price_trend"][region] = trend
+        logger.info("\n2/3 Negative price trend...")
+        for region in regions:
+            trend = {}
+            for year in target_years:
+                spreads = analyze_daily_spreads(conn, region, year)
+                if not spreads:
+                    continue
+                monthly_neg = defaultdict(list)
+                for item in spreads:
+                    monthly_neg[item["date"][:7]].append(item["neg_pct"])
+                for month, values in sorted(monthly_neg.items()):
+                    trend[month] = round(sum(values) / len(values), 1)
+            all_results["negative_price_trend"][region] = trend
 
-    logger.info("\n3/3 Arbitrage backtest...")
-    for region in regions:
-        all_results["arbitrage_backtest"][region] = {}
-        for year in target_years:
-            year_results = {}
-            for config_name, config in STORAGE_CONFIGS.items():
-                result = backtest_arbitrage(conn, region, year, config)
-                if result and result.get("trading_days", 0) > 0:
-                    year_results[config_name] = result
-                    logger.info(
-                        f"  {region} {year} {config_name}: "
-                        f"${result['revenue_per_mw_year']:,.0f}/MW/year "
-                        f"(avg spread=${result['avg_spread']:.0f})"
-                    )
-            if year_results:
-                all_results["arbitrage_backtest"][region][year] = year_results
-
-    conn.close()
+        logger.info("\n3/3 Arbitrage backtest...")
+        for region in regions:
+            all_results["arbitrage_backtest"][region] = {}
+            for year in target_years:
+                year_results = {}
+                for config_name, config in STORAGE_CONFIGS.items():
+                    result = backtest_arbitrage(conn, region, year, config)
+                    if result and result.get("trading_days", 0) > 0:
+                        year_results[config_name] = result
+                        logger.info(
+                            f"  {region} {year} {config_name}: "
+                            f"${result['revenue_per_mw_year']:,.0f}/MW/year "
+                            f"(avg spread=${result['avg_spread']:.0f})"
+                        )
+                if year_results:
+                    all_results["arbitrage_backtest"][region][year] = year_results
 
     output_file = "bess_backtest_results.json"
     with open(output_file, "w", encoding="utf-8") as handle:

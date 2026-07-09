@@ -113,7 +113,7 @@ def _build_nem_candidates(db, *, year: int, quality_scores: dict[str, float]) ->
     table_name = f"trading_price_{year}"
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+        cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
         if not cursor.fetchone():
             return []
         cursor.execute(

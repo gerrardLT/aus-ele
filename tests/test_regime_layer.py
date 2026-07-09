@@ -1,6 +1,5 @@
 import unittest
 from unittest.mock import patch
-import sqlite3
 
 from fastapi.testclient import TestClient
 

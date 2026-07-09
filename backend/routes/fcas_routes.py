@@ -1,7 +1,7 @@
 """FCAS analysis API routes.
 
 Migrated from server.py — provides the Reserve Opportunity analysis endpoint
-for FCAS price data. Supports both NEM (SQLite-based) and WEM (ESS slim data)
+for FCAS price data. Supports both NEM and WEM (ESS slim data)
 markets.
 
 Uses deps.py for dependency injection.
@@ -234,11 +234,11 @@ def _build_temporal_filters(
 
     if day_type == "WEEKDAY":
         clauses.append(
-            f"CAST(strftime('%w', substr({time_field}, 1, 19)) AS INTEGER) IN (1, 2, 3, 4, 5)"
+            f"EXTRACT(DOW FROM CAST(substr({time_field}, 1, 19) AS TIMESTAMP))::INTEGER IN (1, 2, 3, 4, 5)"
         )
     elif day_type == "WEEKEND":
         clauses.append(
-            f"CAST(strftime('%w', substr({time_field}, 1, 19)) AS INTEGER) IN (0, 6)"
+            f"EXTRACT(DOW FROM CAST(substr({time_field}, 1, 19) AS TIMESTAMP))::INTEGER IN (0, 6)"
         )
 
     return " AND ".join(clauses) if clauses else "1=1", params
@@ -348,7 +348,7 @@ def get_fcas_analysis(
             cursor = conn.cursor()
 
             cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (table_name,)
             )
             if not cursor.fetchone():
@@ -377,8 +377,11 @@ def get_fcas_analysis(
                 )
 
             # Check if FCAS columns exist in the table
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            existing_cols = {row[1] for row in cursor.fetchall()}
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+                (table_name,),
+            )
+            existing_cols = {row[0] for row in cursor.fetchall()}
             available_fcas = [c for c in FCAS_COLUMNS if c in existing_cols]
 
             if not available_fcas:
@@ -515,7 +518,7 @@ def get_fcas_analysis(
             if aggregation == "daily":
                 date_expr = "substr(settlement_date, 1, 10)"
             elif aggregation == "weekly":
-                date_expr = "strftime('%Y-W%W', settlement_date)"
+                date_expr = "TO_CHAR(CAST(settlement_date AS TIMESTAMP), 'IYYY-\"W\"IW')"
             else:  # monthly
                 date_expr = "substr(settlement_date, 1, 7)"
 

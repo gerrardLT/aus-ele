@@ -126,7 +126,7 @@ class FcasCollapseEngine:
         # Load total BESS capacity from capacity_data.json
         total_bess_mw = self._load_total_bess_capacity()
 
-        # Load historical FCAS prices from SQLite
+        # Load historical FCAS prices from PostgreSQL
         historical_prices = self._load_historical_fcas_prices(year)
 
         # Compute results for each service
@@ -288,7 +288,7 @@ class FcasCollapseEngine:
         return total_mw
 
     def _load_historical_fcas_prices(self, year: int) -> dict[str, Optional[float]]:
-        """从 SQLite 加载历史 FCAS 平均价格数据。
+        """从 PostgreSQL 加载历史 FCAS 平均价格数据。
 
         查询 trading_price_{year} 表中各 FCAS 服务的平均价格。
         缺失时返回 None。
@@ -308,14 +308,14 @@ class FcasCollapseEngine:
 
                 # Check if table exists
                 cursor.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                     (table_name,),
                 )
                 if not cursor.fetchone():
                     # Table doesn't exist - try previous year
                     table_name = trading_price_table(year - 1)
                     cursor.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                         (table_name,),
                     )
                     if not cursor.fetchone():
@@ -325,8 +325,11 @@ class FcasCollapseEngine:
                         return {s: None for s in FCAS_SERVICES}
 
                 # Check which FCAS columns exist
-                cursor.execute(f"PRAGMA table_info({table_name})")
-                existing_cols = {row[1] for row in cursor.fetchall()}
+                cursor.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+                    (table_name,),
+                )
+                existing_cols = {row[0] for row in cursor.fetchall()}
 
                 for service in FCAS_SERVICES:
                     col = FCAS_COLUMN_MAP[service]
@@ -344,7 +347,7 @@ class FcasCollapseEngine:
                         prices[service] = None
 
         except Exception as e:
-            logger.warning(f"Failed to load FCAS prices from SQLite: {e}")
+            logger.warning(f"Failed to load FCAS prices from database: {e}")
             return {s: None for s in FCAS_SERVICES}
 
         return prices

@@ -13,13 +13,13 @@ from database import DatabaseManager
 # Suppress detailed logs to make room for tqdm
 logging.getLogger("aemo_wem_scraper").setLevel(logging.WARNING)
 
-def worker(date_obj, db_path):
+def worker(date_obj):
     import time
-    db = DatabaseManager(db_path)
+    db = DatabaseManager()
     count = scrape_wem_date(date_obj, db)
     return date_obj, count
 
-def run_concurrent_scraping(start_date: str, end_date: str, db_path: str, max_workers: int = 2):
+def run_concurrent_scraping(start_date: str, end_date: str, max_workers: int = 2):
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
     
@@ -35,7 +35,7 @@ def run_concurrent_scraping(start_date: str, end_date: str, db_path: str, max_wo
     
     with tqdm(total=len(dates_to_scrape), desc="WEM Syncing", unit="day") as pbar:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(worker, dt, db_path): dt for dt in dates_to_scrape}
+            futures = {executor.submit(worker, dt): dt for dt in dates_to_scrape}
             
             for future in as_completed(futures):
                 dt = futures[future]
@@ -57,8 +57,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--start", type=str, default="2020-01-01")
     parser.add_argument("--end", type=str, default=datetime.now().strftime('%Y-%m-%d'))
-    parser.add_argument("--db", type=str, default="aemo_data.db")
     parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
     
-    run_concurrent_scraping(args.start, args.end, args.db, args.workers)
+    run_concurrent_scraping(args.start, args.end, args.workers)

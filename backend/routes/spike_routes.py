@@ -9,7 +9,6 @@ Uses deps.py for dependency injection and network_fees for settlement intervals.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from collections import defaultdict
 from typing import Optional
 
@@ -264,7 +263,7 @@ def _compute_yearly_trend(
                 cursor = conn.cursor()
                 # Check if table exists
                 cursor.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                     (table_name,),
                 )
                 if not cursor.fetchone():
@@ -315,7 +314,7 @@ def _compute_yearly_trend(
                     "total_hours": round(total_hours, 4),
                 })
 
-        except sqlite3.Error as e:
+        except Exception as e:
             logger.warning(f"Failed to query year {year} for trend: {e}")
             continue
 
@@ -374,7 +373,7 @@ async def get_spike_profit(
 
             # Check if table exists
             cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (table_name,),
             )
             if not cursor.fetchone():
@@ -472,9 +471,6 @@ async def get_spike_profit(
 
     except HTTPException:
         raise
-    except sqlite3.Error as e:
-        logger.error(f"Database error in spike-profit: {e}")
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
     except Exception as e:
-        logger.error(f"Unexpected error in spike-profit: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error in spike-profit: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

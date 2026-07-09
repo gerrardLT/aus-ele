@@ -363,7 +363,7 @@ class MLCalibrationEngine:
             with self.db.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                     (table_name,),
                 )
                 return cursor.fetchone() is not None

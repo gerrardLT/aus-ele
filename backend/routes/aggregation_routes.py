@@ -132,7 +132,7 @@ def _compute_market_opportunity(
 
         # Check table exists
         cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
             (table_name,),
         )
         if not cursor.fetchone():
@@ -244,7 +244,7 @@ def _compute_opportunity_identification(
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
             (table_name,),
         )
         if not cursor.fetchone():
@@ -345,7 +345,7 @@ def _compute_revenue_estimation(
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
             (table_name,),
         )
         if not cursor.fetchone():

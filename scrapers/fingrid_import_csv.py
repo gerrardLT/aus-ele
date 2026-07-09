@@ -10,16 +10,14 @@ from fingrid.importer import import_fingrid_csv
 
 
 if __name__ == "__main__":
-    default_db = Path(__file__).resolve().parents[1] / "data" / "aemo_data.db"
-    parser = argparse.ArgumentParser(description="Import real Fingrid CSV data into local storage")
+    parser = argparse.ArgumentParser(description="Import real Fingrid CSV data into PostgreSQL")
     parser.add_argument("--dataset", required=True, help="Fingrid dataset id, for example 317")
     parser.add_argument("--input", required=True, help="Path to exported Fingrid CSV file")
     parser.add_argument("--value-column", help="Optional explicit value column name")
     parser.add_argument("--delimiter", help="Optional CSV delimiter override")
-    parser.add_argument("--db", default=str(default_db))
     args = parser.parse_args()
 
-    db = DatabaseManager(args.db)
+    db = DatabaseManager()
     result = import_fingrid_csv(
         db,
         dataset_id=args.dataset,

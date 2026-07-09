@@ -490,8 +490,6 @@ def main():
                         help=f'区域代码，逗号分隔 (默认: {",".join(ALL_REGIONS)})')
     parser.add_argument('--output', default=None,
                         help='输出 CSV 文件路径 (选填，若填此项则同时产生大 CSV)')
-    parser.add_argument('--db-path', default="aemo_data.db",
-                        help='输出 SQLite 数据库库路径 (默认: aemo_data.db)')
     parser.add_argument('--fcas', action='store_true', default=False,
                         help='同时抓取 DISPATCHPRICE (含 FCAS 调频价格数据)')
 
@@ -522,7 +520,7 @@ def main():
     print("=" * 60)
     print()
 
-    db = DatabaseManager(args.db_path)
+    db = DatabaseManager()
     all_records_for_csv = [] if output_path else None
 
     for i, (year, month) in enumerate(months, 1):

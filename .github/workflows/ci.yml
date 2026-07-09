@@ -48,13 +48,23 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_*.py" || echo "::warning::backend unit tests have failures (legacy test debt, non-blocking until resolved)"
         env:
-          AUS_ELE_DB_PATH: ":memory:"
+          AUS_ELE_DB_BACKEND: postgresql
+          AUS_ELE_PG_HOST: localhost
+          AUS_ELE_PG_PORT: "5432"
+          AUS_ELE_PG_DATABASE: aemo_data
+          AUS_ELE_PG_USER: aemo
+          AUS_ELE_PG_PASSWORD: ci_test_pass
 
       - name: Run integration tests
         run: |
           python -m unittest discover -s tests -p "test_*integration*.py" -v || echo "::warning::integration tests have failures (non-blocking until resolved)"
         env:
-          AUS_ELE_DB_PATH: ":memory:"
+          AUS_ELE_DB_BACKEND: postgresql
+          AUS_ELE_PG_HOST: localhost
+          AUS_ELE_PG_PORT: "5432"
+          AUS_ELE_PG_DATABASE: aemo_data
+          AUS_ELE_PG_USER: aemo
+          AUS_ELE_PG_PASSWORD: ci_test_pass
 
       # 可观测性（R9.2/R9.5）：向作业摘要写入阶段状态（成功/失败/跳过）。
       - name: 阶段状态汇总
@@ -122,6 +132,8 @@ jobs:
   #   SSH_PORT            SSH 端口（可选，缺省 22）
   #   AUS_ELE_JWT_SECRET  后端 JWT 密钥
   #   FINGRID_API_KEY     Fingrid API Key
+  # 可选：
+  #   AUS_ELE_PG_PASSWORD PostgreSQL 密码（缺省 aemo_pg_pass_2026）
   # 说明：GHCR 登录复用内置 GITHUB_TOKEN（packages: write），无需额外 Secret。
   # ═════════════════════════════════════════════════════════════════════
 
@@ -324,13 +336,14 @@ jobs:
           port: ${{ secrets.SSH_PORT || '22' }}
           timeout: 30s
           command_timeout: 20m
-          envs: AUS_ELE_JWT_SECRET,FINGRID_API_KEY,IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_USERNAME,GHCR_TOKEN,API_HOST_PORT,WEB_HOST_PORT,APP_DIR
+          envs: AUS_ELE_JWT_SECRET,FINGRID_API_KEY,IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_USERNAME,GHCR_TOKEN,API_HOST_PORT,WEB_HOST_PORT,APP_DIR,AUS_ELE_PG_PASSWORD
           script: |
             set -e
             bash "${APP_DIR}/deploy/scripts/deploy.sh"
         env:
           AUS_ELE_JWT_SECRET: ${{ secrets.AUS_ELE_JWT_SECRET }}
           FINGRID_API_KEY: ${{ secrets.FINGRID_API_KEY }}
+          AUS_ELE_PG_PASSWORD: ${{ secrets.AUS_ELE_PG_PASSWORD || 'aemo_pg_pass_2026' }}
           IMAGE_TAG: ${{ github.sha }}
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}

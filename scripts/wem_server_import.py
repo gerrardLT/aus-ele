@@ -31,7 +31,6 @@ import io
 import json
 import logging
 import os
-import sqlite3
 import sys
 import time
 import zipfile
@@ -639,80 +638,7 @@ def import_fcess_capabilities(pg_conn, dry_run: bool):
     log.info("FCAS: %d 条导入完成", len(records))
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 4. SQLite 存量数据迁移（可选）
-# ═══════════════════════════════════════════════════════════════════════
-def migrate_existing_sqlite(pg_conn, sqlite_path: str, dry_run: bool):
-    """把已有的 SQLite 数据迁移到 PG"""
-    if not os.path.exists(sqlite_path):
-        log.info("无 SQLite 文件，跳过存量迁移")
-        return
-
-    log.info("═══ SQLite 存量迁移: %s ═══", sqlite_path)
-    sq = sqlite3.connect(sqlite_path)
-    tables = sq.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-    ).fetchall()
-
-    for (tname,) in tables:
-        cols_info = sq.execute(f"PRAGMA table_info([{tname}])").fetchall()
-        if not cols_info:
-            continue
-        col_names = [c[1] for c in cols_info]
-        count = sq.execute(f"SELECT count(*) FROM [{tname}]").fetchone()[0]
-        if count == 0:
-            continue
-
-        log.info("  迁移 %s (%d rows)...", tname, count)
-        if dry_run:
-            continue
-
-        cur = pg_conn.cursor()
-        # 检查 PG 中是否已有此表
-        cur.execute(
-            "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name=%s)",
-            (tname,),
-        )
-        if not cur.fetchone()[0]:
-            # 自动建表
-            col_defs = []
-            for c in cols_info:
-                cname, ctype = c[1], (c[2] or "TEXT").upper()
-                if "INT" in ctype:
-                    pg_type = "BIGINT"
-                elif "REAL" in ctype or "FLOA" in ctype or "DOUB" in ctype:
-                    pg_type = "DOUBLE PRECISION"
-                elif "BLOB" in ctype:
-                    pg_type = "BYTEA"
-                else:
-                    pg_type = "TEXT"
-                col_defs.append(f'"{cname}" {pg_type}')
-            # 用第一列做主键（如果是 id）
-            pk_clause = ""
-            if col_names[0] == "id":
-                col_defs[0] = f'"id" BIGSERIAL PRIMARY KEY'
-            elif len(col_names) >= 2:
-                pk_clause = f', PRIMARY KEY ("{col_names[0]}")'
-            create_sql = f'CREATE TABLE IF NOT EXISTS "{tname}" ({", ".join(col_defs)}{pk_clause})'
-            try:
-                cur.execute(create_sql)
-                pg_conn.commit()
-            except Exception as e:
-                log.warning("  建表失败 %s: %s", tname, e)
-                pg_conn.rollback()
-                continue
-
-        # 批量复制数据
-        cols_str = ",".join(f'"{c}"' for c in col_names)
-        rows = sq.execute(f"SELECT * FROM [{tname}]").fetchall()
-        try:
-            _pg_copy_insert(pg_conn, f'"{tname}"', cols_str, rows)
-            log.info("  ✓ %s: %d rows", tname, len(rows))
-        except Exception as e:
-            log.warning("  ✗ %s: %s", tname, e)
-
-    sq.close()
-
+# (SQLite migration removed - PG only)
 
 # ═══════════════════════════════════════════════════════════════════════
 # Main
@@ -723,7 +649,6 @@ def main():
     parser.add_argument("--skip-dispatch", action="store_true", help="跳过调度方案（33GB）")
     parser.add_argument("--skip-trading", action="store_true", help="跳过交易电价")
     parser.add_argument("--skip-fcess", action="store_true", help="跳过 FCAS")
-    parser.add_argument("--skip-sqlite-migration", action="store_true", help="跳过 SQLite 存量迁移")
     parser.add_argument("--pg-password", default="aemo_pg_pass_2026", help="PG 密码")
     parser.add_argument("--pg-host", default="localhost", help="PG 主机地址（Docker 内用 postgres）")
     parser.add_argument("--pg-port", type=int, default=15432, help="PG 端口（宿主机 15432，Docker 内 5432）")
@@ -731,8 +656,6 @@ def main():
                         help="WEM 原始数据目录（默认自动检测）")
     parser.add_argument("--progress-file", default=None,
                         help="进度文件路径（默认写到可写目录，避开只读数据目录）")
-    parser.add_argument("--sqlite-db", default="/www/wwwroot/aus-ele/data/aemo_data.db",
-                        help="已有 SQLite 数据库路径（用于存量迁移）")
     args = parser.parse_args()
 
     # 自动检测 BASE_DIR（声明 global 才能在函数内修改模块级变量）
@@ -784,9 +707,6 @@ def main():
     progress = load_progress()
     try:
         init_pg(pg_conn)
-
-        if not args.skip_sqlite_migration:
-            migrate_existing_sqlite(pg_conn, args.sqlite_db, args.dry_run)
 
         if not args.skip_fcess:
             import_fcess_capabilities(pg_conn, args.dry_run)

@@ -1,12 +1,172 @@
-import sqlite3
 import os
 import contextlib
 import logging
 import json
+import re
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
+
+
+def _pg_pool():
+    """Lazy-init singleton psycopg2 connection pool."""
+    if not hasattr(_pg_pool, "_pool") or _pg_pool._pool is None:
+        import psycopg2
+        from psycopg2 import pool as pg_pool_mod
+        host = os.environ.get("AUS_ELE_PG_HOST", "localhost")
+        port = os.environ.get("AUS_ELE_PG_PORT", "5432")
+        database = os.environ.get("AUS_ELE_PG_DATABASE", "aemo_data")
+        user = os.environ.get("AUS_ELE_PG_USER", "aemo")
+        password = os.environ.get("AUS_ELE_PG_PASSWORD", "")
+        max_conn = int(os.environ.get("AUS_ELE_PG_MAX_CONNECTIONS", "10"))
+        dsn = f"host={host} port={port} dbname={database} user={user} password={password}"
+        _pg_pool._pool = pg_pool_mod.ThreadedConnectionPool(2, max_conn, dsn)
+        logger.info("PG connection pool initialized (max=%d)", max_conn)
+    return _pg_pool._pool
+
+
+_QUESTION_MARK_RE = re.compile(r"\?(?=(?:[^']*'[^']*')*[^']*$)")
+
+
+def _translate_sql(sql: str) -> str:
+    """Translate parameter placeholders from ? to %s for psycopg2.
+
+    Uses a regex that skips ? inside single-quoted string literals.
+    """
+    return _QUESTION_MARK_RE.sub("%s", sql)
+
+
+class _DictRow:
+    """Row wrapper supporting both index and column-name access, and dict() conversion."""
+    def __init__(self, description, values):
+        self._values = tuple(values) if values else ()
+        self._keys = [d[0] for d in description] if description else []
+        self._key_map = {k: i for i, k in enumerate(self._keys)}
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return self._values[self._key_map[key]]
+
+    def keys(self):
+        return list(self._keys)
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+    def __contains__(self, key):
+        return key in self._key_map
+
+    def __bool__(self):
+        return bool(self._values)
+
+
+class _PGCursorWrapper:
+    """Wraps psycopg2 cursor to auto-translate ? placeholders to %s."""
+    def __init__(self, real_cursor, db_mgr):
+        self._cur = real_cursor
+        self._mgr = db_mgr
+
+    def execute(self, sql, params=None):
+        sql = _translate_sql(sql)
+        if params:
+            return self._cur.execute(sql, params)
+        return self._cur.execute(sql)
+
+    def executemany(self, sql, params_seq):
+        sql = _translate_sql(sql)
+        return self._cur.executemany(sql, params_seq)
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row is not None and getattr(self, '_dict_mode', False):
+            return _DictRow(self._cur.description, row)
+        return row
+
+    def fetchall(self):
+        rows = self._cur.fetchall()
+        if getattr(self, '_dict_mode', False):
+            desc = self._cur.description
+            return [_DictRow(desc, r) for r in rows]
+        return rows
+
+    def fetchmany(self, size=None):
+        rows = self._cur.fetchmany(size) if size else self._cur.fetchmany()
+        if getattr(self, '_dict_mode', False):
+            desc = self._cur.description
+            return [_DictRow(desc, r) for r in rows]
+        return rows
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    @property
+    def lastrowid(self):
+        return getattr(self._cur, 'lastrowid', None)
+
+    def close(self):
+        return self._cur.close()
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+class _PGConnWrapper:
+    """Wraps psycopg2 connection to return PGCursorWrapper from cursor()."""
+    def __init__(self, real_conn, db_mgr):
+        self._conn = real_conn
+        self._mgr = db_mgr
+        self._dict_mode = False
+
+    @property
+    def row_factory(self):
+        return self._dict_mode
+
+    @row_factory.setter
+    def row_factory(self, value):
+        # Enable dict mode for truthy values
+        self._dict_mode = bool(value)
+
+    def cursor(self):
+        cur = _PGCursorWrapper(self._conn.cursor(), self._mgr)
+        cur._dict_mode = self._dict_mode
+        return cur
+
+    def execute(self, sql, params=None):
+        cur = self.cursor()
+        return cur.execute(sql, params)
+
+    def executemany(self, sql, params_seq):
+        cur = self.cursor()
+        return cur.executemany(sql, params_seq)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        pass  # pool manages connection lifecycle
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
 
 class DatabaseManager:
     WEM_ESS_MARKET_TABLE = "wem_ess_market_price"
@@ -113,39 +273,56 @@ class DatabaseManager:
         "extracted_at",
     ]
 
-    def __init__(self, db_path: str = "../data/aemo_data.db"):
-        self.db_path = db_path
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-        
-        # Enable WAL globally once
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            cursor = conn.cursor()
-            cursor.execute("""
+    def __init__(self, db_path: str | None = None):
+        self.is_pg = True  # PostgreSQL only (db_path ignored, deprecated)
+
+        # PostgreSQL mode: ensure core tables exist
+        _pg_pool()  # initialize pool
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(_translate_sql("""
                 CREATE TABLE IF NOT EXISTS system_status (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 )
-            """)
+            """))
             conn.commit()
-        finally:
-            conn.close()
-            
-        # Keep track of initialized tables to avoid redundant PRAGMA and CREATE queries
+        logger.info("DatabaseManager initialized (PostgreSQL)")
+
+        # Keep track of initialized tables to avoid redundant schema queries
         self.initialized_tables = set()
+
+    def _get_column_names(self, cursor, table_name: str) -> list[str]:
+        """Return column names for *table_name* using information_schema (PG)."""
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %s "
+            "ORDER BY ordinal_position",
+            (table_name,),
+        )
+        return [r[0] for r in cursor.fetchall()]
 
     @contextlib.contextmanager
     def get_connection(self):
-        conn = sqlite3.connect(self.db_path)
+        pool = _pg_pool()
+        conn = pool.getconn()
         try:
-            yield conn
+            conn.autocommit = False
+            yield _PGConnWrapper(conn, self)
         finally:
-            conn.close()
+            pool.putconn(conn)
 
-    def ensure_wem_ess_tables(self, conn: sqlite3.Connection):
+    def _table_exists(self, conn, table_name: str) -> bool:
+        """Check if a table exists in the public schema."""
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = %s",
+            (table_name,),
+        )
+        return cur.fetchone() is not None
+
+    def ensure_wem_ess_tables(self, conn: Any):
         """Create slim WEM ESS tables used for the latest rolling month."""
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -228,11 +405,11 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_event_tables(self, conn: sqlite3.Connection):
+    def ensure_event_tables(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.GRID_EVENT_RAW_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 market TEXT NOT NULL,
                 source TEXT NOT NULL,
                 source_event_id TEXT NOT NULL,
@@ -288,7 +465,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_forecast_tables(self, conn: sqlite3.Connection):
+    def ensure_forecast_tables(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.GRID_FORECAST_SNAPSHOT_TABLE} (
@@ -319,7 +496,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_analysis_cache_table(self, conn: sqlite3.Connection):
+    def ensure_analysis_cache_table(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.ANALYSIS_CACHE_TABLE} (
@@ -333,7 +510,7 @@ class DatabaseManager:
                 PRIMARY KEY (scope, cache_key, data_version, organization_id, workspace_id)
             )
         """)
-        columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ANALYSIS_CACHE_TABLE})").fetchall()}
+        columns = self._get_column_names(cursor, self.ANALYSIS_CACHE_TABLE)
         if "organization_id" not in columns:
             cursor.execute(f"ALTER TABLE {self.ANALYSIS_CACHE_TABLE} ADD COLUMN organization_id TEXT")
         if "workspace_id" not in columns:
@@ -344,7 +521,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_aemo_source_sync_table(self, conn: sqlite3.Connection):
+    def ensure_aemo_source_sync_table(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.AEMO_SOURCE_SYNC_TABLE} (
@@ -362,7 +539,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_fingrid_tables(self, conn: sqlite3.Connection):
+    def ensure_fingrid_tables(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.FINGRID_DATASET_TABLE} (
@@ -382,7 +559,7 @@ class DatabaseManager:
         """)
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.FINGRID_TIMESERIES_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 dataset_id TEXT NOT NULL,
                 series_key TEXT NOT NULL,
                 timestamp_utc TEXT NOT NULL,
@@ -419,7 +596,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_data_quality_tables(self, conn: sqlite3.Connection):
+    def ensure_data_quality_tables(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.DATA_QUALITY_SNAPSHOT_TABLE} (
@@ -438,12 +615,7 @@ class DatabaseManager:
                 PRIMARY KEY (scope, market, dataset_key)
             )
         """)
-        snapshot_columns = {
-            row[1]
-            for row in cursor.execute(
-                f"PRAGMA table_info({self.DATA_QUALITY_SNAPSHOT_TABLE})"
-            ).fetchall()
-        }
+        snapshot_columns = self._get_column_names(cursor, self.DATA_QUALITY_SNAPSHOT_TABLE)
         if "source_id" not in snapshot_columns:
             cursor.execute(
                 f"ALTER TABLE {self.DATA_QUALITY_SNAPSHOT_TABLE} ADD COLUMN source_id TEXT"
@@ -454,7 +626,7 @@ class DatabaseManager:
             )
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.DATA_QUALITY_ISSUE_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 scope TEXT NOT NULL,
                 market TEXT NOT NULL,
                 dataset_key TEXT NOT NULL,
@@ -470,7 +642,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_alert_tables(self, conn: sqlite3.Connection):
+    def ensure_alert_tables(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.ALERT_RULE_TABLE} (
@@ -508,7 +680,7 @@ class DatabaseManager:
         """)
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.ALERT_DELIVERY_LOG_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 rule_id TEXT NOT NULL,
                 delivery_status TEXT NOT NULL,
                 target TEXT NOT NULL,
@@ -523,17 +695,17 @@ class DatabaseManager:
                 FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
             )
         """)
-        rule_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ALERT_RULE_TABLE})").fetchall()}
+        rule_columns = self._get_column_names(cursor, self.ALERT_RULE_TABLE)
         if "organization_id" not in rule_columns:
             cursor.execute(f"ALTER TABLE {self.ALERT_RULE_TABLE} ADD COLUMN organization_id TEXT")
         if "workspace_id" not in rule_columns:
             cursor.execute(f"ALTER TABLE {self.ALERT_RULE_TABLE} ADD COLUMN workspace_id TEXT")
-        state_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ALERT_STATE_TABLE})").fetchall()}
+        state_columns = self._get_column_names(cursor, self.ALERT_STATE_TABLE)
         if "organization_id" not in state_columns:
             cursor.execute(f"ALTER TABLE {self.ALERT_STATE_TABLE} ADD COLUMN organization_id TEXT")
         if "workspace_id" not in state_columns:
             cursor.execute(f"ALTER TABLE {self.ALERT_STATE_TABLE} ADD COLUMN workspace_id TEXT")
-        log_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.ALERT_DELIVERY_LOG_TABLE})").fetchall()}
+        log_columns = self._get_column_names(cursor, self.ALERT_DELIVERY_LOG_TABLE)
         if "organization_id" not in log_columns:
             cursor.execute(f"ALTER TABLE {self.ALERT_DELIVERY_LOG_TABLE} ADD COLUMN organization_id TEXT")
         if "workspace_id" not in log_columns:
@@ -552,7 +724,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_job_tables(self, conn: sqlite3.Connection):
+    def ensure_job_tables(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.JOB_TABLE} (
@@ -583,7 +755,7 @@ class DatabaseManager:
         """)
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.JOB_EVENT_TABLE} (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id BIGSERIAL PRIMARY KEY,
                 job_id TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 detail_json TEXT NOT NULL DEFAULT '{{}}',
@@ -605,7 +777,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_external_api_tables(self, conn: sqlite3.Connection):
+    def ensure_external_api_tables(self, conn: Any):
         self.ensure_access_control_tables(conn)
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -625,7 +797,7 @@ class DatabaseManager:
         """)
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.API_USAGE_TABLE} (
-                usage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usage_id BIGSERIAL PRIMARY KEY,
                 client_id TEXT NOT NULL,
                 endpoint TEXT NOT NULL,
                 http_method TEXT NOT NULL,
@@ -643,7 +815,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def ensure_access_control_tables(self, conn: sqlite3.Connection):
+    def ensure_access_control_tables(self, conn: Any):
         cursor = conn.cursor()
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.ORGANIZATION_TABLE} (
@@ -674,7 +846,7 @@ class DatabaseManager:
                 updated_at TEXT NOT NULL
             )
         """)
-        principal_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.PRINCIPAL_TABLE})").fetchall()}
+        principal_columns = self._get_column_names(cursor, self.PRINCIPAL_TABLE)
         if "password_hash" not in principal_columns:
             cursor.execute(f"ALTER TABLE {self.PRINCIPAL_TABLE} ADD COLUMN password_hash TEXT")
         if "password_salt" not in principal_columns:
@@ -751,7 +923,7 @@ class DatabaseManager:
                 FOREIGN KEY(workspace_id) REFERENCES {self.WORKSPACE_TABLE}(workspace_id)
             )
         """)
-        session_columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({self.AUTH_SESSION_TABLE})").fetchall()}
+        session_columns = self._get_column_names(cursor, self.AUTH_SESSION_TABLE)
         if "organization_id" not in session_columns:
             cursor.execute(f"ALTER TABLE {self.AUTH_SESSION_TABLE} ADD COLUMN organization_id TEXT")
         if "auth_identity_id" not in session_columns:
@@ -762,7 +934,7 @@ class DatabaseManager:
             cursor.execute(f"ALTER TABLE {self.AUTH_SESSION_TABLE} ADD COLUMN last_seen_at TEXT")
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.AUDIT_LOG_TABLE} (
-                audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audit_id BIGSERIAL PRIMARY KEY,
                 actor_principal_id TEXT,
                 workspace_id TEXT,
                 action TEXT NOT NULL,
@@ -1191,7 +1363,7 @@ class DatabaseManager:
             ws_id = workspace_id or ""
             conn.execute(
                 f"""
-                INSERT OR REPLACE INTO {self.ANALYSIS_CACHE_TABLE} (
+                INSERT INTO {self.ANALYSIS_CACHE_TABLE} (
                     scope,
                     cache_key,
                     data_version,
@@ -1200,6 +1372,9 @@ class DatabaseManager:
                     response_json,
                     updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT (scope, cache_key, data_version, organization_id, workspace_id)
+                DO UPDATE SET response_json = EXCLUDED.response_json,
+                              updated_at = EXCLUDED.updated_at
                 """,
                 (
                     scope,
@@ -1652,7 +1827,7 @@ class DatabaseManager:
             )
         return normalized_issue_rows
 
-    def _upsert_data_quality_snapshot(self, conn: sqlite3.Connection, record: dict):
+    def _upsert_data_quality_snapshot(self, conn: Any, record: dict):
         scope = record["scope"]
         market = record["market"]
         dataset_key = record["dataset_key"]
@@ -1759,7 +1934,7 @@ class DatabaseManager:
     ) -> list[dict]:
         with self.get_connection() as conn:
             self.ensure_data_quality_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             query = f"SELECT * FROM {self.DATA_QUALITY_SNAPSHOT_TABLE} WHERE 1=1"
             params = []
             if scope:
@@ -1787,7 +1962,7 @@ class DatabaseManager:
     ) -> list[dict]:
         with self.get_connection() as conn:
             self.ensure_data_quality_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             query = f"SELECT * FROM {self.DATA_QUALITY_ISSUE_TABLE} WHERE 1=1"
             params = []
             if scope:
@@ -1851,7 +2026,7 @@ class DatabaseManager:
     def fetch_alert_rule(self, rule_id: str) -> dict | None:
         with self.get_connection() as conn:
             self.ensure_alert_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             row = conn.execute(
                 f"SELECT * FROM {self.ALERT_RULE_TABLE} WHERE rule_id = ?",
                 (rule_id,),
@@ -1866,7 +2041,7 @@ class DatabaseManager:
     def fetch_alert_rules(self, enabled_only: bool = False, workspace_id: str | None = None) -> list[dict]:
         with self.get_connection() as conn:
             self.ensure_alert_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             query = f"SELECT * FROM {self.ALERT_RULE_TABLE}"
             params = []
             clauses = []
@@ -1922,7 +2097,7 @@ class DatabaseManager:
     def fetch_alert_state(self, rule_id: str) -> dict | None:
         with self.get_connection() as conn:
             self.ensure_alert_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             row = conn.execute(
                 f"SELECT * FROM {self.ALERT_STATE_TABLE} WHERE rule_id = ?",
                 (rule_id,),
@@ -1936,7 +2111,7 @@ class DatabaseManager:
     def fetch_alert_states(self, workspace_id: str | None = None) -> list[dict]:
         with self.get_connection() as conn:
             self.ensure_alert_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             query = f"SELECT * FROM {self.ALERT_STATE_TABLE}"
             params = []
             if workspace_id is not None:
@@ -1977,7 +2152,7 @@ class DatabaseManager:
             conn.commit()
         with self.get_connection() as conn:
             self.ensure_alert_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             row = conn.execute(
                 f"SELECT * FROM {self.ALERT_DELIVERY_LOG_TABLE} WHERE id = ?",
                 (row_id,),
@@ -1989,7 +2164,7 @@ class DatabaseManager:
     def fetch_alert_delivery_logs(self, limit: int = 100, workspace_id: str | None = None) -> list[dict]:
         with self.get_connection() as conn:
             self.ensure_alert_tables(conn)
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = True  # enable dict-mode rows
             query = f"SELECT * FROM {self.ALERT_DELIVERY_LOG_TABLE}"
             params = []
             if workspace_id is not None:
@@ -2103,7 +2278,7 @@ class DatabaseManager:
         "lower1sec_rrp", "lower6sec_rrp", "lower60sec_rrp", "lower5min_rrp", "lowerreg_rrp",
     ]
 
-    def _ensure_table_exists(self, year: int, conn: sqlite3.Connection):
+    def _ensure_table_exists(self, year: int, conn: Any):
         """Dynamic table sharding: create a table for a specific year if it doesn't exist."""
         table_name = f"trading_price_{year}"
         if table_name in self.initialized_tables:
@@ -2116,7 +2291,7 @@ class DatabaseManager:
         # for any NEM data that was imported before this schema upgrade.
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 settlement_date TEXT NOT NULL,
                 region_id TEXT NOT NULL,
                 rrp_aud_mwh REAL NOT NULL,
@@ -2135,8 +2310,7 @@ class DatabaseManager:
         """)
         
         # Migrate existing tables that were created before FCAS columns existed.
-        # SQLite ignores ALTER TABLE ADD COLUMN if the column already exists (raises error),
-        # so we catch and skip gracefully.
+        # PG raises an error on duplicate ALTER TABLE ADD COLUMN, so we catch and skip.
         self._migrate_fcas_columns(table_name, cursor)
         
         # Create index on region_id and settlement_date for fast querying
@@ -2151,22 +2325,27 @@ class DatabaseManager:
 
     def _migrate_fcas_columns(self, table_name: str, cursor):
         """Add FCAS columns to an existing table if they don't already exist."""
-        # Get current columns
-        cursor.execute(f"PRAGMA table_info({table_name})")
-        existing_cols = {row[1] for row in cursor.fetchall()}
+        # Get current columns via information_schema (PG)
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %s",
+            (table_name,),
+        )
+        existing_cols = {r[0] for r in cursor.fetchall()}
         
         for col in self.FCAS_COLUMNS:
             if col not in existing_cols:
                 try:
+                    cursor.execute("SAVEPOINT add_col")
                     cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} REAL")
-                    logger.info(f"Migrated: added column {col} to {table_name}")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                    cursor.execute("RELEASE SAVEPOINT add_col")
+                except Exception:
+                    cursor.execute("ROLLBACK TO SAVEPOINT add_col")
 
     def batch_insert(self, records: list[dict]):
         """
         Groups records by year, creates necessary tables, and bulk inserts them.
-        Uses INSERT OR REPLACE to update existing records with new FCAS data.
+        Uses ON CONFLICT to upsert records with new FCAS data.
         Records expected: [{'settlement_date': '...', 'region_id': 'NSW1', 'rrp_aud_mwh': 50.5, ...fcas fields...}, ...]
         """
         if not records:
@@ -2215,39 +2394,50 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
-                cursor.execute("BEGIN TRANSACTION")
-                
                 for year, rows in by_year.items():
                     table_name = self._ensure_table_exists(year, conn)
                     if has_fcas:
-                        # INSERT OR REPLACE: if the (settlement_date, region_id) already exists,
-                        # replace the row so FCAS data overwrites the old energy-only record.
+                        # ON CONFLICT: if the (settlement_date, region_id) already exists,
+                        # update the row so FCAS data overwrites the old energy-only record.
                         cursor.executemany(f"""
-                            INSERT OR REPLACE INTO {table_name}
+                            INSERT INTO {table_name}
                             (settlement_date, region_id, rrp_aud_mwh,
                              raise1sec_rrp, raise6sec_rrp, raise60sec_rrp, raise5min_rrp, raisereg_rrp,
                              lower1sec_rrp, lower6sec_rrp, lower60sec_rrp, lower5min_rrp, lowerreg_rrp)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT (settlement_date, region_id) DO UPDATE SET
+                                rrp_aud_mwh = EXCLUDED.rrp_aud_mwh,
+                                raise1sec_rrp = EXCLUDED.raise1sec_rrp,
+                                raise6sec_rrp = EXCLUDED.raise6sec_rrp,
+                                raise60sec_rrp = EXCLUDED.raise60sec_rrp,
+                                raise5min_rrp = EXCLUDED.raise5min_rrp,
+                                raisereg_rrp = EXCLUDED.raisereg_rrp,
+                                lower1sec_rrp = EXCLUDED.lower1sec_rrp,
+                                lower6sec_rrp = EXCLUDED.lower6sec_rrp,
+                                lower60sec_rrp = EXCLUDED.lower60sec_rrp,
+                                lower5min_rrp = EXCLUDED.lower5min_rrp,
+                                lowerreg_rrp = EXCLUDED.lowerreg_rrp
                         """, rows)
                     else:
                         cursor.executemany(f"""
-                            INSERT OR IGNORE INTO {table_name} (settlement_date, region_id, rrp_aud_mwh)
+                            INSERT INTO {table_name} (settlement_date, region_id, rrp_aud_mwh)
                             VALUES (?, ?, ?)
+                            ON CONFLICT (settlement_date, region_id) DO NOTHING
                         """, rows)
                     
                 conn.commit()
-            except sqlite3.Error as e:
+            except Exception as e:
                 conn.rollback()
                 logger.error(f"Database insertion error: {e}")
                 raise
 
     def get_summary(self) -> dict:
         """Fetch summary data for dashboard across all tables"""
-        # Read the sqlite_master to find all dynamic tables
+        # Find all dynamic trading_price tables via information_schema
         with self.get_connection() as conn:
             self.ensure_wem_ess_tables(conn)
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'trading_price_%'")
+            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'trading_price_%' ORDER BY table_name")
             tables = [r[0] for r in cursor.fetchall()]
             
             if not tables:
@@ -4229,9 +4419,9 @@ class DatabaseManager:
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            # Check table exists
+            # Check table exists via information_schema
             cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s",
                 (self.FCAS_4S_TABLE,),
             )
             if not cursor.fetchone():
@@ -4279,9 +4469,12 @@ class DatabaseManager:
                 columns = FCAS_4S_COLUMNS
                 col_names = ", ".join(columns)
                 placeholders = ", ".join("?" for _ in columns)
+                upsert_cols = [c for c in columns if c not in ("timestamp", "region_id")]
                 insert_sql = (
-                    f"INSERT OR REPLACE INTO {self.FCAS_4S_TABLE} ({col_names}) "
-                    f"VALUES ({placeholders})"
+                    f"INSERT INTO {self.FCAS_4S_TABLE} ({col_names}) "
+                    f"VALUES ({placeholders}) "
+                    f"ON CONFLICT (timestamp, region_id) DO UPDATE SET "
+                    + ", ".join(f"{c} = EXCLUDED.{c}" for c in upsert_cols)
                 )
                 batch = [
                     tuple(record.get(col) for col in columns)
@@ -4299,7 +4492,7 @@ class DatabaseManager:
     def insert_fcas_4s_batch(self, records: list[dict]) -> int:
         """Batch insert 4-second FCAS records into the fcas_4s_data table.
 
-        Uses INSERT OR REPLACE to handle duplicates gracefully.
+        Uses ON CONFLICT to handle duplicates gracefully.
 
         Args:
             records: List of dicts with keys matching FCAS_4S_COLUMNS.
@@ -4318,9 +4511,12 @@ class DatabaseManager:
             columns = FCAS_4S_COLUMNS
             col_names = ", ".join(columns)
             placeholders = ", ".join("?" for _ in columns)
+            upsert_cols = [c for c in columns if c not in ("timestamp", "region_id")]
             insert_sql = (
-                f"INSERT OR REPLACE INTO {self.FCAS_4S_TABLE} ({col_names}) "
-                f"VALUES ({placeholders})"
+                f"INSERT INTO {self.FCAS_4S_TABLE} ({col_names}) "
+                f"VALUES ({placeholders}) "
+                f"ON CONFLICT (timestamp, region_id) DO UPDATE SET "
+                + ", ".join(f"{c} = EXCLUDED.{c}" for c in upsert_cols)
             )
 
             batch = [

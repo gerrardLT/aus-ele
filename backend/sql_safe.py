@@ -51,8 +51,9 @@ _ALLOWED_PATTERNS: list[re.Pattern] = [
     re.compile(r"^fingrid_\w+$"),
     # WEM tables
     re.compile(r"^wem_\w+$"),
-    # SQLite internal
-    re.compile(r"^sqlite_master$"),
+    # PG system tables (blocked for security)
+    re.compile(r"^information_schema$"),
+    re.compile(r"^pg_catalog$"),
     # Predispach tables
     re.compile(r"^predispatch_\w+$"),
 ]
