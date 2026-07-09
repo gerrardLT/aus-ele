@@ -263,7 +263,7 @@ def _compute_opportunity_identification(
         # Find cheapest hours (best charging windows)
         hourly_avg_query = f"""
             SELECT
-                CAST(substr(datetime(settlement_date, '-1 second'), 12, 2) AS INTEGER) as hour,
+                EXTRACT(HOUR FROM settlement_date - INTERVAL '1 second')::integer as hour,
                 AVG(rrp_aud_mwh) as avg_price
             FROM {table_name}
             WHERE {region_clause}

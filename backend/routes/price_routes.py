@@ -589,7 +589,7 @@ def get_price_trend(
             # Hourly distribution of negative prices
             hourly_query = f"""
                 SELECT
-                    substr(datetime(settlement_date, '-1 second'), 12, 2) as hour_bucket,
+                    LPAD(EXTRACT(HOUR FROM settlement_date - INTERVAL '1 second')::text, 2, '0') as hour_bucket,
                     COUNT(*)
                 FROM {table_name}
                 WHERE {where_clause} AND rrp_aud_mwh < 0
