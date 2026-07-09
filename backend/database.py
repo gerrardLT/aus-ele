@@ -2604,7 +2604,6 @@ class DatabaseManager:
         with self.get_connection() as conn:
             self.ensure_job_tables(conn)
             cursor = conn.cursor()
-            cursor.execute("BEGIN IMMEDIATE")
             clauses = [
                 "status = 'queued'",
                 "(next_run_after IS NULL OR next_run_after <= ?)",
@@ -2613,7 +2612,6 @@ class DatabaseManager:
             params = [now_iso]
             if runnable_job_ids is not None:
                 if not runnable_job_ids:
-                    conn.rollback()
                     return None
                 placeholders = ",".join("?" for _ in runnable_job_ids)
                 clauses.append(f"job_id IN ({placeholders})")
@@ -2626,6 +2624,7 @@ class DatabaseManager:
                 WHERE {' AND '.join(clauses)}
                 ORDER BY priority ASC, created_at ASC
                 LIMIT 1
+                FOR UPDATE SKIP LOCKED
                 """,
                 params,
             )
@@ -4322,8 +4321,7 @@ class DatabaseManager:
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("BEGIN IMMEDIATE")
-            cursor.execute("SELECT value FROM system_status WHERE key = ?", (lock_key,))
+            cursor.execute("SELECT value FROM system_status WHERE key = ? FOR UPDATE", (lock_key,))
             row = cursor.fetchone()
 
             if row:
@@ -4363,8 +4361,7 @@ class DatabaseManager:
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("BEGIN IMMEDIATE")
-            cursor.execute("SELECT value FROM system_status WHERE key = ?", (lock_key,))
+            cursor.execute("SELECT value FROM system_status WHERE key = ? FOR UPDATE", (lock_key,))
             row = cursor.fetchone()
             if not row:
                 conn.rollback()
