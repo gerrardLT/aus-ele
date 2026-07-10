@@ -35,7 +35,7 @@ const LABELS = {
     error: '数据加载失败',
     retry: '重试',
     hour: '时段',
-    spread: '价差 ($/MWh)',
+    spread: '价差 (¢/MWh)',
     cumulative: '累计收入 ($)',
   },
   en: {
@@ -55,7 +55,7 @@ const LABELS = {
     error: 'Failed to load data',
     retry: 'Retry',
     hour: 'Hour',
-    spread: 'Spread ($/MWh)',
+    spread: 'Spread (¢/MWh)',
     cumulative: 'Cumulative ($)',
   },
 };
@@ -127,7 +127,7 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
   const rangeLabel = `${dr.start || ''} ~ ${dr.end || ''}`;
   const windowLabel = dw
     ? (lang === 'zh'
-        ? `${t.dataWindow}: ${dw.start} ~ ${dw.end} (${dw.days}${lang === 'zh' ? '天' : 'd'})`
+        ? `${t.dataWindow}: ${dw.start} ~ ${dw.end} (${dw.days}天)`
         : `${t.dataWindow}: ${dw.start} ~ ${dw.end} (${dw.days}d)`)
     : null;
 
@@ -135,7 +135,7 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
   const fmtSpread = (v) => {
     const n = v || 0;
     const cents = n * 100; // $/MWh → ¢/MWh
-    return `${cents >= 0 ? '' : ''}${cents.toFixed(2)}`;
+    return cents.toFixed(2);
   };
   const spreadUnit = t.spreadUnit || '¢/MWh';
 
