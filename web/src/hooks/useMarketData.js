@@ -22,7 +22,7 @@ export function useMarketData(config, filters) {
   ];
 
   const queryFn = async () => {
-    let url = `${API_BASE}/price-trend?year=${filters.year}&region=${filters.region}&limit=720&interval_minutes=${config.settlementIntervalMinutes}`;
+    let url = `${API_BASE}/price-trend?year=${filters.year}&region=${filters.region}&limit=5000&interval_minutes=${config.settlementIntervalMinutes}`;
     if (filters.quarter && filters.quarter !== 'ALL') url += `&quarter=${filters.quarter}`;
     if (filters.dayType && filters.dayType !== 'ALL') url += `&day_type=${filters.dayType}`;
     return fetchJson(url);

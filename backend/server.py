@@ -5915,7 +5915,7 @@ def get_price_trend(
     month: Optional[str] = Query(None, description="Month (01-12) to filter by"),
     quarter: Optional[str] = Query(None, description="Quarter to filter by (Q1, Q2, Q3, Q4)"),
     day_type: Optional[str] = Query(None, description="Day type to filter by (WEEKDAY, WEEKEND)"),
-    limit: Optional[int] = Query(1500, description="Max points to return to avoid overwhelming frontend."),
+    limit: Optional[int] = Query(5000, description="Max points to return to avoid overwhelming frontend."),
     access_scope: Optional[dict] = None,
 ):
     """
