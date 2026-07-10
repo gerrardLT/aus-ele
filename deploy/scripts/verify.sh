@@ -18,6 +18,7 @@
 #   APP_DIR        部署仓库根目录（含 smoke_test_api.py 与 state/），默认 /www/wwwroot/aus-ele
 #   API_HOST_PORT  后端宿主机映射端口，默认 18085
 #   IMAGE_TAG      本次部署的 commit SHA；验证通过后写入 Last_Stable_Tag
+#   WARMUP_S       Health 通过后等待容器完全就绪的秒数，默认 10
 #
 set -euo pipefail
 
@@ -135,6 +136,13 @@ main() {
     exit 1
   fi
   log "Health_Check passed"
+
+  # --- Warmup: 等待容器完全就绪（gunicorn worker 初始化、连接池预热等）---
+  local warmup="${WARMUP_S:-10}"
+  if (( warmup > 0 )); then
+    log "Warmup: waiting ${warmup}s for container to fully stabilize before smoke test"
+    sleep "${warmup}"
+  fi
 
   if ! run_smoke_test; then
     log "RESULT: Smoke_Test FAILED (500 / connection failure) -> verification failed (R6.4, will trigger rollback)"
