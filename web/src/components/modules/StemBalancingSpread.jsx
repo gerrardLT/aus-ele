@@ -22,6 +22,7 @@ const LABELS = {
     title: 'STEM/Balancing 价差分析',
     subtitle: 'WEM 短期能量市场价差套利机会评估',
     dataWindow: '数据窗口',
+    spreadUnit: '¢/MWh',
     meanSpread: '均值价差',
     medianSpread: '中位数价差',
     p90Spread: 'P90 价差',
@@ -41,6 +42,7 @@ const LABELS = {
     title: 'STEM/Balancing Spread',
     subtitle: 'WEM short-term energy market spread arbitrage assessment',
     dataWindow: 'Data window',
+    spreadUnit: '¢/MWh',
     meanSpread: 'Mean Spread',
     medianSpread: 'Median Spread',
     p90Spread: 'P90 Spread',
@@ -129,11 +131,13 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
         : `${t.dataWindow}: ${dw.start} ~ ${dw.end} (${dw.days}d)`)
     : null;
 
-  // Format spread: use 2 decimal places to capture small but meaningful differences
+  // Format spread: show in cents/MWh for readability (values are typically <$0.01)
   const fmtSpread = (v) => {
     const n = v || 0;
-    return `$${n.toFixed(2)}`;
+    const cents = n * 100; // $/MWh → ¢/MWh
+    return `${cents >= 0 ? '' : ''}${cents.toFixed(2)}`;
   };
+  const spreadUnit = t.spreadUnit || '¢/MWh';
 
   // Format revenue: use $ not k for small values
   const fmtRevenue = (v) => {
@@ -153,9 +157,9 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
 
       {/* Stats cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <StatCard label={t.meanSpread} value={<NarrativeTooltip module="forward_price" lang={lang}>{fmtSpread(stats.mean)}</NarrativeTooltip>} sub="/MWh" />
-        <StatCard label={t.medianSpread} value={fmtSpread(stats.median)} sub="/MWh" />
-        <StatCard label={t.p90Spread} value={fmtSpread(stats.p90)} sub="/MWh" />
+        <StatCard label={t.meanSpread} value={<NarrativeTooltip module="forward_price" lang={lang}>{fmtSpread(stats.mean)}</NarrativeTooltip>} sub={spreadUnit} />
+        <StatCard label={t.medianSpread} value={fmtSpread(stats.median)} sub={spreadUnit} />
+        <StatCard label={t.p90Spread} value={fmtSpread(stats.p90)} sub={spreadUnit} />
         <StatCard label={t.theoreticalRev} value={fmtRevenue(data.theoretical_revenue)} accent />
       </div>
 
@@ -168,8 +172,8 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
               <BarChart data={hourly}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                 <XAxis dataKey="hour" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} />
-                <Tooltip />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v * 100).toFixed(1)}`} />
+                <Tooltip formatter={(v) => [`${(v * 100).toFixed(2)} ${spreadUnit}`, t.spread]} />
                 <Bar dataKey="avg_spread" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
