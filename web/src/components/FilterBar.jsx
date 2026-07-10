@@ -7,7 +7,7 @@
  * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useFilters } from '../contexts/FilterContext';
 import { translations } from '../translations';
@@ -18,6 +18,7 @@ const DAY_TYPES = ['ALL', 'WEEKDAY', 'WEEKEND'];
 export default function FilterBar({ config, years, lang }) {
   const { filters, setFilter } = useFilters();
   const [showAdvanced, setShowAdvanced] = useState(true);
+  const isFirstRender = useRef(true);
   const t = translations[lang]?.filters || {};
 
   const btnBase = 'px-3.5 py-1.5 min-h-[36px] text-[13px] font-sans transition-colors rounded-full border';
@@ -83,11 +84,12 @@ export default function FilterBar({ config, years, lang }) {
       <AnimatePresence>
         {showAdvanced && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
+            initial={isFirstRender.current ? false : { height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
+            onAnimationComplete={() => { isFirstRender.current = false; }}
           >
             <div className="mt-4 border-t border-dashed border-[var(--color-border)] pt-4 flex flex-col gap-4 md:flex-row md:gap-8">
               {/* Quarter */}
