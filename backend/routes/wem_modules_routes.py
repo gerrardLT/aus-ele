@@ -371,11 +371,11 @@ def _compute_spread_stats(spreads: list[float]) -> dict:
 
     arr = np.array(spreads)
     return {
-        "mean": round(float(np.mean(arr)), 2),
-        "median": round(float(np.median(arr)), 2),
-        "p10": round(float(np.percentile(arr, 10)), 2),
-        "p90": round(float(np.percentile(arr, 90)), 2),
-        "std": round(float(np.std(arr)), 2),
+        "mean": round(float(np.mean(arr)), 4),
+        "median": round(float(np.median(arr)), 4),
+        "p10": round(float(np.percentile(arr, 10)), 4),
+        "p90": round(float(np.percentile(arr, 90)), 4),
+        "std": round(float(np.std(arr)), 4),
     }
 
 
@@ -392,7 +392,7 @@ def _compute_hourly_pattern(aligned_data: list[dict]) -> list[dict]:
         if spreads:
             pattern.append({
                 "hour": hour,
-                "avg_spread": round(sum(spreads) / len(spreads), 2),
+                "avg_spread": round(sum(spreads) / len(spreads), 4),
                 "count": len(spreads),
             })
         else:

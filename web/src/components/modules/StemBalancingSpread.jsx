@@ -129,6 +129,19 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
         : `${t.dataWindow}: ${dw.start} ~ ${dw.end} (${dw.days}d)`)
     : null;
 
+  // Format spread: use 2 decimal places to capture small but meaningful differences
+  const fmtSpread = (v) => {
+    const n = v || 0;
+    return `$${n.toFixed(2)}`;
+  };
+
+  // Format revenue: use $ not k for small values
+  const fmtRevenue = (v) => {
+    const n = v || 0;
+    if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}k`;
+    return `$${n.toFixed(0)}`;
+  };
+
   return (
     <div className="mt-3">
       <h3 className="text-xl font-serif font-bold mb-1">{t.title}</h3>
@@ -140,10 +153,10 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
 
       {/* Stats cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <StatCard label={t.meanSpread} value={<NarrativeTooltip module="forward_price" lang={lang}>{`$${(stats.mean || 0).toFixed(1)}`}</NarrativeTooltip>} sub="/MWh" />
-        <StatCard label={t.medianSpread} value={`$${(stats.median || 0).toFixed(1)}`} sub="/MWh" />
-        <StatCard label={t.p90Spread} value={`$${(stats.p90 || 0).toFixed(1)}`} sub="/MWh" />
-        <StatCard label={t.theoreticalRev} value={`$${((data.theoretical_revenue || 0) / 1000).toFixed(0)}k`} accent />
+        <StatCard label={t.meanSpread} value={<NarrativeTooltip module="forward_price" lang={lang}>{fmtSpread(stats.mean)}</NarrativeTooltip>} sub="/MWh" />
+        <StatCard label={t.medianSpread} value={fmtSpread(stats.median)} sub="/MWh" />
+        <StatCard label={t.p90Spread} value={fmtSpread(stats.p90)} sub="/MWh" />
+        <StatCard label={t.theoreticalRev} value={fmtRevenue(data.theoretical_revenue)} accent />
       </div>
 
       {/* Charts */}
