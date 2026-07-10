@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
@@ -71,6 +71,7 @@ class StemBalancingResponse(BaseModel):
     theoretical_revenue: float
     unconstrained_revenue: float
     constraint_impact_pct: float
+    data_window: Optional[dict] = None  # {start, end, days} — actual Balancing data coverage
 
 
 class FiveMinSettlementResponse(BaseModel):
@@ -269,6 +270,31 @@ def _fetch_balancing_prices(start_date: str, end_date: str) -> list[tuple[str, f
     except Exception as exc:
         logger.warning(f"Failed to fetch Balancing prices: {exc}")
         return []
+
+
+def _get_balancing_data_range() -> tuple[str, str] | None:
+    """Query the actual data range available in wem_ess_market_price.
+
+    Returns (min_date, max_date) as 'YYYY-MM-DD' strings, or None if empty.
+    """
+    db = get_db()
+    try:
+        with db.get_connection() as conn:
+            db.ensure_wem_ess_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT MIN(dispatch_interval), MAX(dispatch_interval)
+                FROM {db.WEM_ESS_MARKET_TABLE}
+                WHERE energy_price IS NOT NULL
+                """
+            )
+            row = cursor.fetchone()
+            if row and row[0] and row[1]:
+                return row[0][:10], row[1][:10]  # 'YYYY-MM-DD'
+    except Exception as exc:
+        logger.warning(f"Failed to query Balancing data range: {exc}")
+    return None
 
 
 def _align_stem_balancing_prices(
@@ -492,40 +518,67 @@ async def get_stem_balancing(
     stem_prices = _fetch_stem_prices(start_date, end_date)
     balancing_prices = _fetch_balancing_prices(start_date, end_date)
 
+    # --- Auto-detect Balancing data window ---
+    # Balancing table is a rolling window (latest N days). If the requested
+    # year has no Balancing data, fall back to the actual available range.
+    actual_start = start_date
+    actual_end = end_date
+    balancing_range = _get_balancing_data_range()
+
+    if not balancing_prices and balancing_range:
+        bal_start, bal_end = balancing_range
+        logger.info(
+            f"No Balancing data for {start_date}~{end_date}; "
+            f"falling back to actual range {bal_start}~{bal_end}"
+        )
+        actual_start, actual_end = bal_start, bal_end
+        balancing_prices = _fetch_balancing_prices(actual_start, actual_end)
+        # Also re-fetch STEM for the actual range so timestamps align
+        stem_prices = _fetch_stem_prices(actual_start, actual_end)
+
+    data_window = None
+    if balancing_range:
+        bw_start, bw_end = balancing_range
+        bw_days = (datetime.strptime(bw_end, "%Y-%m-%d") - datetime.strptime(bw_start, "%Y-%m-%d")).days + 1
+        data_window = {"start": bw_start, "end": bw_end, "days": bw_days}
+
     # Handle data unavailability: return zeros with structured response
     if not stem_prices and not balancing_prices:
         logger.info(
-            f"No STEM or Balancing data available for {start_date} to {end_date}"
+            f"No STEM or Balancing data available for {actual_start} to {actual_end}"
         )
         return StemBalancingResponse(
-            date_range={"start": start_date, "end": end_date},
+            date_range={"start": actual_start, "end": actual_end},
             spread_stats={"mean": 0.0, "median": 0.0, "p10": 0.0, "p90": 0.0, "std": 0.0},
             hourly_pattern=[{"hour": h, "avg_spread": 0.0, "count": 0} for h in range(24)],
             theoretical_revenue=0.0,
             unconstrained_revenue=0.0,
             constraint_impact_pct=0.0,
+            data_window=data_window,
         )
 
     if not stem_prices:
-        logger.info(f"No STEM price data available for {start_date} to {end_date}")
+        logger.info(f"No STEM price data available for {actual_start} to {actual_end}")
         return StemBalancingResponse(
-            date_range={"start": start_date, "end": end_date},
+            date_range={"start": actual_start, "end": actual_end},
             spread_stats={"mean": 0.0, "median": 0.0, "p10": 0.0, "p90": 0.0, "std": 0.0},
             hourly_pattern=[{"hour": h, "avg_spread": 0.0, "count": 0} for h in range(24)],
             theoretical_revenue=0.0,
             unconstrained_revenue=0.0,
             constraint_impact_pct=0.0,
+            data_window=data_window,
         )
 
     if not balancing_prices:
-        logger.info(f"No Balancing price data available for {start_date} to {end_date}")
+        logger.info(f"No Balancing price data available for {actual_start} to {actual_end}")
         return StemBalancingResponse(
-            date_range={"start": start_date, "end": end_date},
+            date_range={"start": actual_start, "end": actual_end},
             spread_stats={"mean": 0.0, "median": 0.0, "p10": 0.0, "p90": 0.0, "std": 0.0},
             hourly_pattern=[{"hour": h, "avg_spread": 0.0, "count": 0} for h in range(24)],
             theoretical_revenue=0.0,
             unconstrained_revenue=0.0,
             constraint_impact_pct=0.0,
+            data_window=data_window,
         )
 
     # Align STEM and Balancing prices at 30-minute intervals
@@ -533,15 +586,16 @@ async def get_stem_balancing(
 
     if not aligned_data:
         logger.info(
-            f"No overlapping STEM/Balancing data for {start_date} to {end_date}"
+            f"No overlapping STEM/Balancing data for {actual_start} to {actual_end}"
         )
         return StemBalancingResponse(
-            date_range={"start": start_date, "end": end_date},
+            date_range={"start": actual_start, "end": actual_end},
             spread_stats={"mean": 0.0, "median": 0.0, "p10": 0.0, "p90": 0.0, "std": 0.0},
             hourly_pattern=[{"hour": h, "avg_spread": 0.0, "count": 0} for h in range(24)],
             theoretical_revenue=0.0,
             unconstrained_revenue=0.0,
             constraint_impact_pct=0.0,
+            data_window=data_window,
         )
 
     # Compute spread statistics
@@ -571,12 +625,13 @@ async def get_stem_balancing(
         constraint_impact_pct = 0.0
 
     return StemBalancingResponse(
-        date_range={"start": start_date, "end": end_date},
+        date_range={"start": actual_start, "end": actual_end},
         spread_stats=spread_stats,
         hourly_pattern=hourly_pattern,
         theoretical_revenue=theoretical_revenue,
         unconstrained_revenue=unconstrained_revenue,
         constraint_impact_pct=constraint_impact_pct,
+        data_window=data_window,
     )
 
 

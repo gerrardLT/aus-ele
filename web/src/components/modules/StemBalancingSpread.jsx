@@ -21,6 +21,7 @@ const LABELS = {
   zh: {
     title: 'STEM/Balancing 价差分析',
     subtitle: 'WEM 短期能量市场价差套利机会评估',
+    dataWindow: '数据窗口',
     meanSpread: '均值价差',
     medianSpread: '中位数价差',
     p90Spread: 'P90 价差',
@@ -39,6 +40,7 @@ const LABELS = {
   en: {
     title: 'STEM/Balancing Spread',
     subtitle: 'WEM short-term energy market spread arbitrage assessment',
+    dataWindow: 'Data window',
     meanSpread: 'Mean Spread',
     medianSpread: 'Median Spread',
     p90Spread: 'P90 Spread',
@@ -116,11 +118,25 @@ export default function StemBalancingSpread({ config, lang = 'en' }) {
 
   const stats = data.spread_stats || {};
   const hourly = data.hourly_pattern || [];
+  const dw = data.data_window;
+  const dr = data.date_range || {};
+
+  // Build subtitle: show actual date range and data window
+  const rangeLabel = `${dr.start || ''} ~ ${dr.end || ''}`;
+  const windowLabel = dw
+    ? (lang === 'zh'
+        ? `${t.dataWindow}: ${dw.start} ~ ${dw.end} (${dw.days}${lang === 'zh' ? '天' : 'd'})`
+        : `${t.dataWindow}: ${dw.start} ~ ${dw.end} (${dw.days}d)`)
+    : null;
 
   return (
     <div className="mt-3">
       <h3 className="text-xl font-serif font-bold mb-1">{t.title}</h3>
-      <p className="text-xs text-[var(--color-muted)] font-sans mb-6">{t.subtitle}</p>
+      <p className="text-xs text-[var(--color-muted)] font-sans mb-1">{t.subtitle}</p>
+      <p className="text-[10px] text-[var(--color-muted)] font-mono mb-4">
+        {rangeLabel}
+        {windowLabel && <span className="ml-3 opacity-70">{windowLabel}</span>}
+      </p>
 
       {/* Stats cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
