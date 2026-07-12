@@ -4,10 +4,7 @@ import datetime
 from typing import Any
 
 from fastapi import HTTPException
-
-
-def _utc_now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+from deps import utc_now_iso as _utc_now_iso
 
 
 def _utc_day_start_iso() -> str:

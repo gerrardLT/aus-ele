@@ -9,6 +9,7 @@ async wrappers for use in route modules.
 from __future__ import annotations
 
 import os
+import datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -46,6 +47,17 @@ def _load_env_file() -> None:
 
 
 _load_env_file()
+
+
+# ---------------------------------------------------------------------------
+# Shared utility functions
+# ---------------------------------------------------------------------------
+
+
+def utc_now_iso() -> str:
+    """Return current UTC time in ISO 8601 format (e.g. '2026-07-11T12:00:00Z')."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 # ---------------------------------------------------------------------------
 # Singleton factory functions

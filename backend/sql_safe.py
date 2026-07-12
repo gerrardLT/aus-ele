@@ -47,15 +47,16 @@ _ALLOWED_PATTERNS: list[re.Pattern] = [
     re.compile(r"^grid_events$"),
     re.compile(r"^backtest_results$"),
     re.compile(r"^monthly_backtest$"),
-    # Fingrid tables
-    re.compile(r"^fingrid_\w+$"),
-    # WEM tables
-    re.compile(r"^wem_\w+$"),
-    # PG system tables (blocked for security)
-    re.compile(r"^information_schema$"),
-    re.compile(r"^pg_catalog$"),
-    # Predispach tables
-    re.compile(r"^predispatch_\w+$"),
+    # Fingrid tables (fixed names only)
+    re.compile(r"^fingrid_dataset_catalog$"),
+    re.compile(r"^fingrid_timeseries$"),
+    # WEM tables (fixed + year-based)
+    re.compile(r"^wem_ess_market_price$"),
+    re.compile(r"^wem_ess_constraint_summary$"),
+    re.compile(r"^wem_ess_capability$"),
+    re.compile(r"^wem_5min_price_\d{4}$"),
+    # Predispach tables (fixed names)
+    re.compile(r"^predispatch_region_solution$"),
 ]
 
 # Simple character validation: table names may only contain
@@ -80,6 +81,12 @@ def safe_table_name(name: str) -> str:
     """
     if not name or not isinstance(name, str):
         raise ValueError(f"Invalid table name: {name!r}")
+
+    # Length check: table names should never exceed 63 chars (PG identifier limit)
+    if len(name) > 63:
+        raise ValueError(
+            f"Table name exceeds 63 characters: {name!r}"
+        )
 
     # First check: only safe characters
     if not _SAFE_CHARS.match(name):

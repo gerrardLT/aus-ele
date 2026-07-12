@@ -492,8 +492,7 @@ class FinlandMarketModelPayload(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-def _utc_now_iso() -> str:
-    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+# _utc_now_iso is imported from deps (shared utility)
 
 BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parent
@@ -524,8 +523,18 @@ def _load_env_file(env_path: str | os.PathLike[str] | None = None):
 
 
 _load_env_file()
-db = DatabaseManager()
-response_cache = RedisResponseCache()
+# -- Singleton infrastructure (shared with deps.py via lru_cache) --
+from deps import (
+    get_db as _get_db,
+    get_cache as _get_cache,
+    get_lake as _get_lake,
+    get_job_registry as _get_job_registry,
+    get_job_orchestrator as _get_job_orchestrator,
+    utc_now_iso as _utc_now_iso,
+)
+
+db = _get_db()
+response_cache = _get_cache()
 
 SYNC_OWNER = f"{os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', 'host')}:{os.getpid()}"
 MARKET_SYNC_LOCK_NAME = "market_sync"
@@ -1942,24 +1951,21 @@ def _release_job_lock(lock_name: str):
 
 
 def _run_scraper(script_name: str, *args: str):
+    # Path traversal protection: reject names containing separators or parent refs
+    if "/" in script_name or "\\" in script_name or ".." in script_name:
+        raise ValueError(f"Invalid scraper script name: {script_name!r}")
     script_path = (SCRAPERS_DIR / script_name).resolve()
+    if not script_path.is_relative_to(SCRAPERS_DIR.resolve()):
+        raise ValueError(f"Script path escapes scrapers directory: {script_name!r}")
+    if not script_path.is_file() or not script_path.suffix == ".py":
+        raise FileNotFoundError(f"Scraper script not found: {script_name!r}")
     command = [sys.executable, str(script_path), *args]
     subprocess.run(command, check=True, cwd=str(REPO_ROOT))
 
 
-job_registry = JobRegistry()
-artifact_lake = LocalArtifactLake(str(LAKE_ROOT))
-job_orchestrator = JobOrchestrator(
-    db,
-    registry=job_registry,
-    lake=artifact_lake,
-    worker_id="api-worker-1",
-    source_rate_limits={
-        "aemo": 60,
-        "fingrid": 10,
-        "reporting": 1,
-    },
-)
+job_registry = _get_job_registry()
+artifact_lake = _get_lake()
+job_orchestrator = _get_job_orchestrator()
 
 
 def enqueue_job(*, job_type: str, payload: dict, queue_name: str, source_key: str, priority: int = 100, max_attempts: int = 3):
