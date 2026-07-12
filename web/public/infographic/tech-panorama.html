@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>澳洲电力市场分析平台 · 技术全景信息图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F8FAFC;color:#1E293B;-webkit-font-smoothing:antialiased}
+.diagram-root{width:1440px;margin:0 auto;overflow:hidden}
+/* === Sticky Navigation === */
+.sticky-nav{position:sticky;top:0;z-index:100;background:rgba(15,23,42,0.95);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.08);padding:0 60px;display:flex;align-items:center;height:48px;gap:8px}
+.nav-logo{font-size:13px;font-weight:700;color:#fff;margin-right:16px;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.nav-logo-dot{width:8px;height:8px;border-radius:50%;background:#3B82F6;animation:pulse-dot 2s infinite}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}
+.nav-link{padding:6px 14px;border-radius:6px;font-size:12px;font-weight:500;color:rgba(255,255,255,0.55);cursor:pointer;transition:all 0.2s;text-decoration:none;white-space:nowrap;border:1px solid transparent}
+.nav-link:hover{color:rgba(255,255,255,0.9);background:rgba(255,255,255,0.08)}
+.nav-link.active{color:#fff;background:rgba(59,130,246,0.25);border-color:rgba(59,130,246,0.4)}
+.nav-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+.nav-btn{padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);transition:all 0.2s}
+.nav-btn:hover{background:rgba(255,255,255,0.12);color:#fff}
+/* === Header === */
+.infographic-header{background:linear-gradient(135deg,#0F172A 0%,#1E3A5F 50%,#1D4ED8 100%);padding:56px 60px 48px;position:relative;overflow:hidden}
+.infographic-header::after{content:'';position:absolute;top:0;right:0;bottom:0;left:0;background:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='strict'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");pointer-events:none}
+.header-badge{display:inline-block;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:20px;padding:4px 16px;font-size:12px;color:rgba(255,255,255,0.7);letter-spacing:1px;text-transform:uppercase;margin-bottom:16px}
+.header-title{font-size:38px;font-weight:800;color:#fff;letter-spacing:-0.5px;margin-bottom:10px}
+.header-subtitle{font-size:16px;color:rgba(255,255,255,0.6);font-weight:400;max-width:700px;line-height:1.7}
+.header-meta{display:flex;gap:24px;margin-top:24px;flex-wrap:wrap}
+.header-meta-item{display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.5)}
+.header-meta-dot{width:8px;height:8px;border-radius:50%}
+/* === Sections === */
+.section-container{padding:44px 60px;position:relative;scroll-margin-top:48px}
+.section-header{display:flex;align-items:center;gap:16px;margin-bottom:28px;cursor:pointer;user-select:none}
+.section-number{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#fff;flex-shrink:0;transition:transform 0.2s}
+.section-header:hover .section-number{transform:scale(1.08)}
+.section-title{font-size:22px;font-weight:700;color:#0F172A;letter-spacing:-0.3px}
+.section-title-en{font-size:13px;color:#94A3B8;font-weight:500;margin-top:2px}
+.section-toggle{width:32px;height:32px;border-radius:8px;border:1px solid #E2E8F0;display:flex;align-items:center;justify-content:center;background:#fff;cursor:pointer;transition:all 0.2s}
+.section-toggle:hover{background:#F1F5F9;border-color:#CBD5E1}
+.expand-content{overflow:hidden;transition:max-height 0.45s cubic-bezier(0.4,0,0.2,1),opacity 0.3s ease}
+.expand-content.collapsed{max-height:0!important;opacity:0}
+.expand-content.expanded{max-height:12000px;opacity:1}
+.section-divider{height:1px;background:linear-gradient(90deg,transparent,#E2E8F0 20%,#E2E8F0 80%,transparent);margin:0 60px}
+/* === Formula & Algo === */
+.formula-block{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:14px 18px;margin:10px 0;font-size:14px;transition:border-color 0.2s}
+.formula-block:hover{border-color:#CBD5E1}
+.formula-label{font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}
+.algo-card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;margin-bottom:12px;overflow:hidden;transition:box-shadow 0.2s}
+.algo-card:hover{box-shadow:0 2px 12px rgba(0,0,0,0.04)}
+.algo-header{display:flex;align-items:center;gap:14px;padding:16px 24px;cursor:pointer;user-select:none}
+.algo-header:hover{background:#FAFBFC}
+.algo-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;flex-shrink:0}
+.algo-name{font-size:15px;font-weight:600;color:#0F172A}
+.algo-name-en{font-size:12px;color:#94A3B8;font-weight:400;margin-left:8px}
+.algo-body{padding:0 24px 20px;border-top:1px solid #F1F5F9}
+/* === Engine === */
+.engine-category{background:#fff;border:1px solid #E2E8F0;border-radius:12px;margin-bottom:12px;overflow:hidden;transition:box-shadow 0.2s}
+.engine-category:hover{box-shadow:0 2px 8px rgba(0,0,0,0.03)}
+.engine-cat-header{display:flex;align-items:center;gap:12px;padding:14px 20px;cursor:pointer;user-select:none;transition:background 0.15s}
+.engine-cat-header:hover{background:#F8FAFC}
+.engine-cat-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.engine-cat-title{font-size:14px;font-weight:600;color:#0F172A}
+.engine-cat-count{font-size:12px;color:#94A3B8;margin-left:auto}
+.engine-list{padding:0 20px 14px;display:flex;flex-wrap:wrap;gap:8px}
+.engine-file{display:flex;align-items:center;gap:6px;padding:4px 12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;font-size:12px;font-family:'SF Mono','Fira Code',monospace;color:#475569;transition:all 0.15s}
+.engine-file:hover{background:#EFF6FF;border-color:#93C5FD}
+.engine-file-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.katex{font-size:1em!important}
+.formula-block .katex{font-size:1.05em!important}
+/* === Footer === */
+.info-footer{padding:32px 60px;background:#0F172A;color:rgba(255,255,255,0.5);font-size:12px;display:flex;justify-content:space-between;align-items:center}
+.footer-links{display:flex;gap:20px}
+/* === Scroll progress === */
+.scroll-progress{position:fixed;top:48px;left:0;height:2px;background:linear-gradient(90deg,#1D4ED8,#7C3AED,#C2410C);z-index:99;transition:width 0.1s}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback}=React;
+
+/* ── Color Tokens ── */
+const NEM_BLUE='#1D4ED8',NEM_BLUE_LIGHT='#3B82F6',NEM_BLUE_BG='#EFF6FF';
+const WEM_ORANGE='#C2410C',WEM_ORANGE_LIGHT='#EA580C',WEM_ORANGE_BG='#FFF7ED';
+
+/* ── Primitives ── */
+const ChevronDown=({open})=>(
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    style={{transition:'transform 0.3s',transform:open?'rotate(180deg)':'rotate(0deg)'}}>
+    <polyline points="6 9 12 15 18 9"/>
+  </svg>
+);
+
+const K=({math,display=false})=>{
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(ref.current&&window.katex){
+      try{window.katex.render(math,ref.current,{displayMode:display,throwOnError:false})}
+      catch(e){ref.current.textContent=math}
+    }
+  },[math,display]);
+  return <span ref={ref}/>;
+};
+
+const FormulaBlock=({label,children})=>(
+  <div className="formula-block">
+    <div className="formula-label">{label}</div>
+    <div>{children}</div>
+  </div>
+);
+
+/* ── Section Wrapper ── */
+const Section=({num,title,titleEn,color,children,defaultOpen=true,id})=>{
+  const[open,setOpen]=useState(defaultOpen);
+  return(
+    <div className="section-container" id={id}>
+      <div className="section-header" onClick={()=>setOpen(!open)}>
+        <div className="section-number" style={{background:color}}>{num}</div>
+        <div>
+          <div className="section-title">{title}</div>
+          <div className="section-title-en">{titleEn}</div>
+        </div>
+        <div className="section-toggle" style={{marginLeft:'auto'}}>
+          <ChevronDown open={open}/>
+        </div>
+      </div>
+      <div className={'expand-content '+(open?'expanded':'collapsed')}>
+        {children}
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════
+   Section 1: 业务逻辑链 Truth → Forecast → Decision
+   ══════════════════════════════════════════════════ */
+const Section1=()=>{
+  const[expanded,setExpanded]=useState({current:false,outlook:false,bess:false});
+  const toggle=(k)=>setExpanded(p=>({...p,[k]:!p[k]}));
+
+  const LayerCard=({title,color,bgColor,items,expandKey,details})=>(
+    <div style={{flex:1}}>
+      <div style={{background:bgColor,border:'2px solid '+color,borderRadius:12,padding:'18px 20px',cursor:'pointer'}} onClick={()=>toggle(expandKey)}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+          <div style={{width:10,height:10,borderRadius:'50%',background:color}}/>
+          <span style={{fontSize:15,fontWeight:700,color}}>{title}</span>
+          <span style={{marginLeft:'auto'}}><ChevronDown open={expanded[expandKey]}/></span>
+        </div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+          {items.map((item,i)=><span key={i} style={{padding:'3px 10px',background:'#fff',border:'1px solid '+color+'33',borderRadius:6,fontSize:12,color:'#334155',fontWeight:500}}>{item}</span>)}
+        </div>
+      </div>
+      <div className={'expand-content '+(expanded[expandKey]?'expanded':'collapsed')}>
+        <div style={{padding:'12px 4px 0',fontSize:13,color:'#475569',lineHeight:1.7}}>{details}</div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div>
+      {/* SVG Flow Arrow */}
+      <svg width="1320" height="80" viewBox="0 0 1320 80" style={{display:'block',margin:'0 auto 24px'}}>
+        <defs><marker id="ab1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill={NEM_BLUE}/></marker></defs>
+        <rect x="20" y="10" width="360" height="60" rx="10" fill="#EFF6FF" stroke={NEM_BLUE} strokeWidth="2"/>
+        <text x="200" y="38" textAnchor="middle" fill={NEM_BLUE} fontSize="14" fontWeight="700">Truth — 当前市场真相</text>
+        <text x="200" y="56" textAnchor="middle" fill="#64748B" fontSize="11">Current Market State</text>
+        <line x1="390" y1="40" x2="470" y2="40" stroke={NEM_BLUE} strokeWidth="2" markerEnd="url(#ab1)"/>
+        <text x="430" y="32" textAnchor="middle" fill="#94A3B8" fontSize="10">分析</text>
+        <rect x="480" y="10" width="360" height="60" rx="10" fill="#EFF6FF" stroke={NEM_BLUE_LIGHT} strokeWidth="2"/>
+        <text x="660" y="38" textAnchor="middle" fill={NEM_BLUE_LIGHT} fontSize="14" fontWeight="700">Forecast — 前瞻判断</text>
+        <text x="660" y="56" textAnchor="middle" fill="#64748B" fontSize="11">24h Outlook & Prediction</text>
+        <line x1="850" y1="40" x2="930" y2="40" stroke={WEM_ORANGE} strokeWidth="2" markerEnd="url(#ab1)"/>
+        <text x="890" y="32" textAnchor="middle" fill="#94A3B8" fontSize="10">优化</text>
+        <rect x="940" y="10" width="360" height="60" rx="10" fill="#FFF7ED" stroke={WEM_ORANGE} strokeWidth="2"/>
+        <text x="1120" y="38" textAnchor="middle" fill={WEM_ORANGE} fontSize="14" fontWeight="700">Decision — 储能决策</text>
+        <text x="1120" y="56" textAnchor="middle" fill="#64748B" fontSize="11">BESS Investment Decision</text>
+      </svg>
+      {/* Three Layer Cards */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:20}}>
+        <LayerCard title="📊 当前市场真相层" color={NEM_BLUE} bgColor={NEM_BLUE_BG} expandKey="current"
+          items={['PriceChartModule','RegimeCompactPanel','SummaryStats','DataQualityBadge']}
+          details={<div>
+            <p style={{marginBottom:8}}><strong>核心职责：</strong>实时呈现 NEM/WEM 市场价格、供需状态和 Regime 判定结果。</p>
+            <p style={{marginBottom:4}}>• <strong>PriceChartModule</strong> — 30天价格主图，含 Spikes 标注、区域对比、FCAS 叠加</p>
+            <p style={{marginBottom:4}}>• <strong>RegimeCompactPanel</strong> — 市场状态机（Bull/Bear/Volatile/Sideways），基于滚动窗口波动率和趋势判定</p>
+            <p style={{marginBottom:4}}>• <strong>SummaryStats</strong> — 关键统计量：均价、峰谷差、波动率、价差套利空间</p>
+            <p>• <strong>DataQualityBadge</strong> — 数据完整性评分，缺失/延迟/异常标注</p>
+          </div>}/>
+        <LayerCard title="🔮 前瞻判断层" color={NEM_BLUE_LIGHT} bgColor="#F0F7FF" expandKey="outlook"
+          items={['GridForecast','PeakAnalysis','ChargingWindow']}
+          details={<div>
+            <p style={{marginBottom:8}}><strong>核心职责：</strong>基于历史模式和气象数据，预测未来 24-72 小时电网状态。</p>
+            <p style={{marginBottom:4}}>• <strong>GridForecast</strong> — 主预测引擎，输出需求/价格/可再生能源占比的逐时段预测</p>
+            <p style={{marginBottom:4}}>• <strong>PeakAnalysis</strong> — 峰值识别与分类（需求峰值 vs 价格峰值），标注概率和持续时间</p>
+            <p>• <strong>ChargingWindow</strong> — 最优充电窗口识别，基于价格谷值和 SoC 约束计算</p>
+          </div>}/>
+        <LayerCard title="🔋 储能决策层" color={WEM_ORANGE} bgColor={WEM_ORANGE_BG} expandKey="bess"
+          items={['P3BessDecisionPanel','FcasAnalysis','RevenueStacking','InvestmentAnalysis']}
+          details={<div>
+            <p style={{marginBottom:8}}><strong>核心职责：</strong>综合市场信号和物理约束，输出充放电策略和投资建议。</p>
+            <p style={{marginBottom:4}}>• <strong>P3BessDecisionPanel</strong> — Phase 3 决策面板，整合 MILP 调度结果和衰减成本</p>
+            <p style={{marginBottom:4}}>• <strong>FcasAnalysis</strong> — FCAS 叠加收益分析，含机会成本计算和触发概率</p>
+            <p style={{marginBottom:4}}>• <strong>RevenueStacking</strong> — 收入叠加模型：套利 + FCAS + 容量信用 → 总收入栈</p>
+            <p>• <strong>InvestmentAnalysis</strong> — 资本层：NPV/IRR/DSCR 计算，敏感性分析，情景对比</p>
+          </div>}/>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════
+   Section 2: 决策漏斗 NEM 7 + WEM 3
+   ══════════════════════════════════════════════════ */
+const Section2=()=>{
+  const[openStep,setOpenStep]=useState(null);
+  const toggle=(k)=>setOpenStep(p=>p===k?null:k);
+
+  const nemStages=[
+    {num:1,title:'市场筛选',en:'Opportunity Identification',color:'#1D4ED8',modules:['PriceChartModule','SummaryStatsModule','RegionalRanking'],desc:'扫描 5 个 NEM 区域（NSW1/QLD1/VIC1/SA1/TAS1），识别价差套利机会。基于历史价格分布和波动率排名，筛选出 Top-3 目标区域。'},
+    {num:2,title:'收入深潜',en:'Market Opportunity',color:'#2563EB',modules:['SpikeProfitAnalysis'],desc:'对筛选出的区域进行价格尖峰分析，量化极端价格事件的利润贡献。计算 Spike 频率、幅度、持续时间和可捕获率。'},
+    {num:3,title:'饱和与竞争',en:'Saturation & Competition',color:'#3B82F6',modules:['SaturationTracker'],desc:'评估目标区域的市场饱和度：已装机 BESS 容量、在建项目、grid connection 排队情况。判断市场窗口是否仍然开放。'},
+    {num:4,title:'投资前景情景',en:'Investment Prospect Scenarios',color:'#60A5FA',modules:['CannibalizationSimulator','FcasCollapseForecaster','RegionalTimingScorer','MerchantRiskQuantifier','ForwardSpreadCurve'],desc:'多维度情景分析：蚕食效应模拟、FCAS 崩塌预测、区域时机评分、商户风险量化、远期价差曲线。综合输出投资前景评分。'},
+    {num:5,title:'联合优化回测',en:'Co-Optimized Backtest',color:'#7C3AED',modules:['CoOptimizedBacktest'],desc:'运行联合优化回测引擎，同时优化套利和 FCAS 收入，考虑衰减约束和网络费用。输出历史表现基准线。'},
+    {num:6,title:'财务建模',en:'Revenue Estimation',color:'#9333EA',modules:['RevenueStratificationChart','CrossValidationTable','EventAnnotationOverlay','FuelSensitivityTable','NetworkImpactDisplay'],desc:'构建完整财务模型：收入分层、交叉验证、事件标注、燃料敏感性、网络影响。输出 NPV/IRR/DSCR 等核心指标。'},
+    {num:7,title:'投资决策',en:'Investment Decision',color:'#C2410C',modules:['综合结论输出'],desc:'汇总所有分析结果，输出最终投资建议：Go/No-Go 决策、最优容量配置、预期回报区间、风险边界。'}
+  ];
+  const wemStages=[
+    {num:'W1',title:'WEM 市场扫描',en:'WEM Market Screening',color:'#C2410C',modules:['PriceChartModule (WEM)','SummaryStatsModule','StemBalancingSpread'],desc:'WEM 单区域市场扫描，30分钟结算粒度。STEM 价差分析和平衡机制评估。'},
+    {num:'W2',title:'ESS 与容量信用',en:'ESS & Capacity Credits',color:'#EA580C',modules:['CapacityCreditsAnalysis','FiveMinSettlementImpact'],desc:'评估 WEM ESS 机制下的容量信用收入，以及向 5 分钟结算过渡的影响。'},
+    {num:'W3',title:'WEM 投资决策',en:'WEM Investment Decision',color:'#DC2626',modules:['综合结论输出'],desc:'WEM 特有的投资评估流程，合并了 Stage 4-6 的简化版本。'}
+  ];
+
+  const FunnelStep=({stage})=>(
+    <div style={{marginBottom:8}}>
+      <div onClick={()=>toggle(stage.num)} style={{display:'flex',alignItems:'center',gap:14,padding:'12px 18px',background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,cursor:'pointer',borderLeft:'4px solid '+stage.color,transition:'box-shadow 0.2s'}}>
+        <div style={{width:32,height:32,borderRadius:8,background:stage.color,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13,fontWeight:700,flexShrink:0}}>{stage.num}</div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:14,fontWeight:600,color:'#0F172A'}}>{stage.title}</div>
+          <div style={{fontSize:11,color:'#94A3B8'}}>{stage.en}</div>
+        </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {stage.modules.map((m,i)=><span key={i} style={{padding:'2px 8px',background:stage.color+'11',border:'1px solid '+stage.color+'33',borderRadius:4,fontSize:11,color:stage.color,fontWeight:500}}>{m}</span>)}
+        </div>
+        <ChevronDown open={openStep===stage.num}/>
+      </div>
+      <div className={'expand-content '+(openStep===stage.num?'expanded':'collapsed')}>
+        <div style={{padding:'10px 18px 10px 64px',fontSize:13,color:'#475569',lineHeight:1.7}}>{stage.desc}</div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div>
+      <svg width="1320" height="60" viewBox="0 0 1320 60" style={{display:'block',margin:'0 auto 20px'}}>
+        <defs><marker id="fa" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill={NEM_BLUE}/></marker></defs>
+        <path d="M 60 5 L 1260 5 L 1160 55 L 160 55 Z" fill="none" stroke={NEM_BLUE} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.3"/>
+        {[0,1,2,3,4,5,6].map(i=>{
+          const x=100+i*165;
+          return(<g key={i}>
+            <circle cx={x} cy="30" r="14" fill={['#1D4ED8','#2563EB','#3B82F6','#60A5FA','#7C3AED','#9333EA','#C2410C'][i]}/>
+            <text x={x} y="34" textAnchor="middle" fill="#fff" fontSize="11" fontWeight="700">{i+1}</text>
+            {i<6&&<line x1={x+18} y1="30" x2={x+147} y2="30" stroke={NEM_BLUE} strokeWidth="1.5" markerEnd="url(#fa)" opacity="0.5"/>}
+          </g>);
+        })}
+      </svg>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 380px',gap:24}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:600,color:NEM_BLUE,marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
+            <span style={{width:20,height:3,background:NEM_BLUE,borderRadius:2}}/>NEM 7 阶段决策漏斗
+          </div>
+          {nemStages.map(s=><FunnelStep key={s.num} stage={s}/>)}
+        </div>
+        <div>
+          <div style={{fontSize:13,fontWeight:600,color:WEM_ORANGE,marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
+            <span style={{width:20,height:3,background:WEM_ORANGE,borderRadius:2}}/>WEM 3 阶段（简化）
+          </div>
+          {wemStages.map(s=><FunnelStep key={s.num} stage={s}/>)}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+/* ══════════════════════════════════════════════════
+   Section 3: 后端 27 引擎矩阵
+   ══════════════════════════════════════════════════ */
+const Section3=()=>{
+  const[openCat,setOpenCat]=useState(0);
+  const categories=[
+    {icon:'🔋',title:'电池物理模型',count:2,color:'#059669',files:['battery_model.py','degradation_model.py']},
+    {icon:'⚙️',title:'回测与调度优化',count:6,color:'#1D4ED8',files:['dispatch_optimizer.py','bess_backtest_v1.py','bess_backtest_v2.py','backtest_expansion.py','co_optimization_engine.py','p3_dispatch_optimizer.py']},
+    {icon:'📊',title:'价格与收入分析',count:3,color:'#2563EB',files:['price_analysis_engine.py','revenue_analysis_engine.py','revenue_model.py']},
+    {icon:'💰',title:'财务建模',count:4,color:'#7C3AED',files:['financial_model.py','cost_structure_engine.py','tax_model.py','forward_price_engine.py']},
+    {icon:'📈',title:'投资前景分析',count:4,color:'#9333EA',files:['cannibalization_engine.py','fcas_collapse_engine.py','regional_timing_engine.py','merchant_risk_engine.py']},
+    {icon:'📝',title:'叙事与归因',count:4,color:'#C2410C',files:['narrative_engine.py','risk_stratification_engine.py','event_annotation_service.py','cross_validation_service.py']},
+    {icon:'🤖',title:'ML 校准',count:1,color:'#0891B2',files:['ml_calibration_engine.py']},
+    {icon:'🔧',title:'支撑模块',count:2,color:'#64748B',files:['market_adapter.py','exceptions.py']}
+  ];
+
+  return(
+    <div>
+      <svg width="1320" height="100" viewBox="0 0 1320 100" style={{display:'block',margin:'0 auto 24px'}}>
+        <defs><marker id="ea" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0, 6 2.5, 0 5" fill="#94A3B8"/></marker></defs>
+        <rect x="510" y="15" width="300" height="70" rx="12" fill="#EFF6FF" stroke={NEM_BLUE} strokeWidth="2"/>
+        <text x="660" y="42" textAnchor="middle" fill={NEM_BLUE} fontSize="14" fontWeight="700">Backend Engine Layer</text>
+        <text x="660" y="62" textAnchor="middle" fill="#64748B" fontSize="11">27 个计算引擎 · FastAPI 路由层驱动</text>
+        {['SQLite DB','Redis Cache','AEMO API'].map((t,i)=>(
+          <g key={t}>
+            <rect x={40+i*150} y="30" width="120" height="40" rx="8" fill="#F1F5F9" stroke="#CBD5E1" strokeWidth="1"/>
+            <text x={100+i*150} y="55" textAnchor="middle" fill="#475569" fontSize="11" fontWeight="500">{t}</text>
+            <line x1={160+i*150} y1="50" x2="505" y2="50" stroke="#94A3B8" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#ea)"/>
+          </g>
+        ))}
+        {['Routes API','WebSocket','Frontend'].map((t,i)=>(
+          <g key={t}>
+            <rect x={860+i*150} y="30" width="120" height="40" rx="8" fill="#F1F5F9" stroke="#CBD5E1" strokeWidth="1"/>
+            <text x={920+i*150} y="55" textAnchor="middle" fill="#475569" fontSize="11" fontWeight="500">{t}</text>
+            <line x1="815" y1="50" x2={855+i*150} y2="50" stroke="#94A3B8" strokeWidth="1" strokeDasharray="3 2" markerEnd="url(#ea)"/>
+          </g>
+        ))}
+      </svg>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        {categories.map((cat,idx)=>(
+          <div key={idx} className="engine-category">
+            <div className="engine-cat-header" onClick={()=>setOpenCat(openCat===idx?-1:idx)}>
+              <div className="engine-cat-icon" style={{background:cat.color+'15',color:cat.color}}>{cat.icon}</div>
+              <div className="engine-cat-title">{cat.title}</div>
+              <div className="engine-cat-count">{cat.count} 个模块</div>
+              <ChevronDown open={openCat===idx}/>
+            </div>
+            <div className={'expand-content '+(openCat===idx?'expanded':'collapsed')}>
+              <div className="engine-list">
+                {cat.files.map((f,i)=>(
+                  <div key={i} className="engine-file">
+                    <div className="engine-file-dot" style={{background:cat.color}}/>{f}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════
+   Section 4: 8 大核心算法（含 KaTeX 公式）
+   ══════════════════════════════════════════════════ */
+const Section4=()=>{
+  const[openAlgo,setOpenAlgo]=useState(0);
+  const algos=[
+    {name:'MILP 调度优化',en:'Mixed-Integer Linear Programming Dispatch',color:'#1D4ED8',
+      formulas:[
+        {label:'物理约束 — 充放电互斥',math:'0 \\le P_{charge}(t) \\le P_{max} \\cdot I_{charge}(t)'},
+        {label:'SoC 状态转移方程',math:'SoC(t) = SoC(t{-}1) + \\left(\\frac{P_{charge} \\cdot \\eta_c - P_{discharge}}{\\eta_d}\\right) \\cdot \\frac{\\Delta t}{60}'},
+        {label:'MPC 代理损失模型',math:'Revenue_{actual} = Revenue_{MILP} \\times (1 - \\beta_{loss}),\\quad \\beta_{loss} = 0.15'}
+      ],
+      desc:'混合整数线性规划（MILP）求解最优充放电调度。考虑充放电互斥约束、SoC 边界、效率损失和网络费用。采用模型预测控制（MPC）框架，每 5 分钟滚动优化。'},
+    {name:'非线性衰减模型',en:'DoD Power-Law Degradation',color:'#059669',
+      formulas:[
+        {label:'等效折耗计算（DoD 幂律）',math:'\\Delta E_i = (DoD_i)^{\\alpha},\\quad \\alpha = 1.2'},
+        {label:'折损边际成本',math:'MC_{deg} = \\frac{Capex}{Capacity \\cdot C_{rated} \\cdot \\eta_{rte}} \\times \\alpha \\cdot (\\overline{DoD})^{\\alpha - 1}'},
+        {label:'阻断逻辑 — 放电门槛',math:'(\\pi_{discharge} - \\pi_{charge}) > MC_{deg} + OPEX_{var}'}
+      ],
+      desc:'基于 DoD（放电深度）幂律模型量化电池衰减。指数 α=1.2 反映深度放电的加速折损特性。边际衰减成本作为放电决策的门槛价格。'},
+    {name:'FCAS 机会成本',en:'FCAS Opportunity Cost Model',color:'#2563EB',
+      formulas:[
+        {label:'容量约束',math:'P_{charge}(t) + FCAS_{lower}(t) \\le P_{max}'},
+        {label:'触发期望折损',math:'E[\\Delta E_{loss}] = FCAS_{raise} \\cdot \\Delta t \\cdot P(act),\\quad P(act) = 0.15'},
+        {label:'净收益最大化',math:'Revenue = \\sum_t \\left(FCAS_t \\cdot \\pi_{fcas,t} - E[\\Delta E_{loss}] \\cdot (\\pi_{spot,t} + MC_{deg})\\right)'}
+      ],
+      desc:'FCAS（频率控制辅助服务）与能量市场联合优化。提供 FCAS 容量意味着预留充放电能力，产生机会成本。触发概率 P(act)=15% 基于历史 FCAS 激活频率。'},
+    {name:'DSCR 融资模型',en:'Debt Service Coverage Ratio',color:'#7C3AED',
+      formulas:[
+        {label:'可偿债现金流',math:'CFADS(t) = EBITDA(t) - Capex_{augment}(t) - Tax(t)'},
+        {label:'最大偿债额',math:'MDS(t) = \\frac{CFADS(t)}{Target\\_DSCR}'},
+        {label:'债务容量',math:'Debt\\_Capacity = \\sum_t \\frac{MDS(t)}{(1 + r_d)^t}'},
+        {label:'Levered IRR 方程',math:'\\sum_t \\frac{LCF(t)}{(1 + r_e)^t} - Equity = 0'}
+      ],
+      desc:'项目融资模型，基于 DSCR 约束计算最优债务结构。Target DSCR 通常设为 1.3x-1.5x。通过 Levered IRR 方程反推股权收益率。'},
+    {name:'容量蚕食模型',en:'Cannibalization Power-Law',color:'#9333EA',
+      formulas:[
+        {label:'蚕食因子（幂律）',math:'C_{annib} = 1 - \\gamma \\cdot \\left(\\frac{Q_{BESS}}{Q_{market}}\\right)^{\\delta},\\quad \\delta \\approx 0.7'},
+        {label:'有效价格调整',math:'\\pi_{eff}(t) = \\pi_{spot}(t) \\cdot C_{annib}'}
+      ],
+      desc:'随着 BESS 装机量增加，套利空间被压缩。幂律模型描述市场饱和度对有效价格的非线性影响。γ 为市场敏感系数，δ 为蚕食弹性指数。'},
+    {name:'FCAS 崩塌预测',en:'FCAS Collapse Forecaster',color:'#DC2626',
+      formulas:[
+        {label:'崩塌概率（Logistic）',math:'P(collapse) = \\frac{1}{1 + e^{-(\\beta_0 + \\beta_1 \\cdot X_{penetration} + \\beta_2 \\cdot X_{volatility})}}'},
+        {label:'收入风险调整',math:'E[Rev_{fcas}] = Rev_{fcas}^{base} \\cdot (1 - P(collapse) \\cdot L_{severity})'}
+      ],
+      desc:'预测 FCAS 市场价格崩塌的概率和幅度。随着可再生能源渗透率提高和 BESS 容量增加，FCAS 价格存在结构性下行风险。'},
+    {name:'前瞻价格情景',en:'Forward Price Scenarios (20yr)',color:'#0891B2',
+      formulas:[
+        {label:'三情景价格路径',math:'\\pi(t) = \\begin{cases} \\pi_{Central}(t) & \\text{基准} \\\\ \\pi_C \\cdot (1+\\sigma_H)^t & \\text{乐观} \\\\ \\pi_C \\cdot (1-\\sigma_L)^t & \\text{悲观} \\end{cases}'},
+        {label:'情景概率加权 NPV',math:'NPV_{weighted} = 0.5 \\cdot NPV_C + 0.25 \\cdot NPV_H + 0.25 \\cdot NPV_L'}
+      ],
+      desc:'构建 20 年远期价格情景（Central/High/Low），基于能源政策路径、燃料价格假设和可再生能源装机预测。概率加权 NPV 用于投资决策。'},
+    {name:'商户风险量化',en:'Merchant Risk Monte Carlo',color:'#C2410C',
+      formulas:[
+        {label:'蒙特卡洛模拟',math:'IRR_i = f(\\pi_i, CF_i, Capex_i),\\quad i = 1, \\ldots, N_{sims}'},
+        {label:'分位数输出',math:'P10 = \\text{Percentile}(IRR, 0.10),\\; P50 = \\text{Median},\\; P90 = \\text{Percentile}(IRR, 0.90)'},
+        {label:'风险边界',math:'Risk\\_Premium = \\frac{P90 - P10}{P50}'}
+      ],
+      desc:'蒙特卡洛模拟商户风险，考虑价格波动、容量因子偏差、运维成本不确定性。输出 P10/P50/P90 分位数，为投资决策提供风险边界。'}
+  ];
+
+  return(
+    <div>
+      {algos.map((algo,idx)=>(
+        <div key={idx} className="algo-card" style={{borderLeft:'4px solid '+algo.color}}>
+          <div className="algo-header" onClick={()=>setOpenAlgo(openAlgo===idx?-1:idx)}>
+            <div className="algo-num" style={{background:algo.color}}>{idx+1}</div>
+            <div style={{flex:1}}>
+              <span className="algo-name">{algo.name}</span>
+              <span className="algo-name-en">{algo.en}</span>
+            </div>
+            <ChevronDown open={openAlgo===idx}/>
+          </div>
+          <div className={'expand-content '+(openAlgo===idx?'expanded':'collapsed')}>
+            <div className="algo-body">
+              <p style={{fontSize:13,color:'#475569',lineHeight:1.7,margin:'12px 0'}}>{algo.desc}</p>
+              {algo.formulas.map((f,fi)=>(
+                <FormulaBlock key={fi} label={f.label}><K math={f.math} display={true}/></FormulaBlock>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+
+/* ══════════════════════════════════════════════════
+   Section 5: 数据流架构
+   ══════════════════════════════════════════════════ */
+const Section5=()=>{
+  const[expanded,setExpanded]=useState(false);
+  const sources=[
+    {name:'AEMO NEM',color:'#1D4ED8',bg:'#EFF6FF',details:'5分钟结算 · 10种FCAS · 5区域（NSW1/QLD1/VIC1/SA1/TAS1）',icon:'⚡'},
+    {name:'AEMO WEM',color:'#C2410C',bg:'#FFF7ED',details:'30分钟结算 · 5种ESS · 1区域（WEM）',icon:'🔥'},
+    {name:'Fingrid',color:'#059669',bg:'#ECFDF5',details:'芬兰市场 · 可变结算 · 储备价格',icon:'❄️'}
+  ];
+  const pipeline=[
+    {name:'Scrapers',desc:'数据采集',color:'#475569',files:'aemo_nem_scraper.py / aemo_wem_scraper.py / fingrid_sync.py'},
+    {name:'SQLite',desc:'持久存储',color:'#0891B2',files:'aemo_data.db · 时序数据 + 元数据'},
+    {name:'Engines',desc:'计算引擎',color:'#1D4ED8',files:'27 个引擎 · 物理模型 + 优化 + 财务'},
+    {name:'Routes',desc:'API 路由',color:'#7C3AED',files:'FastAPI · REST + WebSocket · 21 个路由模块'},
+    {name:'Redis',desc:'响应缓存',color:'#DC2626',files:'TTL 缓存 · 热数据加速 · pub/sub 事件总线'},
+    {name:'Frontend',desc:'可视化',color:'#C2410C',files:'React SPA · 实时图表 · 交互式分析'}
+  ];
+
+  return(
+    <div>
+      <svg width="1320" height="200" viewBox="0 0 1320 200" style={{display:'block',margin:'0 auto 24px'}}>
+        <defs>
+          <marker id="da" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#94A3B8"/></marker>
+          <marker id="db" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#1D4ED8"/></marker>
+        </defs>
+        {[{x:30,label:'AEMO NEM',sub:'5min · FCAS · 5区',color:'#1D4ED8'},
+          {x:30,label:'AEMO WEM',sub:'30min · ESS · WEM',color:'#C2410C',y:70},
+          {x:30,label:'Fingrid',sub:'芬兰 · 可变',color:'#059669',y:140}].map((s,i)=>(
+          <g key={i}>
+            <rect x={s.x} y={s.y||0} width="160" height="50" rx="10" fill={s.color+'12'} stroke={s.color} strokeWidth="1.5"/>
+            <text x={s.x+80} y={(s.y||0)+22} textAnchor="middle" fill={s.color} fontSize="13" fontWeight="600">{s.label}</text>
+            <text x={s.x+80} y={(s.y||0)+38} textAnchor="middle" fill="#64748B" fontSize="10">{s.sub}</text>
+            <line x1="195" y1={(s.y||0)+25} x2="270" y2="85" stroke={s.color} strokeWidth="1.5" strokeDasharray="4 3" markerEnd="url(#da)"/>
+          </g>
+        ))}
+        <rect x="280" y="60" width="130" height="50" rx="10" fill="#F1F5F9" stroke="#475569" strokeWidth="1.5"/>
+        <text x="345" y="82" textAnchor="middle" fill="#334155" fontSize="13" fontWeight="600">Scrapers</text>
+        <text x="345" y="98" textAnchor="middle" fill="#64748B" fontSize="10">数据采集层</text>
+        <line x1="415" y1="85" x2="470" y2="85" stroke="#94A3B8" strokeWidth="2" markerEnd="url(#da)"/>
+        <rect x="480" y="60" width="130" height="50" rx="10" fill="#ECFEFF" stroke="#0891B2" strokeWidth="1.5"/>
+        <text x="545" y="82" textAnchor="middle" fill="#0891B2" fontSize="13" fontWeight="600">SQLite</text>
+        <text x="545" y="98" textAnchor="middle" fill="#64748B" fontSize="10">持久存储</text>
+        <line x1="615" y1="85" x2="670" y2="85" stroke="#94A3B8" strokeWidth="2" markerEnd="url(#db)"/>
+        <rect x="680" y="50" width="160" height="70" rx="12" fill="#EFF6FF" stroke="#1D4ED8" strokeWidth="2"/>
+        <text x="760" y="78" textAnchor="middle" fill="#1D4ED8" fontSize="14" fontWeight="700">27 Engines</text>
+        <text x="760" y="96" textAnchor="middle" fill="#64748B" fontSize="10">计算 · 优化 · 建模</text>
+        <line x1="845" y1="85" x2="900" y2="85" stroke="#94A3B8" strokeWidth="2" markerEnd="url(#da)"/>
+        <rect x="910" y="60" width="120" height="50" rx="10" fill="#F5F3FF" stroke="#7C3AED" strokeWidth="1.5"/>
+        <text x="970" y="82" textAnchor="middle" fill="#7C3AED" fontSize="13" fontWeight="600">Routes</text>
+        <text x="970" y="98" textAnchor="middle" fill="#64748B" fontSize="10">FastAPI · 21 路由</text>
+        <line x1="1035" y1="85" x2="1080" y2="85" stroke="#94A3B8" strokeWidth="2" markerEnd="url(#da)"/>
+        <rect x="1090" y="60" width="100" height="50" rx="10" fill="#FEF2F2" stroke="#DC2626" strokeWidth="1.5"/>
+        <text x="1140" y="82" textAnchor="middle" fill="#DC2626" fontSize="13" fontWeight="600">Redis</text>
+        <text x="1140" y="98" textAnchor="middle" fill="#64748B" fontSize="10">TTL 缓存</text>
+        <line x1="1195" y1="85" x2="1230" y2="85" stroke="#94A3B8" strokeWidth="2" markerEnd="url(#da)"/>
+        <rect x="1240" y="60" width="70" height="50" rx="10" fill="#FFF7ED" stroke="#C2410C" strokeWidth="1.5"/>
+        <text x="1275" y="82" textAnchor="middle" fill="#C2410C" fontSize="11" fontWeight="600">Web UI</text>
+        <text x="1275" y="96" textAnchor="middle" fill="#64748B" fontSize="9">React</text>
+        <text x="660" y="155" textAnchor="middle" fill="#94A3B8" fontSize="11">数据流方向：外部数据源 → 采集 → 存储 → 计算 → 路由 → 缓存 → 前端呈现</text>
+        <text x="660" y="175" textAnchor="middle" fill="#94A3B8" fontSize="10">WebSocket 实时推送 · Redis pub/sub 事件总线 · 响应 TTL 分层缓存策略</text>
+      </svg>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16,marginBottom:16}}>
+        {sources.map((s,i)=>(
+          <div key={i} style={{background:s.bg,border:'1px solid '+s.color+'33',borderRadius:10,padding:'14px 18px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <span style={{fontSize:18}}>{s.icon}</span>
+              <span style={{fontSize:14,fontWeight:600,color:s.color}}>{s.name}</span>
+            </div>
+            <div style={{fontSize:12,color:'#475569',lineHeight:1.6}}>{s.details}</div>
+          </div>
+        ))}
+      </div>
+
+      <div onClick={()=>setExpanded(!expanded)} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',marginBottom:12,padding:'8px 0'}}>
+        <span style={{fontSize:13,fontWeight:600,color:'#475569'}}>管道详细组件</span>
+        <ChevronDown open={expanded}/>
+      </div>
+      <div className={'expand-content '+(expanded?'expanded':'collapsed')}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+          {pipeline.map((p,i)=>(
+            <div key={i} style={{background:'#fff',border:'1px solid #E2E8F0',borderRadius:8,padding:'12px 16px',borderTop:'3px solid '+p.color}}>
+              <div style={{fontSize:14,fontWeight:600,color:p.color,marginBottom:2}}>{p.name}</div>
+              <div style={{fontSize:11,color:'#94A3B8',marginBottom:6}}>{p.desc}</div>
+              <div style={{fontSize:11,color:'#475569',fontFamily:'monospace'}}>{p.files}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════
+   Sticky Navigation Bar
+   ══════════════════════════════════════════════════ */
+const NAV_ITEMS=[
+  {id:'sec-logic',label:'逻辑链',num:'1'},
+  {id:'sec-funnel',label:'决策漏斗',num:'2'},
+  {id:'sec-engines',label:'27 引擎',num:'3'},
+  {id:'sec-algos',label:'8 大算法',num:'4'},
+  {id:'sec-pipeline',label:'数据流',num:'5'}
+];
+
+const StickyNav=({activeSection,allExpanded,onToggleAll})=>{
+  const scrollTo=(id)=>{
+    const el=document.getElementById(id);
+    if(el){
+      const top=el.offsetTop-48;
+      window.scrollTo({top,behavior:'smooth'});
+    }
+  };
+  return(
+    <nav className="sticky-nav">
+      <div className="nav-logo">
+        <div className="nav-logo-dot"/>
+        AEMO BESS 技术全景
+      </div>
+      {NAV_ITEMS.map(item=>(
+        <a key={item.id} className={'nav-link'+(activeSection===item.id?' active':'')}
+           onClick={()=>scrollTo(item.id)}>
+          {item.num}. {item.label}
+        </a>
+      ))}
+      <div className="nav-actions">
+        <button className="nav-btn" onClick={onToggleAll}>
+          {allExpanded?'全部收起':'全部展开'}
+        </button>
+      </div>
+    </nav>
+  );
+};
+
+/* ══════════════════════════════════════════════════
+   Scroll Progress Bar
+   ══════════════════════════════════════════════════ */
+const ScrollProgress=()=>{
+  const[width,setWidth]=useState(0);
+  useEffect(()=>{
+    const onScroll=()=>{
+      const h=document.documentElement;
+      const pct=(h.scrollTop/(h.scrollHeight-h.clientHeight))*100;
+      setWidth(pct);
+    };
+    window.addEventListener('scroll',onScroll,{passive:true});
+    return()=>window.removeEventListener('scroll',onScroll);
+  },[]);
+  return <div className="scroll-progress" style={{width:width+'%'}}/>;
+};
+
+/* ══════════════════════════════════════════════════
+   App — 主入口
+   ══════════════════════════════════════════════════ */
+const App=()=>{
+  const[activeSection,setActiveSection]=useState('sec-logic');
+  const[allExpanded,setAllExpanded]=useState(true);
+
+  // Track active section on scroll
+  useEffect(()=>{
+    const onScroll=()=>{
+      const ids=NAV_ITEMS.map(n=>n.id);
+      for(let i=ids.length-1;i>=0;i--){
+        const el=document.getElementById(ids[i]);
+        if(el&&el.getBoundingClientRect().top<=100){
+          setActiveSection(ids[i]);
+          break;
+        }
+      }
+    };
+    window.addEventListener('scroll',onScroll,{passive:true});
+    return()=>window.removeEventListener('scroll',onScroll);
+  },[]);
+
+  return(
+    <div className="diagram-root">
+      <ScrollProgress/>
+      <StickyNav activeSection={activeSection} allExpanded={allExpanded}
+        onToggleAll={()=>setAllExpanded(p=>!p)}/>
+
+      {/* Header */}
+      <header className="infographic-header">
+        <div className="header-badge">Technical Infographic · 2026</div>
+        <h1 className="header-title">澳洲电力市场分析平台 · 技术全景</h1>
+        <p className="header-subtitle">
+          AEMO BESS 投资仪表板 — 从市场真相到储能决策的完整技术链路。
+          覆盖 NEM/WEM 双市场、27 个计算引擎、8 大核心算法。
+        </p>
+        <div className="header-meta">
+          <div className="header-meta-item"><div className="header-meta-dot" style={{background:'#3B82F6'}}/>NEM 蓝 · 5 区域 · 5 分钟结算</div>
+          <div className="header-meta-item"><div className="header-meta-dot" style={{background:'#EA580C'}}/>WEM 橙 · 1 区域 · 30 分钟结算</div>
+          <div className="header-meta-item"><div className="header-meta-dot" style={{background:'#10B981'}}/>Fingrid · 芬兰市场扩展</div>
+          <div className="header-meta-item"><div className="header-meta-dot" style={{background:'#8B5CF6'}}/>27 Engines · 8 Algorithms</div>
+        </div>
+      </header>
+
+      {/* Section 1 */}
+      <Section num="1" title="业务逻辑链" titleEn="Truth → Forecast → Decision Pipeline" color={NEM_BLUE} id="sec-logic">
+        <Section1/>
+      </Section>
+      <div className="section-divider"/>
+
+      {/* Section 2 */}
+      <Section num="2" title="决策漏斗" titleEn="NEM 7-Stage & WEM 3-Stage Decision Funnel" color="#2563EB" id="sec-funnel">
+        <Section2/>
+      </Section>
+      <div className="section-divider"/>
+
+      {/* Section 3 */}
+      <Section num="3" title="后端 27 引擎" titleEn="Backend Engine Architecture · 8 Categories" color="#7C3AED" id="sec-engines">
+        <Section3/>
+      </Section>
+      <div className="section-divider"/>
+
+      {/* Section 4 */}
+      <Section num="4" title="8 大核心算法" titleEn="Core Algorithms with Mathematical Formulations" color="#C2410C" id="sec-algos">
+        <Section4/>
+      </Section>
+      <div className="section-divider"/>
+
+      {/* Section 5 */}
+      <Section num="5" title="数据流架构" titleEn="End-to-End Data Pipeline Architecture" color="#059669" id="sec-pipeline">
+        <Section5/>
+      </Section>
+
+      {/* Footer */}
+      <div className="info-footer">
+        <div>AEMO BESS Investment Dashboard · Technical Architecture Infographic</div>
+        <div className="footer-links">
+          <span>React 18.3 · KaTeX · FastAPI · SQLite · Redis</span>
+          <span>1440px Optimized</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+
+</script>
+</body>
+</html>
