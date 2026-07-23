@@ -26,6 +26,24 @@ from agent.schemas import AgentContext, ToolDefinition, ToolResult, ToolStatus
 logger = logging.getLogger(__name__)
 
 
+def _safe_year(year: Any) -> int:
+    """Coerce ``year`` to a plausible 4-digit int.
+
+    Guards against SQL injection: ``year`` is interpolated into the
+    ``trading_price_<year>`` table name (not a bound parameter), so any
+    non-integer or out-of-range value must be rejected before it reaches SQL.
+    Raises ValueError so the tool is marked ERROR rather than executing
+    tainted SQL.
+    """
+    try:
+        y = int(year)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid year parameter: {year!r}")
+    if not (2000 <= y <= 2100):
+        raise ValueError(f"Year out of range: {y}")
+    return y
+
+
 # =============================================================================
 # Tool Executor Type
 # =============================================================================
@@ -164,6 +182,7 @@ def _exec_price_trend(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, An
     db = get_db()
     region = params.get("region", ctx.effective_region)
     year = params.get("year", ctx.effective_year)
+    year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
     with db.get_connection() as conn:
@@ -214,6 +233,7 @@ def _exec_spike_profit(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, A
     region = params.get("region", ctx.effective_region)
     year = params.get("year", ctx.effective_year)
     threshold = params.get("threshold_aud_mwh", 300.0)
+    year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
     with db.get_connection() as conn:
@@ -247,6 +267,7 @@ def _exec_peak_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     region = params.get("region", ctx.effective_region)
     year = params.get("year", ctx.effective_year)
     window_hours = params.get("window_hours", 4)
+    year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
     with db.get_connection() as conn:
@@ -294,6 +315,7 @@ def _exec_fcas_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     region = params.get("region", ctx.effective_region)
     year = params.get("year", ctx.effective_year)
     capacity_mw = params.get("capacity_mw", 100.0)
+    year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
     with db.get_connection() as conn:
@@ -441,6 +463,7 @@ def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Di
     )
 
     # Fetch price data for backtest
+    year = _safe_year(year)
     table_name = f"trading_price_{year}"
     with db.get_connection() as conn:
         cursor = conn.cursor()
@@ -480,6 +503,7 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     total_capex = capacity_mwh * 1000 * capex_per_kwh  # kWh * $/kWh
 
     # Get revenue estimate from price data
+    year = _safe_year(year)
     table_name = f"trading_price_{year}"
     with db.get_connection() as conn:
         cursor = conn.cursor()
@@ -539,6 +563,7 @@ def _exec_risk_stratification(params: Dict[str, Any], ctx: AgentContext) -> Dict
     db = get_db()
     region = params.get("region", ctx.effective_region)
     year = params.get("year", ctx.effective_year)
+    year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
     with db.get_connection() as conn:

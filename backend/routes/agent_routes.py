@@ -51,6 +51,11 @@ _TASK_PREFIX = "agent_task:"
 # In-memory fallback (single-worker or Redis-down scenarios)
 _fallback_tasks: Dict[str, dict] = {}
 
+# Strong references to in-flight background tasks. asyncio only holds a weak
+# reference to tasks created via create_task, so without this set a task may be
+# garbage-collected mid-execution and silently cancelled.
+_background_tasks: set = set()
+
 
 def _get_redis_client():
     """Get Redis client via the shared cache infrastructure."""
@@ -129,8 +134,8 @@ async def run_agent(request: AgentRunRequest) -> AgentRunResponse:
             workflow_template_id=request.workflow_template,
         )
 
-        # Log execution to database (best-effort)
-        _log_execution(report)
+        # Log execution to database (best-effort, off the event loop)
+        await asyncio.get_running_loop().run_in_executor(None, _log_execution, report)
 
         return AgentRunResponse(report=report, status=report.status)
 
@@ -160,8 +165,10 @@ async def run_agent_async(request: AgentRunRequest) -> AgentAsyncResponse:
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
-    # Launch background task
-    asyncio.create_task(_execute_async_task(task_id, request))
+    # Launch background task (keep a strong reference so it isn't GC'd)
+    task = asyncio.create_task(_execute_async_task(task_id, request))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return AgentAsyncResponse(task_id=task_id, status=WorkflowStatus.RUNNING)
 
@@ -197,7 +204,7 @@ async def _execute_async_task(task_id: str, request: AgentRunRequest) -> None:
             report=report_dict,
             progress="Completed",
         )
-        _log_execution(report)
+        await asyncio.get_running_loop().run_in_executor(None, _log_execution, report)
     except Exception as exc:
         logger.error("Async agent task %s failed: %s", task_id, exc, exc_info=True)
         _update_task(
@@ -216,7 +223,7 @@ async def get_task_status(task_id: str) -> AgentTaskStatusResponse:
 
     return AgentTaskStatusResponse(
         task_id=task_id,
-        status=task.get("status", "unknown"),
+        status=task.get("status", WorkflowStatus.RUNNING.value),
         report=task.get("report"),
         progress=task.get("progress"),
     )
@@ -251,24 +258,30 @@ async def list_workflows() -> AgentWorkflowsResponse:
 async def get_history(limit: int = 20) -> AgentHistoryResponse:
     """Get recent agent execution history."""
     try:
-        from deps import get_db
-
-        db = get_db()
-        with db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, query, market, region, workflow_type, status, "
-                "total_duration_ms, created_at "
-                "FROM agent_execution_log ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            )
-            columns = [desc[0] for desc in cursor.description]
-            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-
+        rows = await asyncio.get_running_loop().run_in_executor(
+            None, _fetch_history, limit
+        )
         return AgentHistoryResponse(executions=rows, total=len(rows))
     except Exception as exc:
         logger.warning("Failed to fetch agent history: %s", exc)
         return AgentHistoryResponse(executions=[], total=0)
+
+
+def _fetch_history(limit: int) -> list:
+    """Synchronous history query (runs in a thread pool executor)."""
+    from deps import get_db
+
+    db = get_db()
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, query, market, region, workflow_type, status, "
+            "total_duration_ms, created_at "
+            "FROM agent_execution_log ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        columns = [desc[0] for desc in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
 # ---------------------------------------------------------------------------

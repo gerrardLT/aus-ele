@@ -59,6 +59,12 @@ export default function AgentPage() {
 
   const regions = market === 'NEM' ? REGIONS_NEM : REGIONS_WEM;
 
+  const refreshHistory = useCallback(() => {
+    getAgentHistory(10)
+      .then((data) => setHistory(data.executions || []))
+      .catch(() => {});
+  }, []);
+
   const executeWorkflow = useCallback(
     async (workflowId, customQuery) => {
       setRunning(true);
@@ -75,40 +81,51 @@ export default function AgentPage() {
       };
 
       try {
-        // Try async mode first
-        const { task_id } = await runAgentAsync(params);
-        setProgress('已提交，等待执行...');
-        const result = await pollTaskUntilDone(task_id, {
-          intervalMs: 2000,
-          timeoutMs: 300000,
-          onProgress: (msg) => setProgress(msg),
-        });
-
-        setReport(result.report);
-        setProgress('');
-        getAgentHistory(10)
-          .then((data) => setHistory(data.executions || []))
-          .catch(() => {});
-      } catch (asyncErr) {
-        // Fallback: use synchronous /run endpoint
-        console.warn('Async mode failed, falling back to sync:', asyncErr.message);
-        setProgress('异步模式不可用，切换同步执行...');
+        // Phase 1: submit the async task. Only a submission failure (async
+        // endpoint unavailable) justifies falling back to the sync endpoint.
+        let taskId;
         try {
-          const syncResult = await runAgent(params);
-          setReport(syncResult.report);
+          const submitRes = await runAgentAsync(params);
+          taskId = submitRes.task_id;
+        } catch (submitErr) {
+          console.warn('Async submit failed, falling back to sync:', submitErr.message);
+          setProgress('异步模式不可用，切换同步执行...');
+          try {
+            const syncResult = await runAgent(params);
+            setReport(syncResult.report);
+            setProgress('');
+            refreshHistory();
+          } catch (syncErr) {
+            setError(syncErr.message || '执行失败');
+            setProgress('');
+          }
+          return;
+        }
+
+        // Phase 2: poll the submitted task. A polling failure/timeout must NOT
+        // re-run the workflow — the background task is already executing, so a
+        // sync fallback here would duplicate the run. Surface an error instead.
+        setProgress('已提交，等待执行...');
+        try {
+          const result = await pollTaskUntilDone(taskId, {
+            intervalMs: 2000,
+            timeoutMs: 300000,
+            onProgress: (msg) => setProgress(msg),
+          });
+          setReport(result.report);
           setProgress('');
-          getAgentHistory(10)
-            .then((data) => setHistory(data.executions || []))
-            .catch(() => {});
-        } catch (syncErr) {
-          setError(syncErr.message || '执行失败');
+          refreshHistory();
+        } catch (pollErr) {
+          console.warn('Polling failed:', pollErr.message);
+          setError(pollErr.message || '执行超时，请稍后在执行历史中查看结果');
           setProgress('');
+          refreshHistory();
         }
       } finally {
         setRunning(false);
       }
     },
-    [query, market, region],
+    [query, market, region, refreshHistory],
   );
 
   const handleRun = useCallback(() => {

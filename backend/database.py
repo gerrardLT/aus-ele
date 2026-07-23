@@ -335,6 +335,15 @@ class DatabaseManager:
             conn.autocommit = False
             yield _PGConnWrapper(conn, self)
         finally:
+            # Roll back any open/aborted transaction before returning the
+            # connection to the pool. Without this, a failed statement leaves
+            # the connection "idle in transaction (aborted)" and poisons every
+            # subsequent borrower of that pooled connection. After an explicit
+            # commit this is a harmless no-op.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             pool.putconn(conn)
 
     def _table_exists(self, conn, table_name: str) -> bool:
