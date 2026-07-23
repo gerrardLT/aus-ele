@@ -54,8 +54,8 @@ export async function runAgentAsync(params) {
  * @param {string} taskId
  * @returns {Promise<{task_id: string, status: string, report?: Object, progress?: string}>}
  */
-export async function getTaskStatus(taskId) {
-  const response = await fetch(`${AGENT_BASE}/task/${taskId}`);
+export async function getTaskStatus(taskId, signal) {
+  const response = await fetch(`${AGENT_BASE}/task/${taskId}`, { signal });
   if (!response.ok) {
     throw new Error(`Task query failed: ${response.status}`);
   }
@@ -100,21 +100,37 @@ export async function getAgentHistory(limit = 20) {
  * @param {number} [options.intervalMs=2000] - Poll interval
  * @param {number} [options.timeoutMs=300000] - Max wait time
  * @param {Function} [options.onProgress] - Progress callback
+ * @param {AbortSignal} [options.signal] - Abort signal to cancel polling (e.g. on unmount)
  * @returns {Promise<Object>} Final report
  */
 export async function pollTaskUntilDone(taskId, options = {}) {
-  const { intervalMs = 2000, timeoutMs = 300000, onProgress } = options;
+  const { intervalMs = 2000, timeoutMs = 300000, onProgress, signal } = options;
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
-    const status = await getTaskStatus(taskId);
+    if (signal?.aborted) {
+      throw new DOMException('Polling aborted', 'AbortError');
+    }
+    const status = await getTaskStatus(taskId, signal);
     if (onProgress && status.progress) {
       onProgress(status.progress);
     }
     if (status.status === 'completed' || status.status === 'partial' || status.status === 'failed') {
       return status;
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, intervalMs);
+      if (signal) {
+        signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            reject(new DOMException('Polling aborted', 'AbortError'));
+          },
+          { once: true },
+        );
+      }
+    });
   }
   throw new Error('Agent task timed out');
 }

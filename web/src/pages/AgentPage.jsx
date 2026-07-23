@@ -8,7 +8,7 @@
  * 路由：/agent
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   runAgent,
   runAgentAsync,
@@ -47,6 +47,9 @@ export default function AgentPage() {
   const [workflows, setWorkflows] = useState([]);
   const [history, setHistory] = useState([]);
 
+  // Cancels in-flight polling when the component unmounts.
+  const pollAbortRef = useRef(null);
+
   // Load workflows & history on mount
   useEffect(() => {
     listWorkflows()
@@ -55,6 +58,10 @@ export default function AgentPage() {
     getAgentHistory(10)
       .then((data) => setHistory(data.executions || []))
       .catch(() => {});
+    return () => {
+      // Abort any active polling loop on unmount
+      if (pollAbortRef.current) pollAbortRef.current.abort();
+    };
   }, []);
 
   const regions = market === 'NEM' ? REGIONS_NEM : REGIONS_WEM;
@@ -106,20 +113,27 @@ export default function AgentPage() {
         // re-run the workflow — the background task is already executing, so a
         // sync fallback here would duplicate the run. Surface an error instead.
         setProgress('已提交，等待执行...');
+        const controller = new AbortController();
+        pollAbortRef.current = controller;
         try {
           const result = await pollTaskUntilDone(taskId, {
             intervalMs: 2000,
             timeoutMs: 300000,
             onProgress: (msg) => setProgress(msg),
+            signal: controller.signal,
           });
           setReport(result.report);
           setProgress('');
           refreshHistory();
         } catch (pollErr) {
+          // Ignore aborts triggered by unmount — no state updates needed.
+          if (pollErr.name === 'AbortError') return;
           console.warn('Polling failed:', pollErr.message);
           setError(pollErr.message || '执行超时，请稍后在执行历史中查看结果');
           setProgress('');
           refreshHistory();
+        } finally {
+          pollAbortRef.current = null;
         }
       } finally {
         setRunning(false);

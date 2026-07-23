@@ -287,6 +287,7 @@ class AgentOrchestrator:
         tool_results: List[ToolResult] = []
         stage_results: List[StageResult] = []
         openai_tools = self.tools.to_openai_tools()
+        final_answer_given = False
 
         start_time = time.perf_counter()
 
@@ -306,6 +307,7 @@ class AgentOrchestrator:
 
             # If LLM returns content without tool calls → final answer
             if not response.has_tool_calls:
+                final_answer_given = True
                 steps.append(AgentStep(
                     step_number=step_num,
                     thought=response.content,
@@ -337,19 +339,22 @@ class AgentOrchestrator:
                 if progress_callback:
                     progress_callback(f"正在执行: {get_tool_progress_label(tool_name)}")
 
-                # Inject context defaults into arguments
-                if "region" not in arguments and context.effective_region:
-                    arguments["region"] = context.effective_region
-                if "year" not in arguments:
-                    arguments["year"] = context.effective_year
+                # Merge context defaults into the tool arguments without
+                # mutating the dict returned by the LLM (which is also kept in
+                # the assistant message sent back to the model).
+                merged_args = dict(arguments)
+                if "region" not in merged_args and context.effective_region:
+                    merged_args["region"] = context.effective_region
+                if "year" not in merged_args:
+                    merged_args["year"] = context.effective_year
                 # Apply user param overrides
                 for k, v in context.params_override.items():
-                    if k not in arguments:
-                        arguments[k] = v
+                    if k not in merged_args:
+                        merged_args[k] = v
 
                 result = await self.tools.execute(
                     tool_name=tool_name,
-                    arguments=arguments,
+                    arguments=merged_args,
                     context=context,
                     call_id=call_id,
                     timeout_seconds=self.tool_timeout,
@@ -359,7 +364,7 @@ class AgentOrchestrator:
                 steps.append(AgentStep(
                     step_number=step_num,
                     thought=response.content or "",
-                    action=ToolCall(id=call_id, tool_name=tool_name, arguments=arguments),
+                    action=ToolCall(id=call_id, tool_name=tool_name, arguments=merged_args),
                     observation=result,
                 ))
                 stage_results.append(self._to_stage_result(result))
@@ -370,7 +375,10 @@ class AgentOrchestrator:
         # Determine status
         success_count = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
         if not tool_results:
-            status = WorkflowStatus.FAILED
+            # No tools executed. A direct LLM final answer is a valid
+            # completion; only treat it as failure when the loop ended without
+            # any answer (e.g. LLM/timeout error).
+            status = WorkflowStatus.COMPLETED if final_answer_given else WorkflowStatus.FAILED
         elif success_count == len(tool_results):
             status = WorkflowStatus.COMPLETED
         elif success_count > 0:

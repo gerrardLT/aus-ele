@@ -98,8 +98,15 @@ def _get_task(task_id: str) -> Optional[dict]:
 
 
 def _update_task(task_id: str, **fields) -> None:
-    """Update specific fields of a task."""
-    task = _get_task(task_id)
+    """Update specific fields of a task.
+
+    The background executor runs in the same worker that created the task, so
+    the in-memory fallback is authoritative for the writer; prefer it to avoid
+    an extra Redis GET on every progress update.
+    """
+    task = _fallback_tasks.get(task_id)
+    if task is None:
+        task = _get_task(task_id)
     if task is not None:
         task.update(fields)
         _store_task(task_id, task)
@@ -141,7 +148,7 @@ async def run_agent(request: AgentRunRequest) -> AgentRunResponse:
 
     except Exception as exc:
         logger.error("Agent run failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Agent execution failed: {exc}")
+        raise HTTPException(status_code=500, detail="Agent execution failed")
 
 
 # ---------------------------------------------------------------------------
