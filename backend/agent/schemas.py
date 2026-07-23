@@ -238,6 +238,30 @@ class AgentRunRequest(BaseModel):
     max_steps: int = Field(default=15, ge=1, le=30)
 
 
+class ChatMessage(BaseModel):
+    """A single prior conversation turn sent by the frontend.
+
+    Only the minimal fields needed to reconstruct LLM context are kept; the
+    frontend owns the full conversation history (stateless backend).
+    """
+
+    role: Literal["user", "assistant"]
+    content: str = ""
+
+
+class AgentChatRequest(BaseModel):
+    """Request to run a streaming, multi-turn agent chat."""
+
+    query: str = Field(..., min_length=1, max_length=2000)
+    history: List[ChatMessage] = Field(default_factory=list)
+    market: MarketType = MarketType.NEM
+    region: Optional[str] = None
+    year: Optional[int] = None
+    workflow_template: Optional[str] = None
+    params_override: Dict[str, Any] = Field(default_factory=dict)
+    max_steps: int = Field(default=15, ge=1, le=30)
+
+
 class AgentRunResponse(BaseModel):
     """Response from an agent workflow run."""
 

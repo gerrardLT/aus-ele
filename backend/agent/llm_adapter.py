@@ -278,6 +278,91 @@ class LLMAdapter:
             logger.error("LLM stream request failed: %s", exc)
             raise LLMRequestError(f"LLM stream failed: {exc}") from exc
 
+    async def chat_stream_events(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Streaming chat that surfaces BOTH content deltas and tool calls.
+
+        Unlike :meth:`chat_stream` (content-only), this drives the ReAct loop:
+        it forwards assistant reasoning tokens as they arrive and accumulates
+        streamed tool-call deltas (which arrive fragmented across chunks) into
+        complete calls.
+
+        Yields dict events:
+            {"type": "content", "text": <token>}
+            {"type": "tool_calls", "tool_calls": [{id, name, arguments(dict)}]}
+            {"type": "done", "finish_reason": <str>}
+        """
+        if not self.is_available():
+            raise LLMUnavailableError("LLM provider is not configured")
+
+        client = await self._get_client()
+        url = self._build_url()
+        headers = self._build_headers()
+        payload = self._build_payload(messages, tools, stream=True)
+
+        # Accumulate tool-call fragments keyed by their streaming index.
+        acc: Dict[int, Dict[str, Any]] = {}
+        finish_reason = "stop"
+
+        try:
+            async with client.stream("POST", url, json=payload, headers=headers) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta", {})
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
+
+                    content = delta.get("content")
+                    if content:
+                        yield {"type": "content", "text": content}
+
+                    for tc in delta.get("tool_calls", []) or []:
+                        idx = tc.get("index", 0)
+                        slot = acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        func = tc.get("function", {})
+                        if func.get("name"):
+                            slot["name"] = func["name"]
+                        if func.get("arguments"):
+                            slot["arguments"] += func["arguments"]
+        except Exception as exc:
+            logger.error("LLM stream(events) request failed: %s", exc)
+            raise LLMRequestError(f"LLM stream failed: {exc}") from exc
+
+        if acc:
+            tool_calls = []
+            for idx in sorted(acc.keys()):
+                slot = acc[idx]
+                try:
+                    arguments = json.loads(slot["arguments"]) if slot["arguments"] else {}
+                except json.JSONDecodeError:
+                    arguments = {}
+                tool_calls.append({
+                    "id": slot["id"] or f"call_{idx}",
+                    "name": slot["name"],
+                    "arguments": arguments,
+                })
+            yield {"type": "tool_calls", "tool_calls": tool_calls}
+
+        yield {"type": "done", "finish_reason": finish_reason}
+
     def _parse_response(self, data: Dict[str, Any]) -> LLMResponse:
         """Parse raw API response into LLMResponse."""
         choices = data.get("choices", [])

@@ -1,18 +1,20 @@
 /**
- * AgentPage — AI 编排分析独立页面
+ * AgentPage — AI 编排分析独立页面（交互对话 + SSE 实时流式）
  *
  * 全宽双栏布局：
- * - 左栏：查询输入 + 工作流快捷 + 执行历史
- * - 右栏：分析报告展示
+ * - 左栏：导航 + 执行历史
+ * - 右栏：多轮对话工作台（市场/区域/工作流控制 + 实时 ReAct 轨迹 + 结构化报告）
+ *
+ * 对话通过 `streamAgentChat` 消费后端 `POST /chat-stream` 的 SSE 事件流：
+ * start / status / token / tool_call / tool_result / answer_end / report / error / done
+ * 后端无状态：前端持有完整对话历史，每轮把 history 一并回传。
  *
  * 路由：/agent
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  runAgent,
-  runAgentAsync,
-  pollTaskUntilDone,
+  streamAgentChat,
   listWorkflows,
   getAgentHistory,
 } from '../lib/agentApi.js';
@@ -34,35 +36,50 @@ const STATUS_MAP = {
   running: { color: '#6B7280', label: '执行中' },
 };
 
+const TOOL_STATUS_COLOR = {
+  success: 'bg-green-500',
+  error: 'bg-red-500',
+  timeout: 'bg-red-500',
+};
+
+let msgSeq = 0;
+const nextId = () => `m${Date.now()}_${msgSeq++}`;
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AgentPage() {
   const [market, setMarket] = useState('NEM');
   const [region, setRegion] = useState('NSW1');
-  const [query, setQuery] = useState('');
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState('');
-  const [report, setReport] = useState(null);
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState(null);
   const [workflows, setWorkflows] = useState([]);
   const [history, setHistory] = useState([]);
 
-  // Cancels in-flight polling when the component unmounts.
-  const pollAbortRef = useRef(null);
+  // Abort controller for the in-flight SSE stream (stop button / unmount).
+  const abortRef = useRef(null);
+  // Id of the assistant message currently being streamed.
+  const activeMsgRef = useRef(null);
+  const scrollRef = useRef(null);
 
   // Load workflows & history on mount
   useEffect(() => {
     listWorkflows()
       .then((data) => setWorkflows(data.workflows || []))
       .catch(() => {});
-    getAgentHistory(10)
-      .then((data) => setHistory(data.executions || []))
-      .catch(() => {});
+    refreshHistory();
     return () => {
-      // Abort any active polling loop on unmount
-      if (pollAbortRef.current) pollAbortRef.current.abort();
+      if (abortRef.current) abortRef.current.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-scroll to the newest content while streaming.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   const regions = market === 'NEM' ? REGIONS_NEM : REGIONS_WEM;
 
@@ -72,15 +89,126 @@ export default function AgentPage() {
       .catch(() => {});
   }, []);
 
-  const executeWorkflow = useCallback(
-    async (workflowId, customQuery) => {
-      setRunning(true);
-      setProgress('正在提交分析请求...');
-      setReport(null);
+  // Patch the currently-streaming assistant message immutably.
+  const patchActive = useCallback((patch) => {
+    const id = activeMsgRef.current;
+    if (!id) return;
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === id
+          ? typeof patch === 'function'
+            ? { ...m, ...patch(m) }
+            : { ...m, ...patch }
+          : m,
+      ),
+    );
+  }, []);
+
+  const handleEvent = useCallback(
+    (event) => {
+      switch (event.type) {
+        case 'start':
+          patchActive({ executionId: event.execution_id });
+          break;
+        case 'status':
+          patchActive({ status_line: event.message });
+          break;
+        case 'token':
+          patchActive((m) => ({ answer: (m.answer || '') + event.delta }));
+          break;
+        case 'tool_call':
+          patchActive((m) => ({
+            trace: [
+              ...(m.trace || []),
+              {
+                callId: event.call_id,
+                name: event.name,
+                step: event.step,
+                arguments: event.arguments,
+                status: 'running',
+              },
+            ],
+          }));
+          break;
+        case 'tool_result':
+          patchActive((m) => ({
+            trace: (m.trace || []).map((t) =>
+              t.callId && event.call_id
+                ? t.callId === event.call_id
+                  ? { ...t, ...resultPatch(event) }
+                  : t
+                : // Some providers omit call_id in results — match latest running of same name.
+                  t.name === event.name && t.status === 'running'
+                  ? { ...t, ...resultPatch(event) }
+                  : t,
+            ),
+          }));
+          break;
+        case 'answer_end':
+          patchActive({ answerDone: true });
+          break;
+        case 'report':
+          patchActive((m) => ({
+            report: event.report,
+            // Prefer the streamed answer; fall back to synthesized summary.
+            answer: m.answer || event.answer || '',
+            reportAnswer: event.answer,
+          }));
+          break;
+        case 'error':
+          patchActive((m) => ({
+            error: event.message,
+            status_line: '',
+            answer: m.answer || '',
+          }));
+          setError(event.message);
+          break;
+        case 'done':
+          patchActive({ status_line: '', streaming: false });
+          break;
+        default:
+          break;
+      }
+    },
+    [patchActive],
+  );
+
+  const sendMessage = useCallback(
+    async ({ text, workflowId }) => {
+      const query = (text || '').trim();
+      if (!query || streaming) return;
+
       setError(null);
 
+      // Build conversation history (finalized turns only) to send to backend.
+      const historyPayload = messages
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && (m.content || m.answer))
+        .map((m) => ({
+          role: m.role,
+          content: m.role === 'assistant' ? m.answer || '' : m.content || '',
+        }));
+
+      const userMsg = { id: nextId(), role: 'user', content: query };
+      const assistantId = nextId();
+      const assistantMsg = {
+        id: assistantId,
+        role: 'assistant',
+        answer: '',
+        trace: [],
+        status_line: '正在连接分析引擎...',
+        streaming: true,
+      };
+      activeMsgRef.current = assistantId;
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setInput('');
+      setStreaming(true);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       const params = {
-        query: customQuery || query || `运行 ${workflowId} 工作流`,
+        query,
+        history: historyPayload,
         market,
         region: region || undefined,
         workflow_template: workflowId || undefined,
@@ -88,77 +216,114 @@ export default function AgentPage() {
       };
 
       try {
-        // Phase 1: submit the async task. Only a submission failure (async
-        // endpoint unavailable) justifies falling back to the sync endpoint.
-        let taskId;
-        try {
-          const submitRes = await runAgentAsync(params);
-          taskId = submitRes.task_id;
-        } catch (submitErr) {
-          console.warn('Async submit failed, falling back to sync:', submitErr.message);
-          setProgress('异步模式不可用，切换同步执行...');
-          try {
-            const syncResult = await runAgent(params);
-            setReport(syncResult.report);
-            setProgress('');
-            refreshHistory();
-          } catch (syncErr) {
-            setError(syncErr.message || '执行失败');
-            setProgress('');
-          }
-          return;
-        }
-
-        // Phase 2: poll the submitted task. A polling failure/timeout must NOT
-        // re-run the workflow — the background task is already executing, so a
-        // sync fallback here would duplicate the run. Surface an error instead.
-        setProgress('已提交，等待执行...');
-        const controller = new AbortController();
-        pollAbortRef.current = controller;
-        try {
-          const result = await pollTaskUntilDone(taskId, {
-            intervalMs: 2000,
-            timeoutMs: 300000,
-            onProgress: (msg) => setProgress(msg),
-            signal: controller.signal,
-          });
-          setReport(result.report);
-          setProgress('');
-          refreshHistory();
-        } catch (pollErr) {
-          // Ignore aborts triggered by unmount — no state updates needed.
-          if (pollErr.name === 'AbortError') return;
-          console.warn('Polling failed:', pollErr.message);
-          setError(pollErr.message || '执行超时，请稍后在执行历史中查看结果');
-          setProgress('');
-          refreshHistory();
-        } finally {
-          pollAbortRef.current = null;
+        await streamAgentChat(params, {
+          onEvent: handleEvent,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          patchActive({ status_line: '已停止', streaming: false, aborted: true });
+        } else {
+          setError(err.message || '流式对话失败');
+          patchActive({ error: err.message || '流式对话失败', status_line: '', streaming: false });
         }
       } finally {
-        setRunning(false);
+        patchActive({ streaming: false, status_line: '' });
+        abortRef.current = null;
+        activeMsgRef.current = null;
+        setStreaming(false);
+        refreshHistory();
       }
     },
-    [query, market, region, refreshHistory],
+    [messages, streaming, market, region, handleEvent, patchActive, refreshHistory],
   );
 
-  const handleRun = useCallback(() => {
-    if (!query.trim()) return;
-    executeWorkflow(null, query.trim());
-  }, [query, executeWorkflow]);
+  const handleSend = useCallback(() => {
+    sendMessage({ text: input });
+  }, [input, sendMessage]);
+
+  const handleStop = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+  }, []);
+
+  const handleReset = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+    setMessages([]);
+    setError(null);
+  }, []);
 
   const handleKeyDown = useCallback(
     (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-        handleRun();
+        handleSend();
       }
     },
-    [handleRun],
+    [handleSend],
   );
 
   return (
+    <AgentLayout
+      market={market}
+      setMarket={setMarket}
+      region={region}
+      setRegion={setRegion}
+      regions={regions}
+      input={input}
+      setInput={setInput}
+      messages={messages}
+      streaming={streaming}
+      error={error}
+      workflows={workflows}
+      history={history}
+      scrollRef={scrollRef}
+      onSend={handleSend}
+      onStop={handleStop}
+      onReset={handleReset}
+      onKeyDown={handleKeyDown}
+      onWorkflow={(wf) =>
+        sendMessage({ text: input.trim() || `运行 ${wf.name} 工作流`, workflowId: wf.id })
+      }
+    />
+  );
+}
+
+// ─── Event helpers ──────────────────────────────────────────────────────────
+
+function resultPatch(event) {
+  return {
+    status: event.status,
+    durationMs: event.duration_ms,
+    summary: event.summary,
+    keyMetrics: event.key_metrics,
+    error: event.error,
+  };
+}
+
+// ─── Layout ───────────────────────────────────────────────────────────────
+
+function AgentLayout({
+  market,
+  setMarket,
+  region,
+  setRegion,
+  regions,
+  input,
+  setInput,
+  messages,
+  streaming,
+  error,
+  workflows,
+  history,
+  scrollRef,
+  onSend,
+  onStop,
+  onReset,
+  onKeyDown,
+  onWorkflow,
+}) {
+  return (
     <div className="flex min-h-screen">
-      {/* ─── Left Sidebar (navigation) ─── */}
+      {/* ─── Left Sidebar (navigation + history) ─── */}
       <aside className="sticky top-0 hidden h-screen w-[220px] shrink-0 flex-col border-r border-white/8 bg-[#13161A] px-4 py-5 text-[#F3F5F7] md:flex">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top_left,rgba(110,168,255,0.14),transparent_60%)]" />
 
@@ -198,17 +363,11 @@ export default function AgentPage() {
           )}
           <div className="grid gap-1">
             {history.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-md px-2 py-1.5 text-[11px] text-white/50"
-              >
+              <div key={item.id} className="rounded-md px-2 py-1.5 text-[11px] text-white/50">
                 <div className="flex items-center gap-1.5">
                   <span
                     className="h-1.5 w-1.5 rounded-full flex-shrink-0"
-                    style={{
-                      backgroundColor:
-                        STATUS_MAP[item.status]?.color || '#6B7280',
-                    }}
+                    style={{ backgroundColor: STATUS_MAP[item.status]?.color || '#6B7280' }}
                   />
                   <span className="truncate">{item.query}</span>
                 </div>
@@ -224,184 +383,271 @@ export default function AgentPage() {
         </div>
       </aside>
 
-      {/* ─── Main Content ─── */}
-      <div className="min-w-0 flex-1">
+      {/* ─── Main Content: chat workbench ─── */}
+      <div className="flex min-w-0 flex-1 flex-col">
         {/* Header */}
         <header className="border-b border-[var(--color-border)] px-8 py-5">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="font-serif text-2xl text-[var(--color-text)]">
-                AI 编排分析
-              </h1>
+              <h1 className="font-serif text-2xl text-[var(--color-text)]">AI 编排分析</h1>
               <p className="mt-1 text-xs text-[var(--color-muted)]">
-                自然语言驱动 · 多引擎串联 · 自动综合决策报告
+                自然语言驱动 · 多引擎串联 · 实时推理轨迹 · 多轮追问
               </p>
             </div>
-            <a
-              href="/"
-              className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-muted)] transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
-            >
-              ← 返回市场
-            </a>
+            <div className="flex items-center gap-2">
+              {messages.length > 0 && (
+                <button
+                  onClick={onReset}
+                  className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-muted)] transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
+                >
+                  新对话
+                </button>
+              )}
+              <a
+                href="/"
+                className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-muted)] transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
+              >
+                ← 返回市场
+              </a>
+            </div>
           </div>
         </header>
 
-        {/* Two-column body */}
-        <div className="grid grid-cols-1 gap-0 lg:grid-cols-[420px_1fr]">
-          {/* ─── Left Column: Input & Controls ─── */}
-          <div className="border-r border-[var(--color-border)] p-6">
-            {/* Market & Region selectors */}
-            <div className="mb-5 flex gap-3">
-              <div className="flex-1">
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
-                  市场
-                </label>
-                <div className="flex gap-1">
-                  {MARKETS.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => {
-                        setMarket(m.id);
-                        setRegion(m.id === 'NEM' ? 'NSW1' : 'WEM');
-                      }}
-                      className={`flex-1 rounded border px-3 py-2 text-xs font-medium transition-colors ${
-                        market === m.id
-                          ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
-                          : 'border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-text)]'
-                      }`}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex-1">
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
-                  区域
-                </label>
-                <select
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  className="w-full rounded border border-[var(--color-border)] bg-transparent px-3 py-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
+        {/* Control bar: market / region / workflow chips */}
+        <div className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] px-8 py-3">
+          <div className="flex items-center gap-1">
+            {MARKETS.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => {
+                  setMarket(m.id);
+                  setRegion(m.id === 'NEM' ? 'NSW1' : 'WEM');
+                }}
+                disabled={streaming}
+                className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+                  market === m.id
+                    ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
+                    : 'border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-text)]'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <select
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            disabled={streaming}
+            className="rounded border border-[var(--color-border)] bg-transparent px-3 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] disabled:opacity-40"
+          >
+            {regions.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+
+          {workflows.length > 0 && (
+            <div className="flex flex-1 flex-wrap items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-[0.1em] text-[var(--color-muted)]">
+                快捷工作流
+              </span>
+              {workflows.map((wf) => (
+                <button
+                  key={wf.id}
+                  onClick={() => onWorkflow(wf)}
+                  disabled={streaming}
+                  title={wf.description}
+                  className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-text)] hover:text-[var(--color-text)] disabled:opacity-40"
                 >
-                  {regions.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  {wf.name}
+                </button>
+              ))}
             </div>
+          )}
+        </div>
 
-            {/* Query input */}
-            <div className="mb-4">
-              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
-                分析请求
-              </label>
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={`描述你的分析需求...\n例如：对 ${region} 做一次完整投资可行性分析`}
-                rows={4}
-                disabled={running}
-                className="w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/50 outline-none transition-colors focus:border-[var(--color-primary)] disabled:opacity-50"
-              />
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-[10px] text-[var(--color-muted)]">
-                  Ctrl+Enter 快速执行
-                </span>
-              </div>
+        {/* Conversation */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-6">
+          {messages.length === 0 ? (
+            <EmptyState region={region} />
+          ) : (
+            <div className="mx-auto flex max-w-[880px] flex-col gap-6">
+              {messages.map((m) =>
+                m.role === 'user' ? (
+                  <UserBubble key={m.id} text={m.content} />
+                ) : (
+                  <AssistantMessage key={m.id} message={m} />
+                ),
+              )}
             </div>
+          )}
+        </div>
 
-            {/* Run button */}
-            <button
-              onClick={handleRun}
-              disabled={running || !query.trim()}
-              className="mb-6 w-full rounded-lg bg-[var(--color-inverted)] py-3 text-sm font-semibold text-[var(--color-inverted-text)] transition-opacity disabled:opacity-40"
-            >
-              {running ? '执行中...' : '运行分析'}
-            </button>
-
-            {/* Workflow shortcuts */}
-            <div className="mb-6">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
-                预定义工作流
-              </div>
-              <div className="grid gap-1.5">
-                {workflows.map((wf) => (
-                  <button
-                    key={wf.id}
-                    onClick={() => executeWorkflow(wf.id)}
-                    disabled={running}
-                    className="group flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-2.5 text-left transition-colors hover:border-[var(--color-text)] disabled:opacity-40"
-                  >
-                    <div>
-                      <div className="text-[13px] font-medium text-[var(--color-text)]">
-                        {wf.name}
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-[var(--color-muted)]">
-                        {wf.description}
-                      </div>
-                    </div>
-                    <span className="ml-3 text-[10px] text-[var(--color-muted)] opacity-0 transition-opacity group-hover:opacity-100">
-                      {wf.steps?.length || '—'} 步
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Progress indicator */}
-            {running && progress && (
-              <div className="flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--color-primary)]" />
-                <span className="text-xs text-[var(--color-text)]">
-                  {progress}
-                </span>
-              </div>
-            )}
-
-            {/* Error */}
+        {/* Composer */}
+        <div className="border-t border-[var(--color-border)] px-8 py-4">
+          <div className="mx-auto max-w-[880px]">
             {error && (
-              <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-3 text-xs text-[var(--color-error)]">
+              <div className="mb-2 rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2 text-xs text-[var(--color-error)]">
                 {error}
               </div>
             )}
-          </div>
-
-          {/* ─── Right Column: Report ─── */}
-          <div className="p-6">
-            {!report && !running && (
-              <div className="flex h-full min-h-[400px] items-center justify-center">
-                <div className="text-center">
-                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--color-border)]">
-                    <svg
-                      width="24"
-                      height="24"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="var(--color-muted)"
-                      strokeWidth="1.5"
-                    >
-                      <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z" />
-                      <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm text-[var(--color-muted)]">
-                    选择工作流或输入分析请求
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--color-muted)]/60">
-                    报告将在此处展示
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {report && <ReportView report={report} />}
+            <div className="flex items-end gap-3">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder={`向分析引擎提问或追问...\n例如：对 ${region} 做一次完整投资可行性分析`}
+                rows={2}
+                className="min-h-[52px] flex-1 resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/50 outline-none transition-colors focus:border-[var(--color-primary)]"
+              />
+              {streaming ? (
+                <button
+                  onClick={onStop}
+                  className="h-[52px] shrink-0 rounded-lg border border-[var(--color-error)]/40 px-5 text-sm font-semibold text-[var(--color-error)] transition-colors hover:bg-[var(--color-error)]/10"
+                >
+                  停止
+                </button>
+              ) : (
+                <button
+                  onClick={onSend}
+                  disabled={!input.trim()}
+                  className="h-[52px] shrink-0 rounded-lg bg-[var(--color-inverted)] px-6 text-sm font-semibold text-[var(--color-inverted-text)] transition-opacity disabled:opacity-40"
+                >
+                  发送
+                </button>
+              )}
+            </div>
+            <div className="mt-1 text-[10px] text-[var(--color-muted)]">
+              Ctrl+Enter 发送 · 后端无状态，完整对话上下文由前端维护并逐轮回传
+            </div>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Empty state ──────────────────────────────────────────────────────────
+
+function EmptyState({ region }) {
+  return (
+    <div className="flex h-full min-h-[400px] items-center justify-center">
+      <div className="text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--color-border)]">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-muted)" strokeWidth="1.5">
+            <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z" />
+            <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z" />
+          </svg>
+        </div>
+        <p className="text-sm text-[var(--color-muted)]">输入分析请求或选择快捷工作流开始对话</p>
+        <p className="mt-1 text-xs text-[var(--color-muted)]/60">
+          实时推理轨迹与结构化报告将在此逐步展示 · 例如「对 {region} 做投资可行性分析」
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Message bubbles ────────────────────────────────────────────────────────
+
+function UserBubble({ text }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-[var(--color-inverted)] px-4 py-2.5 text-sm leading-6 text-[var(--color-inverted-text)]">
+        {text}
+      </div>
+    </div>
+  );
+}
+
+function AssistantMessage({ message }) {
+  const { answer, trace, status_line, error, report, streaming, answerDone } = message;
+  const hasTrace = trace && trace.length > 0;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Live status line */}
+      {status_line && (
+        <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--color-primary)]" />
+          {status_line}
+        </div>
+      )}
+
+      {/* Tool-call trace (ReAct steps) */}
+      {hasTrace && <ToolTrace trace={trace} />}
+
+      {/* Streamed answer text */}
+      {answer && (
+        <div className="whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm leading-6 text-[var(--color-text)]">
+          {answer}
+          {streaming && !answerDone && <span className="ml-0.5 animate-pulse">▍</span>}
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2.5 text-xs text-[var(--color-error)]">
+          {error}
+        </div>
+      )}
+
+      {/* Final structured report */}
+      {report && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <ReportView report={report} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tool trace (ReAct live steps) ──────────────────────────────────────────
+
+function ToolTrace({ trace }) {
+  return (
+    <div className="space-y-1.5">
+      {trace.map((t, i) => (
+        <div
+          key={t.callId || `${t.name}_${i}`}
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+        >
+          <div className="flex items-center gap-2">
+            {t.status === 'running' ? (
+              <span className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-yellow-500" />
+            ) : (
+              <span
+                className={`h-2 w-2 flex-shrink-0 rounded-full ${
+                  TOOL_STATUS_COLOR[t.status] || 'bg-yellow-500'
+                }`}
+              />
+            )}
+            <span className="font-mono text-[12px] text-[var(--color-text)]">{t.name}</span>
+            {typeof t.step === 'number' && (
+              <span className="text-[10px] text-[var(--color-muted)]">· 步骤 {t.step}</span>
+            )}
+            {t.status === 'running' && (
+              <span className="text-[10px] text-[var(--color-muted)]">执行中...</span>
+            )}
+            {typeof t.durationMs === 'number' && t.durationMs > 0 && (
+              <span className="ml-auto text-[10px] tabular-nums text-[var(--color-muted)]">
+                {t.durationMs.toFixed(0)}ms
+              </span>
+            )}
+          </div>
+          {t.summary && (
+            <div className="mt-1 pl-4 text-[11px] leading-5 text-[var(--color-muted)]">
+              {t.summary}
+            </div>
+          )}
+          {t.error && (
+            <div className="mt-1 pl-4 text-[11px] leading-5 text-[var(--color-error)]">
+              {t.error}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -419,10 +665,7 @@ function ReportView({ report }) {
           className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold"
           style={{ borderColor: status.color, color: status.color }}
         >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{ backgroundColor: status.color }}
-          />
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: status.color }} />
           {status.label}
         </span>
         {report.total_duration_ms > 0 && (
@@ -440,12 +683,8 @@ function ReportView({ report }) {
       {/* Executive Summary */}
       {report.executive_summary && (
         <section>
-          <h2 className="mb-2 font-serif text-lg text-[var(--color-text)]">
-            执行摘要
-          </h2>
-          <p className="text-sm leading-6 text-[var(--color-muted)]">
-            {report.executive_summary}
-          </p>
+          <h2 className="mb-2 font-serif text-lg text-[var(--color-text)]">执行摘要</h2>
+          <p className="text-sm leading-6 text-[var(--color-muted)]">{report.executive_summary}</p>
         </section>
       )}
 
@@ -455,9 +694,7 @@ function ReportView({ report }) {
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
             综合建议
           </h3>
-          <p className="text-sm leading-6 text-[var(--color-text)]">
-            {report.recommendation}
-          </p>
+          <p className="text-sm leading-6 text-[var(--color-text)]">{report.recommendation}</p>
           {report.confidence_level && (
             <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[10px] text-[var(--color-muted)]">
               置信度: {report.confidence_level}
@@ -487,9 +724,7 @@ function ReportView({ report }) {
                         : 'bg-yellow-500'
                   }`}
                 />
-                <span className="flex-1 text-[13px] text-[var(--color-text)]">
-                  {stage.tool_name}
-                </span>
+                <span className="flex-1 text-[13px] text-[var(--color-text)]">{stage.tool_name}</span>
                 {stage.duration_ms > 0 && (
                   <span className="text-[11px] tabular-nums text-[var(--color-muted)]">
                     {stage.duration_ms.toFixed(0)}ms
@@ -529,10 +764,7 @@ function ReportView({ report }) {
           </h3>
           <ul className="space-y-1">
             {report.data_quality_notes.map((note, i) => (
-              <li
-                key={i}
-                className="text-xs leading-5 text-[var(--color-muted)]"
-              >
+              <li key={i} className="text-xs leading-5 text-[var(--color-muted)]">
                 • {note}
               </li>
             ))}

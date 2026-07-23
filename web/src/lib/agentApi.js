@@ -134,3 +134,80 @@ export async function pollTaskUntilDone(taskId, options = {}) {
   }
   throw new Error('Agent task timed out');
 }
+
+/**
+ * Stream a multi-turn agent chat via SSE (真·流式).
+ *
+ * Consumes the backend `POST /chat-stream` endpoint, parsing `data: {json}\n\n`
+ * frames and invoking `onEvent` for each parsed event. Event `type` values:
+ * start | status | token | tool_call | tool_result | answer_end | report | error | done
+ *
+ * @param {Object} params
+ * @param {string} params.query - Current user turn
+ * @param {Array<{role:string, content:string}>} [params.history] - Prior turns
+ * @param {string} [params.market='NEM']
+ * @param {string} [params.region]
+ * @param {number} [params.year]
+ * @param {string} [params.workflow_template]
+ * @param {Object} [params.params_override]
+ * @param {number} [params.max_steps]
+ * @param {Object} options
+ * @param {(event:Object)=>void} options.onEvent - Called for each SSE event
+ * @param {AbortSignal} [options.signal] - Abort to cancel the stream (e.g. unmount)
+ */
+export async function streamAgentChat(params, { onEvent, signal } = {}) {
+  const response = await fetch(`${AGENT_BASE}/chat-stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(params),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Agent chat stream failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE frames are separated by a blank line.
+      let sepIndex;
+      while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+        const rawFrame = buffer.slice(0, sepIndex);
+        buffer = buffer.slice(sepIndex + 2);
+
+        // A frame may contain multiple `data:` lines; concatenate their payloads.
+        const dataLines = rawFrame
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).replace(/^ /, ''));
+        if (dataLines.length === 0) continue;
+        const payload = dataLines.join('\n');
+        try {
+          const event = JSON.parse(payload);
+          onEvent?.(event);
+        } catch {
+          // Ignore malformed frames (e.g. keep-alive comments).
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* noop */
+    }
+  }
+}

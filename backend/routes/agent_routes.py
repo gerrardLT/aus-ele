@@ -19,10 +19,12 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from agent.orchestrator import get_orchestrator
 from agent.schemas import (
     AgentAsyncResponse,
+    AgentChatRequest,
     AgentContext,
     AgentHistoryResponse,
     AgentRunRequest,
@@ -237,6 +239,72 @@ async def get_task_status(task_id: str) -> AgentTaskStatusResponse:
 
 
 # ---------------------------------------------------------------------------
+# Streaming chat (SSE) — live ReAct trace + multi-turn conversation
+# ---------------------------------------------------------------------------
+
+
+@router.post("/chat-stream")
+async def chat_stream(request: AgentChatRequest) -> StreamingResponse:
+    """Stream a multi-turn agent chat as Server-Sent Events.
+
+    The frontend owns the conversation history (stateless backend): each turn
+    sends ``query`` plus prior ``history``. The orchestrator's ReAct loop is
+    streamed event-by-event (LLM tokens, tool calls, tool results, final
+    report) so the caller can watch the run unfold live.
+
+    SSE frames are ``data: {json}\\n\\n``; each JSON carries a ``type`` field
+    (start/status/token/tool_call/tool_result/answer_end/report/error/done).
+    """
+    orchestrator = get_orchestrator()
+
+    context = AgentContext(
+        market=request.market,
+        region=request.region,
+        year=request.year,
+        params_override=request.params_override,
+        max_steps=request.max_steps,
+    )
+    history = [m.model_dump() for m in request.history]
+
+    async def event_generator():
+        final_report = None
+        try:
+            async for event in orchestrator.run_stream(
+                query=request.query,
+                context=context,
+                history=history,
+                workflow_template_id=request.workflow_template,
+            ):
+                if event.get("type") == "report":
+                    final_report = event.get("report")
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+        except Exception as exc:  # noqa: BLE001 - surface as SSE error, never 500
+            logger.error("Agent chat-stream failed: %s", exc, exc_info=True)
+            err = {"type": "error", "message": "Agent streaming failed"}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        else:
+            # Best-effort execution log, off the event loop.
+            if final_report is not None:
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, _log_execution_dict, final_report
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("chat-stream log failed: %s", exc)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering for live stream
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tool & Workflow discovery
 # ---------------------------------------------------------------------------
 
@@ -346,3 +414,54 @@ def _log_execution(report) -> None:
             conn.commit()
     except Exception as exc:
         logger.debug("Failed to log agent execution: %s", exc)
+
+
+def _log_execution_dict(report: dict) -> None:
+    """Log a serialized (dict) agent report to the database (best-effort).
+
+    The streaming path produces ``report.model_dump(mode="json")`` dicts rather
+    than :class:`AgentReport` objects, so we persist from the dict directly.
+    """
+    try:
+        from deps import get_db
+
+        db = get_db()
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_execution_log (
+                    id TEXT PRIMARY KEY,
+                    query TEXT NOT NULL,
+                    market TEXT,
+                    region TEXT,
+                    workflow_type TEXT,
+                    status TEXT,
+                    steps_json TEXT,
+                    report_json TEXT,
+                    total_duration_ms REAL,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+            cursor.execute(
+                "INSERT INTO agent_execution_log "
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    report.get("id"),
+                    report.get("query", ""),
+                    report.get("market"),
+                    report.get("region"),
+                    report.get("workflow_type"),
+                    report.get("status"),
+                    json.dumps(report.get("steps", []), ensure_ascii=False, default=str),
+                    json.dumps(
+                        {k: v for k, v in report.items() if k not in ("steps", "tool_trace")},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    report.get("total_duration_ms", 0.0),
+                ),
+            )
+            conn.commit()
+    except Exception as exc:
+        logger.debug("Failed to log agent execution (dict): %s", exc)

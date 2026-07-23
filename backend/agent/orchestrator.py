@@ -16,7 +16,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from agent.llm_adapter import LLMAdapter, LLMRequestError, LLMUnavailableError
 from agent.prompts import (
@@ -140,6 +140,217 @@ class AgentOrchestrator:
             len(report.tool_trace),
         )
         return report
+
+    # =========================================================================
+    # Streaming ReAct Execution (SSE)
+    # =========================================================================
+
+    async def run_stream(
+        self,
+        query: str,
+        context: AgentContext,
+        history: Optional[List[Dict[str, str]]] = None,
+        workflow_template_id: Optional[str] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Execute a ReAct run, yielding SSE events for live debugging.
+
+        Event types yielded (dicts):
+            start        {execution_id}
+            status       {message}
+            token        {step, delta}          -- assistant reasoning/answer tokens
+            tool_call    {step, name, call_id, arguments}
+            tool_result  {step, name, call_id, status, duration_ms, summary, key_metrics, error}
+            answer_end   {step}                  -- terminal answer finished streaming
+            report       {report, answer}        -- final structured report
+            error        {message}
+            done         {}
+
+        Multi-turn: ``history`` is a list of prior {role, content} messages
+        (owned by the frontend). Follow-ups re-enter the full ReAct loop and
+        may call tools again.
+        """
+        execution_id = str(uuid.uuid4())[:8]
+        start_time = time.perf_counter()
+        yield {"type": "start", "execution_id": execution_id}
+
+        # Forced template or LLM unavailable -> degrade to non-streaming run.
+        template = self._resolve_template(workflow_template_id, query)
+        if template is not None or not self.llm.is_available():
+            reason = "指定模板模式" if template is not None else "LLM 未配置，降级为模板模式"
+            yield {"type": "status", "message": f"{reason}（无逐字流式）"}
+            report = await self.run(
+                query, context, workflow_template_id=workflow_template_id
+            )
+            yield {
+                "type": "report",
+                "report": report.model_dump(mode="json"),
+                "answer": report.executive_summary or report.recommendation,
+            }
+            yield {"type": "done"}
+            return
+
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if history:
+            for m in history:
+                role = m.get("role")
+                content = m.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+        messages.append({
+            "role": "user",
+            "content": f"{build_context_message(context)}\n\n用户请求: {query}",
+        })
+
+        steps: List[AgentStep] = []
+        tool_results: List[ToolResult] = []
+        stage_results: List[StageResult] = []
+        openai_tools = self.tools.to_openai_tools()
+        final_answer_given = False
+        final_content = ""
+
+        for step_num in range(1, self.max_steps + 1):
+            if time.perf_counter() - start_time > self.total_timeout:
+                yield {"type": "status", "message": "达到总超时，提前结束"}
+                break
+
+            content_buf = ""
+            tool_calls: List[Dict[str, Any]] = []
+            try:
+                async for ev in self.llm.chat_stream_events(messages, openai_tools):
+                    etype = ev.get("type")
+                    if etype == "content":
+                        content_buf += ev["text"]
+                        yield {"type": "token", "step": step_num, "delta": ev["text"]}
+                    elif etype == "tool_calls":
+                        tool_calls = ev["tool_calls"]
+            except (LLMRequestError, LLMUnavailableError) as exc:
+                logger.error("Stream LLM call failed at step %d: %s", step_num, exc)
+                yield {"type": "error", "message": f"LLM 调用失败: {exc}"}
+                break
+
+            # No tool calls -> the streamed content is the final answer.
+            if not tool_calls:
+                final_answer_given = True
+                final_content = content_buf
+                steps.append(AgentStep(step_number=step_num, thought=content_buf))
+                yield {"type": "answer_end", "step": step_num}
+                break
+
+            # Record assistant turn (with tool calls) into the conversation.
+            messages.append({
+                "role": "assistant",
+                "content": content_buf or "",
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            })
+
+            for tc in tool_calls:
+                tool_name = tc["name"]
+                call_id = tc["id"]
+                merged_args = dict(tc["arguments"])
+                if "region" not in merged_args and context.effective_region:
+                    merged_args["region"] = context.effective_region
+                if "year" not in merged_args:
+                    merged_args["year"] = context.effective_year
+                for k, v in context.params_override.items():
+                    if k not in merged_args:
+                        merged_args[k] = v
+
+                yield {
+                    "type": "tool_call",
+                    "step": step_num,
+                    "name": tool_name,
+                    "call_id": call_id,
+                    "arguments": merged_args,
+                }
+
+                result = await self.tools.execute(
+                    tool_name=tool_name,
+                    arguments=merged_args,
+                    context=context,
+                    call_id=call_id,
+                    timeout_seconds=self.tool_timeout,
+                )
+                tool_results.append(result)
+                sr = self._to_stage_result(result)
+                stage_results.append(sr)
+                steps.append(AgentStep(
+                    step_number=step_num,
+                    thought=content_buf,
+                    action=ToolCall(id=call_id, tool_name=tool_name, arguments=merged_args),
+                    observation=result,
+                ))
+                yield {
+                    "type": "tool_result",
+                    "step": step_num,
+                    "name": tool_name,
+                    "call_id": call_id,
+                    "status": result.status.value,
+                    "duration_ms": result.duration_ms,
+                    "summary": sr.summary,
+                    "key_metrics": sr.key_metrics,
+                    "error": result.error_message,
+                }
+                messages.append(result.to_llm_message())
+                content_buf = ""  # avoid attributing prior reasoning to next tool
+
+        # Determine status
+        success_count = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
+        if not tool_results:
+            status = WorkflowStatus.COMPLETED if final_answer_given else WorkflowStatus.FAILED
+        elif success_count == len(tool_results):
+            status = WorkflowStatus.COMPLETED
+        elif success_count > 0:
+            status = WorkflowStatus.PARTIAL
+        else:
+            status = WorkflowStatus.FAILED
+
+        # Build the structured report card (synthesizer may call the LLM).
+        yield {"type": "status", "message": "正在生成结构化报告..."}
+        try:
+            executive_summary, recommendation, confidence = await self._synthesize(
+                query, tool_results, context
+            )
+        except Exception as exc:  # noqa: BLE001 - synthesis is best-effort
+            logger.warning("Synthesis failed in stream: %s", exc)
+            executive_summary, recommendation, confidence = (
+                final_content, "", ConfidenceLevel.LOW,
+            )
+
+        report = AgentReport(
+            id=execution_id,
+            query=query,
+            workflow_type="react_llm_stream",
+            region=context.effective_region,
+            market=context.market.value,
+            executive_summary=executive_summary,
+            stage_results=stage_results,
+            recommendation=recommendation,
+            confidence_level=confidence,
+            risk_flags=self._extract_risk_flags(tool_results),
+            data_quality_notes=self._extract_quality_notes(tool_results),
+            tool_trace=tool_results,
+            steps=steps,
+            status=status,
+            metadata={"mode": "react_stream", "llm_model": self.llm.config.model},
+        )
+        report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
+
+        yield {
+            "type": "report",
+            "report": report.model_dump(mode="json"),
+            "answer": final_content or executive_summary,
+        }
+        yield {"type": "done"}
 
     # =========================================================================
     # Template Resolution
