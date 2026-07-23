@@ -24,7 +24,7 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
     "full_investment_feasibility": WorkflowTemplate(
         id="full_investment_feasibility",
         name="完整投资可行性分析",
-        description="Run the complete 7-stage BESS investment feasibility analysis: market screening → revenue deep dive → saturation → outlook scenarios → co-optimized backtest → financial modeling → risk stratification.",
+        description="完整 7 阶段 BESS 投资可行性分析：市场筛选 → 收入深潜 → 饱和竞争 → 投资前景 → 联合优化回测 → 财务建模 → 风险分层",
         steps=[
             "data_quality_check",
             "market_screening",
@@ -53,7 +53,7 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
     "quick_market_overview": WorkflowTemplate(
         id="quick_market_overview",
         name="快速市场概览",
-        description="Quick overview of current market conditions: data quality, price trends, grid forecast, and regional ranking.",
+        description="快速了解当前市场状况：数据质量、价格趋势、电网预测、区域排名",
         steps=[
             "data_quality_check",
             "price_trend_analysis",
@@ -69,7 +69,7 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
     "fcas_opportunity": WorkflowTemplate(
         id="fcas_opportunity",
         name="FCAS 机会评估",
-        description="Focused FCAS revenue opportunity assessment: current FCAS prices, collapse risk, and saturation impact.",
+        description="聚焦 FCAS 收入机会评估：当前 FCAS 价格、崩溃风险、饱和影响",
         steps=[
             "fcas_analysis",
             "fcas_collapse_forecast",
@@ -87,7 +87,7 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
     "revenue_deep_dive": WorkflowTemplate(
         id="revenue_deep_dive",
         name="收入结构深潜",
-        description="Deep dive into revenue structure: price spread analysis, spike profits, FCAS breakdown, and co-optimized backtest.",
+        description="深入分析收入结构：价差分析、尖峰利润、FCAS 拆分、联合优化回测",
         steps=[
             "price_trend_analysis",
             "peak_analysis",
@@ -107,7 +107,7 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
     "risk_assessment": WorkflowTemplate(
         id="risk_assessment",
         name="风险评估",
-        description="Comprehensive risk assessment: merchant risk Monte Carlo, cannibalization forecast, FCAS collapse risk, and revenue stratification.",
+        description="综合风险评估：商户风险蒙特卡洛模拟、自蚀预测、FCAS 崩溃风险、收入分层",
         steps=[
             "merchant_risk_simulate",
             "cannibalization_forecast",
@@ -128,7 +128,7 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
     "regional_comparison": WorkflowTemplate(
         id="regional_comparison",
         name="区域对比分析",
-        description="Compare investment potential across regions using screening scores, price spreads, and timing scores.",
+        description="跨区域投资潜力对比：筛选评分、价差水平、时机评分综合比较",
         steps=[
             "market_screening",
             "regional_ranking",
