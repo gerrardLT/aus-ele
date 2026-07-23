@@ -21,6 +21,7 @@ const MarketPage = lazy(() => import('./pages/MarketPage.jsx'))
 const FinlandPage = lazy(() => import('./pages/FinlandPage.jsx'))
 const FingridPage = lazy(() => import('./pages/FingridPage.jsx'))
 const DeveloperPortalPage = lazy(() => import('./pages/DeveloperPortalPage.jsx'))
+const AgentPage = lazy(() => import('./pages/AgentPage.jsx'))
 
 function BootFallback() {
   return (
@@ -40,7 +41,9 @@ const rootElement = rootPage === 'wem'
       ? <FingridPage />
       : rootPage === 'developer'
         ? <DeveloperPortalPage />
-        : <FilterProvider><MarketPage market="NEM" /></FilterProvider>
+        : rootPage === 'agent'
+          ? <AgentPage />
+          : <FilterProvider><MarketPage market="NEM" /></FilterProvider>
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

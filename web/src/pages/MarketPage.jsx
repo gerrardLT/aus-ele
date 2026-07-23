@@ -184,6 +184,7 @@ export default function MarketPage({ market }) {
           </button>
         )}
       </div>
+
     </PageShell>
   );
 }

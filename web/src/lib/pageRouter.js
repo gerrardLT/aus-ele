@@ -11,5 +11,8 @@ export function resolveRootPage(pathname = '/') {
   if (pathname.startsWith('/developer')) {
     return 'developer';
   }
+  if (pathname.startsWith('/agent')) {
+    return 'agent';
+  }
   return 'aemo';
 }

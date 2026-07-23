@@ -23,6 +23,7 @@ export default function SidebarNavigation({
   ];
 
   const otherLinks = [
+    { id: 'agent', label: lang === 'zh' ? 'AI 编排分析' : 'AI Agent', path: '/agent' },
     { id: 'finland', label: lang === 'zh' ? 'Finland 市场' : 'Finland', path: '/finland' },
     { id: 'fingrid', label: 'Fingrid', path: '/fingrid' },
     { id: 'developer', label: lang === 'zh' ? '开发者门户' : 'Developer', path: '/developer' },
