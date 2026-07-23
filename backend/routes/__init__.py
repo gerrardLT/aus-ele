@@ -40,6 +40,7 @@ ROUTE_MODULES = [
     "routes.cost_structure_routes",
     "routes.forward_price_routes",
     "routes.narrative_routes",
+    "routes.agent_routes",
 ]
 
 # Module-level state tracking degraded modules for health reporting

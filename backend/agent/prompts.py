@@ -1,0 +1,165 @@
+"""Agent Prompt Templates.
+
+System prompts and tool description templates for the AI Agent orchestrator.
+Prompts are designed to:
+- Establish the agent's role and boundaries
+- Enforce data-grounded responses (no hallucination)
+- Follow the project's Truth → Forecast → Decision framework
+- Maintain audit trail awareness
+"""
+
+from __future__ import annotations
+
+from agent.schemas import AgentContext
+
+
+# =============================================================================
+# System Prompt
+# =============================================================================
+
+SYSTEM_PROMPT = """你是 AEMO Intelligence 平台的 AI 分析编排器（Workflow Orchestrator）。
+
+## 你的角色
+你帮助储能投资分析师、电力交易员和能源基金 PM 执行多步骤市场分析工作流。
+你通过调用分析工具获取数据，然后综合结果输出结构化的投资决策参考报告。
+
+## 可用市场
+- NEM（国家电力市场）：NSW1, QLD1, VIC1, SA1, TAS1
+- WEM（西澳电力市场）：WEM
+
+## 分析框架
+遵循 Truth → Forecast → Decision 三层结构：
+1. Truth（市场真相）：当前价格结构、波动率、负价分布
+2. Forecast（前瞻判断）：供需事件、饱和趋势、FCAS 崩塌风险
+3. Decision（投资决策）：NPV/IRR、风险分层、联合优化回测
+
+## 严格规则
+1. 所有数值引用必须来自工具返回结果，绝不编造数据
+2. 投资分析结论必须附带假设条件和置信度说明
+3. 不生成自动交易建议，只提供分析参考
+4. 如果数据质量不足（quality_score < 0.6 或 data_grade 为 preview），必须在报告中明确标注
+5. 如果工具调用失败，诚实说明哪些分析未能完成，不伪造结果
+6. 始终先运行 data_quality_check 了解数据可用性
+7. 回复使用中文，专业术语保留英文原文并括号标注
+
+## 输出格式
+完成所有工具调用后，输出：
+1. 执行摘要（3-5 句话概括核心发现）
+2. 各阶段关键指标（结构化数据）
+3. 综合建议（明确标注置信度 high/medium/low）
+4. 风险标记（列出主要风险因素）
+5. 数据质量说明（标注任何数据局限性）
+"""
+
+
+# =============================================================================
+# Context Injection
+# =============================================================================
+
+
+def build_context_message(context: AgentContext) -> str:
+    """Build a context message injecting current execution parameters."""
+    parts = [
+        f"当前分析上下文：",
+        f"- 市场: {context.market.value}",
+        f"- 区域: {context.effective_region}",
+        f"- 年份: {context.effective_year}",
+    ]
+    if context.params_override:
+        params_str = ", ".join(f"{k}={v}" for k, v in context.params_override.items())
+        parts.append(f"- 用户指定参数: {params_str}")
+    return "\n".join(parts)
+
+
+# =============================================================================
+# Synthesis Prompt
+# =============================================================================
+
+SYNTHESIS_PROMPT = """基于以下工具调用结果，生成一份结构化的投资决策参考报告。
+
+## 用户原始请求
+{query}
+
+## 工具调用结果
+{tool_results}
+
+## 输出要求
+请按以下结构输出报告：
+
+### 执行摘要
+用 3-5 句话概括核心发现和投资建议方向。
+
+### 关键指标
+列出各分析阶段的核心数值指标（使用工具返回的真实数据）。
+
+### 综合建议
+给出明确的投资方向建议，标注置信度（high/medium/low）和依据。
+
+### 风险标记
+列出 3-5 个主要风险因素。
+
+### 数据质量说明
+说明数据局限性、覆盖范围和任何影响结论可靠性的因素。
+
+注意：
+- 只使用工具返回的真实数据，不编造任何数值
+- 如果某些工具调用失败，说明哪些分析缺失
+- 使用中文，专业术语保留英文
+"""
+
+
+# =============================================================================
+# Fallback Report Template (when LLM unavailable)
+# =============================================================================
+
+FALLBACK_REPORT_TEMPLATE = """# 分析报告：{query}
+
+## 工作流类型
+{workflow_name}
+
+## 分析区域
+{market} / {region}
+
+## 执行结果
+
+{stage_summaries}
+
+## 数据质量
+{quality_notes}
+
+## 说明
+本报告由预定义工作流模板自动生成（LLM 不可用时的降级模式）。
+各阶段原始数据已完整记录，可供人工判读。
+"""
+
+
+# =============================================================================
+# Tool Call Explanation (for progress reporting)
+# =============================================================================
+
+TOOL_STAGE_LABELS = {
+    "data_quality_check": "检查数据质量",
+    "market_screening": "市场筛选评分",
+    "price_trend_analysis": "价格趋势分析",
+    "regional_ranking": "区域投资排名",
+    "spike_profit_analysis": "极端价格利润分析",
+    "peak_analysis": "峰谷价差分析",
+    "fcas_analysis": "FCAS 辅助服务分析",
+    "saturation_check": "BESS 饱和检查",
+    "cannibalization_forecast": "收入稀释预测",
+    "fcas_collapse_forecast": "FCAS 崩塌预测",
+    "regional_timing_score": "投资时机评分",
+    "merchant_risk_simulate": "蒙特卡洛风险模拟",
+    "forward_spread_projection": "20年前瞻价差",
+    "co_optimized_backtest": "联合优化回测",
+    "investment_analysis": "投资 NPV/IRR 分析",
+    "risk_stratification": "收入风险分层",
+    "cross_validation": "多源交叉验证",
+    "narrative_attribution": "因果归因分析",
+    "grid_forecast": "电网预测",
+}
+
+
+def get_tool_progress_label(tool_name: str) -> str:
+    """Get a human-readable progress label for a tool."""
+    return TOOL_STAGE_LABELS.get(tool_name, f"执行 {tool_name}")
