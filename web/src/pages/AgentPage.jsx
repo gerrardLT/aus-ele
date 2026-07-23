@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import {
+  runAgent,
   runAgentAsync,
   pollTaskUntilDone,
   listWorkflows,
@@ -65,16 +66,18 @@ export default function AgentPage() {
       setReport(null);
       setError(null);
 
-      try {
-        const params = {
-          query: customQuery || query || `运行 ${workflowId} 工作流`,
-          market,
-          region: region || undefined,
-          workflow_template: workflowId || undefined,
-          max_steps: 15,
-        };
+      const params = {
+        query: customQuery || query || `运行 ${workflowId} 工作流`,
+        market,
+        region: region || undefined,
+        workflow_template: workflowId || undefined,
+        max_steps: 15,
+      };
 
+      try {
+        // Try async mode first
         const { task_id } = await runAgentAsync(params);
+        setProgress('已提交，等待执行...');
         const result = await pollTaskUntilDone(task_id, {
           intervalMs: 2000,
           timeoutMs: 300000,
@@ -83,13 +86,24 @@ export default function AgentPage() {
 
         setReport(result.report);
         setProgress('');
-        // Refresh history
         getAgentHistory(10)
           .then((data) => setHistory(data.executions || []))
           .catch(() => {});
-      } catch (err) {
-        setError(err.message || '执行失败');
-        setProgress('');
+      } catch (asyncErr) {
+        // Fallback: use synchronous /run endpoint
+        console.warn('Async mode failed, falling back to sync:', asyncErr.message);
+        setProgress('异步模式不可用，切换同步执行...');
+        try {
+          const syncResult = await runAgent(params);
+          setReport(syncResult.report);
+          setProgress('');
+          getAgentHistory(10)
+            .then((data) => setHistory(data.executions || []))
+            .catch(() => {});
+        } catch (syncErr) {
+          setError(syncErr.message || '执行失败');
+          setProgress('');
+        }
       } finally {
         setRunning(false);
       }

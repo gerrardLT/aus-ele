@@ -572,7 +572,7 @@ def _exec_grid_forecast(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     market = params.get("market", ctx.market.value)
     horizon = params.get("horizon", "24h")
 
-    result = grid_forecast.generate_forecast(
+    result = grid_forecast.get_grid_forecast_response(
         db, market=market, region=region, horizon=horizon
     )
     return result if isinstance(result, dict) else {"region": region, "result": str(result)}

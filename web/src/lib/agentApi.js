@@ -1,7 +1,9 @@
 // web/src/lib/agentApi.js
 // AI Agent API client for workflow orchestration
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8085/api';
+import { getApiBase } from './apiBase.js';
+
+const API_BASE = getApiBase();
 const AGENT_BASE = `${API_BASE}/v1/agent`;
 
 /**

@@ -16,7 +16,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -41,10 +41,63 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agent", tags=["AI Agent"])
 
 # ---------------------------------------------------------------------------
-# In-memory async task store (simple implementation for single-instance)
+# Redis-backed async task store (shared across gunicorn workers)
+# Falls back to in-memory dict when Redis is unavailable.
 # ---------------------------------------------------------------------------
 
-_async_tasks: Dict[str, dict] = {}
+TASK_TTL_SECONDS = 3600  # Tasks expire after 1 hour
+_TASK_PREFIX = "agent_task:"
+
+# In-memory fallback (single-worker or Redis-down scenarios)
+_fallback_tasks: Dict[str, dict] = {}
+
+
+def _get_redis_client():
+    """Get Redis client via the shared cache infrastructure."""
+    try:
+        from deps import get_cache
+        return get_cache()._get_client()
+    except Exception:
+        return None
+
+
+def _store_task(task_id: str, data: dict) -> None:
+    """Persist task state to Redis (with in-memory fallback)."""
+    # Always keep in-memory as hot cache
+    _fallback_tasks[task_id] = data
+    client = _get_redis_client()
+    if client is not None:
+        try:
+            client.setex(
+                f"{_TASK_PREFIX}{task_id}",
+                TASK_TTL_SECONDS,
+                json.dumps(data, ensure_ascii=False, default=str),
+            )
+        except Exception as exc:
+            logger.debug("Redis task store failed: %s", exc)
+
+
+def _get_task(task_id: str) -> Optional[dict]:
+    """Retrieve task state from Redis or in-memory fallback."""
+    # Try Redis first (authoritative in multi-worker)
+    client = _get_redis_client()
+    if client is not None:
+        try:
+            raw = client.get(f"{_TASK_PREFIX}{task_id}")
+            if raw:
+                return json.loads(raw)
+        except Exception as exc:
+            logger.debug("Redis task get failed: %s", exc)
+    # Fallback to in-memory
+    return _fallback_tasks.get(task_id)
+
+
+def _update_task(task_id: str, **fields) -> None:
+    """Update specific fields of a task."""
+    task = _get_task(task_id)
+    if task is not None:
+        task.update(fields)
+        _store_task(task_id, task)
 
 
 # ---------------------------------------------------------------------------
@@ -96,15 +149,16 @@ async def run_agent_async(request: AgentRunRequest) -> AgentAsyncResponse:
     """Submit an agent workflow for async execution.
 
     Returns a task_id that can be polled via GET /task/{id}.
+    Task state is stored in Redis (shared across workers) with 1h TTL.
     """
     task_id = str(uuid.uuid4())[:12]
 
-    _async_tasks[task_id] = {
-        "status": WorkflowStatus.RUNNING,
+    _store_task(task_id, {
+        "status": WorkflowStatus.RUNNING.value,
         "report": None,
         "progress": "Workflow submitted",
         "created_at": datetime.now(timezone.utc).isoformat(),
-    }
+    })
 
     # Launch background task
     asyncio.create_task(_execute_async_task(task_id, request))
@@ -125,8 +179,7 @@ async def _execute_async_task(task_id: str, request: AgentRunRequest) -> None:
     )
 
     def progress_cb(msg: str) -> None:
-        if task_id in _async_tasks:
-            _async_tasks[task_id]["progress"] = msg
+        _update_task(task_id, progress=msg)
 
     try:
         report = await orchestrator.run(
@@ -135,26 +188,35 @@ async def _execute_async_task(task_id: str, request: AgentRunRequest) -> None:
             workflow_template_id=request.workflow_template,
             progress_callback=progress_cb,
         )
-        _async_tasks[task_id]["status"] = report.status
-        _async_tasks[task_id]["report"] = report
-        _async_tasks[task_id]["progress"] = "Completed"
+        # Serialize report to dict for Redis storage
+        report_dict = report.model_dump(mode="json")
+        status_val = report.status.value if hasattr(report.status, "value") else str(report.status)
+        _update_task(
+            task_id,
+            status=status_val,
+            report=report_dict,
+            progress="Completed",
+        )
         _log_execution(report)
     except Exception as exc:
         logger.error("Async agent task %s failed: %s", task_id, exc, exc_info=True)
-        _async_tasks[task_id]["status"] = WorkflowStatus.FAILED
-        _async_tasks[task_id]["progress"] = f"Failed: {exc}"
+        _update_task(
+            task_id,
+            status=WorkflowStatus.FAILED.value,
+            progress=f"Failed: {exc}",
+        )
 
 
 @router.get("/task/{task_id}", response_model=AgentTaskStatusResponse)
 async def get_task_status(task_id: str) -> AgentTaskStatusResponse:
     """Query the status of an async agent task."""
-    task = _async_tasks.get(task_id)
+    task = _get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     return AgentTaskStatusResponse(
         task_id=task_id,
-        status=task["status"],
+        status=task.get("status", "unknown"),
         report=task.get("report"),
         progress=task.get("progress"),
     )
@@ -234,7 +296,7 @@ def _log_execution(report) -> None:
                     steps_json TEXT,
                     report_json TEXT,
                     total_duration_ms REAL,
-                    created_at TEXT DEFAULT (datetime('now'))
+                    created_at TIMESTAMPTZ DEFAULT now()
                 )
             """)
             cursor.execute(
