@@ -133,11 +133,11 @@ write_env_file() {
         echo "AUS_ELE_JWT_SECRET=${AUS_ELE_JWT_SECRET}"
         echo "FINGRID_API_KEY=${FINGRID_API_KEY}"
         echo "AUS_ELE_PG_PASSWORD=${AUS_ELE_PG_PASSWORD:-aemo_pg_pass_2026}"
-        # AI Agent LLM 配置（U6）
-        echo "AUS_ELE_AGENT_LLM_PROVIDER=${AUS_ELE_AGENT_LLM_PROVIDER:-openai}"
-        echo "AUS_ELE_AGENT_LLM_API_KEY=${AUS_ELE_AGENT_LLM_API_KEY:-}"
-        echo "AUS_ELE_AGENT_LLM_BASE_URL=${AUS_ELE_AGENT_LLM_BASE_URL:-}"
-        echo "AUS_ELE_AGENT_LLM_MODEL=${AUS_ELE_AGENT_LLM_MODEL:-gpt-4o}"
+        # AI Agent LLM 配置（U6）— 固定值，无需 GitHub Secrets
+        echo "AUS_ELE_AGENT_LLM_PROVIDER=openai"
+        echo "AUS_ELE_AGENT_LLM_API_KEY=sk-0ce5871611da7ad64550a11a99237bf8a733f079eddf4ace5b9c39d9d75207c1"
+        echo "AUS_ELE_AGENT_LLM_BASE_URL=https://api.443.hk/v1"
+        echo "AUS_ELE_AGENT_LLM_MODEL=gpt-5.6-sol"
         # CORS（生产域名）
         echo "AUS_ELE_CORS_ALLOW_ORIGINS=${AUS_ELE_CORS_ALLOW_ORIGINS:-}"
     } >>"${ENV_FILE}"
