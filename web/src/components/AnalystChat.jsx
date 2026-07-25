@@ -41,9 +41,11 @@ export default function AnalystChat({ lang = 'zh' }) {
     setMessages(prev => [...prev, { role: 'user', content: query }]);
     setInput('');
     setLoading(true);
+    // Add placeholder for streaming response
+    setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true }]);
 
     try {
-      const res = await fetch(`${API_BASE}/api/v1/agent/run`, {
+      const res = await fetch(`${API_BASE}/api/v1/agent/chat-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -53,17 +55,85 @@ export default function AnalystChat({ lang = 'zh' }) {
             region: filters.region || 'SA1',
             year: filters.year || 2025,
           },
-          stream: false,
+          history: messages.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content })),
         }),
       });
-      const data = await res.json();
-      const reply = data?.response || data?.synthesis || data?.error || 'No response';
-      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+      // SSE streaming reader — typewriter effect
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE frames
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'token') {
+              accumulated += event.content || '';
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', content: accumulated, streaming: true };
+                return updated;
+              });
+            } else if (event.type === 'report') {
+              // Final structured report — replace accumulated text
+              const reportText = event.report?.synthesis || event.report?.summary || accumulated;
+              accumulated = reportText;
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', content: reportText, streaming: false };
+                return updated;
+              });
+            } else if (event.type === 'tool_call') {
+              // Show tool activity indicator
+              const toolNote = `\n\n> 🔧 ${event.tool || 'tool'}...`;
+              accumulated += toolNote;
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', content: accumulated, streaming: true };
+                return updated;
+              });
+            } else if (event.type === 'error') {
+              accumulated += `\n\n⚠️ ${event.message || 'Error'}`;
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', content: accumulated, streaming: false };
+                return updated;
+              });
+            }
+          } catch { /* skip malformed SSE frame */ }
+        }
+      }
+
+      // Ensure streaming flag is cleared
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.streaming) updated[updated.length - 1] = { ...last, streaming: false };
+        return updated;
+      });
     } catch (err) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: lang === 'zh' ? `请求失败: ${err.message}` : `Request failed: ${err.message}`,
-      }]);
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role: 'assistant',
+          content: lang === 'zh' ? `请求失败: ${err.message}` : `Request failed: ${err.message}`,
+          streaming: false,
+        };
+        return updated;
+      });
     }
     setLoading(false);
   }
@@ -135,6 +205,7 @@ export default function AnalystChat({ lang = 'zh' }) {
                       : 'bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)]'
                   }`}>
                     {msg.content}
+                    {msg.streaming && <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-[var(--color-primary)] animate-pulse align-middle" />}
                   </div>
                   {msg.role === 'user' && <User size={16} className="text-[var(--color-muted)] mt-1 flex-shrink-0" />}
                 </div>
