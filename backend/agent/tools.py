@@ -449,7 +449,6 @@ def _exec_forward_spread(params: Dict[str, Any], ctx: AgentContext) -> Dict[str,
     from models.forward_price_models import ScenarioType
 
     region = params.get("region", ctx.effective_region)
-    years = params.get("projection_years", 20)
     power_mw = params.get("power_mw", 100.0)
     duration_hours = params.get("duration_hours", 4.0)
 

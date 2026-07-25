@@ -62,10 +62,12 @@ class AgentOrchestrator:
         report = await orchestrator.run("分析 NSW1 投资可行性", context)
     """
 
-    # Tools that are pure-read and safe to cache within a session
+    # Tools that are pure-read and safe to cache within a session.
+    # Only tools whose output depends solely on (region, year) belong here.
+    # peak_analysis (window_hours) and spike_profit (threshold) are excluded.
     _CACHEABLE_TOOLS = {
-        "data_quality_check", "price_trend_analysis", "peak_analysis",
-        "spike_profit_analysis", "saturation_check", "market_screening",
+        "data_quality_check", "price_trend_analysis",
+        "saturation_check", "market_screening",
     }
     _CACHE_TTL_SECONDS = 300  # 5 minutes
 
