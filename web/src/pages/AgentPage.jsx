@@ -119,12 +119,14 @@ export default function AgentPage() {
           break;
         case 'tool_call':
           patchActive((m) => ({
+            totalSteps: event.total || m.totalSteps,
             trace: [
               ...(m.trace || []),
               {
                 callId: event.call_id,
                 name: event.name,
                 step: event.step,
+                total: event.total,
                 arguments: event.arguments,
                 status: 'running',
               },
@@ -642,7 +644,7 @@ function AssistantMessage({ message }) {
           defaultOpen={!isDone}
           badge={trace.some((t) => t.status === 'running') ? '执行中' : undefined}
         >
-          <ToolTrace trace={trace} />
+          <ToolTrace trace={trace} totalSteps={message.totalSteps} />
         </Collapsible>
       )}
 
@@ -701,9 +703,26 @@ function Collapsible({ title, defaultOpen = false, badge, children }) {
 
 // ─── Tool trace (ReAct live steps) ──────────────────────────────────────────
 
-function ToolTrace({ trace }) {
+function ToolTrace({ trace, totalSteps }) {
+  const doneCount = trace.filter((t) => t.status !== 'running').length;
+  const total = totalSteps || trace.length;
+
   return (
     <div className="space-y-1.5">
+      {/* Progress bar */}
+      {total > 1 && (
+        <div className="mb-2 flex items-center gap-2">
+          <div className="h-1 flex-1 rounded-full bg-[var(--color-border)]">
+            <div
+              className="h-1 rounded-full bg-[var(--color-primary)] transition-all duration-300"
+              style={{ width: `${(doneCount / total) * 100}%` }}
+            />
+          </div>
+          <span className="text-[10px] tabular-nums text-[var(--color-muted)]">
+            {doneCount}/{total}
+          </span>
+        </div>
+      )}
       {trace.map((t, i) => (
         <div
           key={t.callId || `${t.name}_${i}`}
@@ -867,6 +886,63 @@ function ReportView({ report }) {
           </ul>
         </section>
       )}
+
+      {/* Footer: base params + suggested follow-ups */}
+      <ReportFooter report={report} />
     </div>
+  );
+}
+
+function ReportFooter({ report }) {
+  const params = report.metadata?.params;
+  const hasParams = params && (params.power_mw || params.duration_hours);
+
+  const suggestions = [];
+  if (hasParams) {
+    suggestions.push(`如果 CAPEX 降到 ${Math.round((params.capex_per_kwh || 400) * 0.75)}/kWh，结果会怎样？`);
+    suggestions.push('换成 2h 储能时长对比一下？');
+  }
+  suggestions.push('哪些风险因素最可能压低收益？');
+
+  return (
+    <section className="border-t border-[var(--color-border)] pt-4 mt-2">
+      {hasParams && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
+            基准参数
+          </span>
+          {params.power_mw && (
+            <span className="rounded bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] text-[var(--color-muted)]">
+              {params.power_mw} MW / {params.duration_hours || 4}h
+            </span>
+          )}
+          {params.capex_per_kwh && (
+            <span className="rounded bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] text-[var(--color-muted)]">
+              CAPEX {params.capex_per_kwh}/kWh
+            </span>
+          )}
+          {params.discount_rate && (
+            <span className="rounded bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] text-[var(--color-muted)]">
+              折现率 {(params.discount_rate * 100).toFixed(0)}%
+            </span>
+          )}
+        </div>
+      )}
+      <div>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
+          可以继续追问
+        </span>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {suggestions.map((s, i) => (
+            <span
+              key={i}
+              className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)]"
+            >
+              {s}
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

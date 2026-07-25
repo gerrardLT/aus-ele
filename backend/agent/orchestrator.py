@@ -190,8 +190,24 @@ class AgentOrchestrator:
             stage_results: List[StageResult] = []
             step_num = 0
 
-            groups = template.parallel_groups or [[i] for i in range(len(template.steps))]
-            for group in groups:
+            # Market-aware filtering: skip NEM-only tools for WEM
+            NEM_ONLY_TOOLS = {"fcas_analysis", "fcas_collapse_forecast", "regional_timing_score", "regional_ranking"}
+            is_wem = context.market.value == "WEM"
+            filtered_steps = [
+                s for s in template.steps if not (is_wem and s in NEM_ONLY_TOOLS)
+            ]
+            total_steps = len(filtered_steps)
+
+            # Rebuild parallel groups with filtered indices
+            step_to_idx = {s: i for i, s in enumerate(template.steps)}
+            filtered_groups = []
+            for group in (template.parallel_groups or [[i] for i in range(len(template.steps))]):
+                fg = [step_to_idx[template.steps[idx]] for idx in group
+                      if idx < len(template.steps) and not (is_wem and template.steps[idx] in NEM_ONLY_TOOLS)]
+                if fg:
+                    filtered_groups.append(fg)
+
+            for group in filtered_groups:
                 group_tasks = []
                 group_names = []
                 for idx in group:
@@ -203,6 +219,7 @@ class AgentOrchestrator:
                         yield {
                             "type": "tool_call",
                             "step": step_num,
+                            "total": total_steps,
                             "name": tool_name,
                             "call_id": f"tmpl_{step_num}",
                             "arguments": effective_params,
@@ -272,7 +289,7 @@ class AgentOrchestrator:
                 tool_trace=tool_results,
                 steps=[],
                 status=status,
-                metadata={"mode": "template_stream", "template_id": template.id},
+                metadata={"mode": "template_stream", "template_id": template.id, "params": effective_params},
             )
             report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
 
