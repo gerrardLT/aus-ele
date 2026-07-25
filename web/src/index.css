@@ -88,22 +88,23 @@
 }
 
 /* --- U1: Data glow layer (active only in dark mode via --glow-color) --- */
-@layer utilities {
-  .glow-line {
-    filter: drop-shadow(0 0 4px var(--glow-color));
-  }
-  .glow-kpi {
-    text-shadow: 0 0 12px var(--glow-color);
-  }
-  .panel-glass {
-    backdrop-filter: blur(12px);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, calc(0.04 * var(--glow-opacity)));
-  }
-  .panel-depth {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-  .panel-depth:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, calc(0.15 * var(--glow-opacity)));
-  }
+.glow-line {
+  filter: drop-shadow(0 0 4px var(--glow-color));
+}
+.glow-kpi {
+  text-shadow: 0 0 12px var(--glow-color);
+}
+.panel-glass {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+[data-theme="dark"] .panel-glass {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.panel-depth {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+[data-theme="dark"] .panel-depth:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 }

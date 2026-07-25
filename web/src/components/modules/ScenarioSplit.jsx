@@ -5,7 +5,7 @@
  * 复用 ReactiveParamPanel 驱动 Alternative 请求。
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, Fragment } from 'react';
 import { Pin } from 'lucide-react';
 import { useFilters } from '../../contexts/FilterContext';
 import { fetchJson } from '../../lib/apiClient';
@@ -114,17 +114,19 @@ export default function ScenarioSplit({ lang = 'zh', region }) {
         <span className="text-[var(--color-muted)] font-bold text-right">{lang === 'zh' ? '替代' : 'Alternative'}</span>
         {METRICS.map(m => {
           const d = delta(m.key);
-          return [
-            <span key={`${m.key}-base`} className="font-mono text-[var(--color-text)]">
-              {pinned ? m.format(pinned[m.key]) : '--'}
-            </span>,
-            <span key={`${m.key}-d`} className={`text-center font-mono ${d == null ? 'text-[var(--color-muted)]' : d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {d == null ? '--' : `${d >= 0 ? '+' : ''}${d.toFixed(1)}%`}
-            </span>,
-            <span key={`${m.key}-alt`} className="font-mono text-[var(--color-text)] text-right">
-              {altResult ? m.format(altResult[m.key]) : '--'}
-            </span>,
-          ];
+          return (
+            <Fragment key={m.key}>
+              <span className="font-mono text-[var(--color-text)]">
+                {pinned ? m.format(pinned[m.key]) : '--'}
+              </span>
+              <span className={`text-center font-mono ${d == null ? 'text-[var(--color-muted)]' : d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                {d == null ? '--' : `${d >= 0 ? '+' : ''}${d.toFixed(1)}%`}
+              </span>
+              <span className="font-mono text-[var(--color-text)] text-right">
+                {altResult ? m.format(altResult[m.key]) : '--'}
+              </span>
+            </Fragment>
+          );
         })}
       </div>
     </div>
