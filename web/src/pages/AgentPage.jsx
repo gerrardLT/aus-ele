@@ -17,6 +17,7 @@ import {
   streamAgentChat,
   listWorkflows,
   getAgentHistory,
+  getExecutionDetail,
 } from '../lib/agentApi.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -252,6 +253,37 @@ export default function AgentPage() {
     setError(null);
   }, []);
 
+  const handleLoadHistory = useCallback(
+    async (item) => {
+      if (streaming) return;
+      try {
+        const detail = await getExecutionDetail(item.id);
+        if (!detail || !detail.report) return;
+        const userMsg = { id: nextId(), role: 'user', content: detail.query || item.query };
+        const assistantMsg = {
+          id: nextId(),
+          role: 'assistant',
+          answer: detail.report.executive_summary || '',
+          trace: (detail.report.stage_results || []).map((s, i) => ({
+            callId: `hist_${i}`,
+            name: s.tool_name,
+            step: i + 1,
+            status: s.status,
+            durationMs: s.duration_ms,
+            summary: s.summary || '',
+          })),
+          report: detail.report,
+          streaming: false,
+          answerDone: true,
+        };
+        setMessages([userMsg, assistantMsg]);
+      } catch {
+        // silently ignore load failures
+      }
+    },
+    [streaming],
+  );
+
   const handleKeyDown = useCallback(
     (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -280,6 +312,7 @@ export default function AgentPage() {
       onStop={handleStop}
       onReset={handleReset}
       onKeyDown={handleKeyDown}
+      onLoadHistory={handleLoadHistory}
       onWorkflow={(wf) =>
         sendMessage({ text: input.trim() || `运行 ${wf.name} 工作流`, workflowId: wf.id })
       }
@@ -320,6 +353,7 @@ function AgentLayout({
   onReset,
   onKeyDown,
   onWorkflow,
+  onLoadHistory,
 }) {
   return (
     <div className="flex min-h-screen">
@@ -363,7 +397,11 @@ function AgentLayout({
           )}
           <div className="grid gap-1">
             {history.map((item) => (
-              <div key={item.id} className="rounded-md px-2 py-1.5 text-[11px] text-white/50">
+              <button
+                key={item.id}
+                onClick={() => onLoadHistory(item)}
+                className="w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
+              >
                 <div className="flex items-center gap-1.5">
                   <span
                     className="h-1.5 w-1.5 rounded-full flex-shrink-0"
@@ -377,7 +415,7 @@ function AgentLayout({
                     ? `${(item.total_duration_ms / 1000).toFixed(1)}s`
                     : '—'}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>

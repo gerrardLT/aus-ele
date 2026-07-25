@@ -94,6 +94,17 @@ export async function getAgentHistory(limit = 20) {
 }
 
 /**
+ * Get full execution detail by ID (includes parsed report).
+ * @param {string} executionId
+ * @returns {Promise<Object>} Execution record with report field
+ */
+export async function getExecutionDetail(executionId) {
+  const response = await fetch(`${AGENT_BASE}/history/${executionId}`);
+  if (!response.ok) throw new Error(`Failed to get execution: ${response.status}`);
+  return response.json();
+}
+
+/**
  * Poll an async task until completion.
  * @param {string} taskId
  * @param {Object} [options]

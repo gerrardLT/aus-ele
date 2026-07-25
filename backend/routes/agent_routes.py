@@ -373,6 +373,23 @@ async def get_history(limit: int = 20) -> AgentHistoryResponse:
         return AgentHistoryResponse(executions=[], total=0)
 
 
+@router.get("/history/{execution_id}")
+async def get_execution_detail(execution_id: str) -> Dict:
+    """Get full report for a specific execution by ID."""
+    try:
+        row = await asyncio.get_running_loop().run_in_executor(
+            None, _fetch_execution_detail, execution_id
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Execution not found")
+        return row
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to fetch execution %s: %s", execution_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to fetch execution")
+
+
 def _fetch_history(limit: int) -> list:
     """Synchronous history query (runs in a thread pool executor)."""
     from deps import get_db
@@ -388,6 +405,35 @@ def _fetch_history(limit: int) -> list:
         )
         columns = [desc[0] for desc in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def _fetch_execution_detail(execution_id: str) -> Optional[Dict]:
+    """Fetch full execution record including report_json."""
+    from deps import get_db
+
+    db = get_db()
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_agent_log_table(cursor)
+        cursor.execute(
+            "SELECT id, query, market, region, workflow_type, status, "
+            "report_json, total_duration_ms, created_at "
+            "FROM agent_execution_log WHERE id = ?",
+            (execution_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        columns = [desc[0] for desc in cursor.description]
+        record = dict(zip(columns, row))
+        # Parse report_json back into a dict
+        if record.get("report_json"):
+            try:
+                record["report"] = json.loads(record["report_json"])
+            except (json.JSONDecodeError, TypeError):
+                record["report"] = None
+        del record["report_json"]
+        return record
 
 
 # ---------------------------------------------------------------------------
