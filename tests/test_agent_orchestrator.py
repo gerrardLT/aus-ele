@@ -171,7 +171,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_registry_has_19_tools(self):
         registry = get_tool_registry()
         definitions = registry.list_definitions()
-        self.assertEqual(len(definitions), 19)
+        self.assertEqual(len(definitions), 20)
 
     def test_registry_tool_names(self):
         registry = get_tool_registry()
@@ -197,6 +197,7 @@ class TestToolRegistry(unittest.TestCase):
             "narrative_attribution",
             "grid_forecast",
             "data_quality_check",
+            "compare_regions",
         }
         self.assertEqual(names, expected)
 
@@ -241,7 +242,7 @@ class TestWorkflowTemplates(unittest.TestCase):
 
     def test_six_templates_exist(self):
         templates = list_workflow_templates()
-        self.assertEqual(len(templates), 6)
+        self.assertEqual(len(templates), 7)
 
     def test_template_ids(self):
         expected_ids = {
@@ -251,6 +252,7 @@ class TestWorkflowTemplates(unittest.TestCase):
             "revenue_deep_dive",
             "risk_assessment",
             "regional_comparison",
+            "investment_screening",
         }
         self.assertEqual(set(WORKFLOW_TEMPLATES.keys()), expected_ids)
 
@@ -313,9 +315,28 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(orch.total_timeout, 180.0)
 
     def test_orchestrator_llm_unavailable_without_key(self):
-        orch = get_orchestrator()
-        # Without API key configured, LLM should be unavailable
-        self.assertFalse(orch.llm.is_available())
+        from agent.llm_adapter import LLMAdapter, LLMConfig
+
+        # Explicitly construct an adapter without API key (isolated from .env)
+        config = LLMConfig(provider="openai", api_key="", base_url="", model="gpt-4")
+        adapter = LLMAdapter(config)
+        self.assertFalse(adapter.is_available())
+
+    def test_fallback_routing_via_keyword(self):
+        """When no template specified and LLM unavailable, keyword matching routes."""
+        from agent.llm_adapter import LLMAdapter, LLMConfig
+
+        # Force an unavailable LLM so keyword fallback path is exercised
+        config = LLMConfig(provider="openai", api_key="", base_url="", model="gpt-4")
+        orch = AgentOrchestrator(LLMAdapter(config), get_tool_registry())
+        ctx = AgentContext(market=MarketType.NEM, region="SA1")
+
+        report = asyncio.get_event_loop().run_until_complete(
+            orch.run(query="run full feasibility analysis for SA1", context=ctx)
+        )
+
+        self.assertIsInstance(report, AgentReport)
+        self.assertEqual(report.workflow_type, "full_investment_feasibility")
 
     def test_template_execution_quick_overview(self):
         """Test that template mode executes and returns a report.
@@ -341,18 +362,6 @@ class TestOrchestrator(unittest.TestCase):
         self.assertGreater(report.total_duration_ms, 0)
         # Stage results should be populated even on failure
         self.assertGreater(len(report.stage_results), 0)
-
-    def test_fallback_routing_via_keyword(self):
-        """When no template specified and LLM unavailable, keyword matching routes."""
-        orch = get_orchestrator()
-        ctx = AgentContext(market=MarketType.NEM, region="SA1")
-
-        report = asyncio.get_event_loop().run_until_complete(
-            orch.run(query="run full feasibility analysis for SA1", context=ctx)
-        )
-
-        self.assertIsInstance(report, AgentReport)
-        self.assertEqual(report.workflow_type, "full_investment_feasibility")
 
     def test_progress_callback_invoked(self):
         """Progress callback should be called during execution."""
@@ -445,15 +454,21 @@ class TestSynthesizer(unittest.TestCase):
 
     def test_synthesize_confidence_with_errors(self):
         """When some tools fail, confidence should not be HIGH."""
+        from agent.llm_adapter import LLMAdapter, LLMConfig
+
         ctx = AgentContext(market=MarketType.NEM, region="NSW1")
         tool_results = self._make_tool_results()  # includes one ERROR
 
+        # Use an unavailable LLM to exercise the deterministic rule-based
+        # path; a live LLM's free-text output makes confidence inference
+        # non-deterministic and this assertion flaky.
+        no_llm = LLMAdapter(LLMConfig(provider="openai", api_key="", base_url="", model="gpt-4"))
         _, _, confidence = asyncio.get_event_loop().run_until_complete(
             synthesize_report(
                 query="test",
                 tool_results=tool_results,
                 context=ctx,
-                llm=_LLM,
+                llm=no_llm,
             )
         )
 
@@ -539,15 +554,15 @@ class TestAgentRoutes(unittest.TestCase):
         resp = self.client.get("/api/v1/agent/tools")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertEqual(data["total"], 19)
-        self.assertEqual(len(data["tools"]), 19)
+        self.assertEqual(data["total"], 20)
+        self.assertEqual(len(data["tools"]), 20)
 
     def test_list_workflows_endpoint(self):
         resp = self.client.get("/api/v1/agent/workflows")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertEqual(data["total"], 6)
-        self.assertEqual(len(data["workflows"]), 6)
+        self.assertEqual(data["total"], 7)
+        self.assertEqual(len(data["workflows"]), 7)
 
     def test_run_endpoint_with_template(self):
         resp = self.client.post(

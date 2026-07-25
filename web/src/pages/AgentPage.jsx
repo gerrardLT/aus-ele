@@ -564,6 +564,7 @@ function UserBubble({ text }) {
 function AssistantMessage({ message }) {
   const { answer, trace, status_line, error, report, streaming, answerDone } = message;
   const hasTrace = trace && trace.length > 0;
+  const isDone = !streaming;
 
   return (
     <div className="flex flex-col gap-3">
@@ -575,15 +576,36 @@ function AssistantMessage({ message }) {
         </div>
       )}
 
-      {/* Tool-call trace (ReAct steps) */}
-      {hasTrace && <ToolTrace trace={trace} />}
-
-      {/* Streamed answer text */}
-      {answer && (
-        <div className="whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm leading-6 text-[var(--color-text)]">
-          {answer}
-          {streaming && !answerDone && <span className="ml-0.5 animate-pulse">▍</span>}
+      {/* ① Structured report (conclusion) — always visible, top priority */}
+      {report && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <ReportView report={report} />
         </div>
+      )}
+
+      {/* ② Streamed answer / thinking — collapsible after done */}
+      {answer && (
+        <Collapsible
+          title="推理过程"
+          defaultOpen={!isDone}
+          badge={streaming && !answerDone ? '生成中' : undefined}
+        >
+          <div className="whitespace-pre-wrap text-sm leading-6 text-[var(--color-text)]">
+            {answer}
+            {streaming && !answerDone && <span className="ml-0.5 animate-pulse">▍</span>}
+          </div>
+        </Collapsible>
+      )}
+
+      {/* ③ Tool-call trace (steps) — collapsible after done */}
+      {hasTrace && (
+        <Collapsible
+          title={`分析步骤 (${trace.length})`}
+          defaultOpen={!isDone}
+          badge={trace.some((t) => t.status === 'running') ? '执行中' : undefined}
+        >
+          <ToolTrace trace={trace} />
+        </Collapsible>
       )}
 
       {/* Error */}
@@ -592,13 +614,49 @@ function AssistantMessage({ message }) {
           {error}
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Final structured report */}
-      {report && (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <ReportView report={report} />
-        </div>
-      )}
+// ─── Collapsible section (progressive disclosure) ─────────────────────────────
+
+function Collapsible({ title, defaultOpen = false, badge, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  // Auto-collapse when streaming ends (defaultOpen flips from true → false).
+  const prevDefault = useRef(defaultOpen);
+  useEffect(() => {
+    if (prevDefault.current && !defaultOpen) {
+      setOpen(false);
+    }
+    prevDefault.current = defaultOpen;
+  }, [defaultOpen]);
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          className={`shrink-0 text-[var(--color-muted)] transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-muted)]">
+          {title}
+        </span>
+        {badge && (
+          <span className="ml-1 rounded-full bg-[var(--color-primary)]/10 px-2 py-0.5 text-[10px] text-[var(--color-primary)]">
+            {badge}
+          </span>
+        )}
+      </button>
+      {open && <div className="border-t border-[var(--color-border)] px-4 py-3">{children}</div>}
     </div>
   );
 }

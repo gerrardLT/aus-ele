@@ -360,42 +360,60 @@ def _exec_saturation_check(params: Dict[str, Any], ctx: AgentContext) -> Dict[st
 def _exec_cannibalization_forecast(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute BESS cannibalization forecast."""
     from engines.cannibalization_engine import CannibalizationEngine
+    from models.capacity_models import CapacityDataLoader
 
     region = params.get("region", ctx.effective_region)
-    current_capacity_mw = params.get("current_capacity_mw", 500.0)
-    growth_rate_pct = params.get("growth_rate_pct", 20.0)
     years = params.get("years", 10)
 
-    engine = CannibalizationEngine()
-    result = engine.project_revenue_dilution(
+    capacity_loader = CapacityDataLoader()
+    engine = CannibalizationEngine(capacity_loader)
+    result = engine.simulate(
         region=region,
-        current_capacity_mw=current_capacity_mw,
-        annual_growth_rate_pct=growth_rate_pct,
-        projection_years=years,
+        projection_years=min(years, 5),
     )
+    if hasattr(result, "model_dump"):
+        return {"region": region, **result.model_dump()}
     return {"region": region, **result} if isinstance(result, dict) else {"region": region, "result": str(result)}
 
 
 def _exec_fcas_collapse_forecast(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute FCAS collapse forecast."""
     from engines.fcas_collapse_engine import FcasCollapseEngine
+    from deps import get_db
 
+    db = get_db()
     region = params.get("region", ctx.effective_region)
-    engine = FcasCollapseEngine()
+    engine = FcasCollapseEngine(db)
     result = engine.forecast(region=region)
+    if hasattr(result, "model_dump"):
+        return {"region": region, **result.model_dump()}
     return {"region": region, **result} if isinstance(result, dict) else {"region": region, "result": str(result)}
 
 
 def _exec_regional_timing_score(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute regional timing scorer."""
     from engines.regional_timing_engine import RegionalTimingEngine
+    from models.capacity_models import CapacityDataLoader
     from deps import get_db
 
     db = get_db()
     region = params.get("region", ctx.effective_region)
-    engine = RegionalTimingEngine(db)
-    result = engine.score(region=region)
-    return {"region": region, **result} if isinstance(result, dict) else {"region": region, "result": str(result)}
+    capacity_loader = CapacityDataLoader()
+    engine = RegionalTimingEngine(db, capacity_loader)
+    target_year = params.get("year", ctx.effective_year)
+    result = engine.score_regions(target_year=target_year)
+    if hasattr(result, "model_dump"):
+        data = result.model_dump()
+    elif isinstance(result, dict):
+        data = result
+    else:
+        data = {"result": str(result)}
+    # Filter to requested region if specified
+    if region and "rankings" in data:
+        region_scores = [r for r in data["rankings"] if r.get("region") == region]
+        if region_scores:
+            data["rankings"] = region_scores
+    return {"region": region, **data}
 
 
 def _exec_merchant_risk(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
@@ -427,14 +445,21 @@ def _exec_merchant_risk(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
 def _exec_forward_spread(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute forward price spread projection."""
     from engines.forward_price_engine import ForwardPriceEngine
-    from models.forward_price_models import EventRegistry
+    from models.financial_params import BatterySpecs
+    from models.forward_price_models import ScenarioType
 
     region = params.get("region", ctx.effective_region)
     years = params.get("projection_years", 20)
+    power_mw = params.get("power_mw", 100.0)
+    duration_hours = params.get("duration_hours", 4.0)
 
-    registry = EventRegistry()
-    engine = ForwardPriceEngine(registry)
-    result = engine.project(region=region, projection_years=years)
+    engine = ForwardPriceEngine()
+    battery = BatterySpecs(power_mw=power_mw, duration_hours=duration_hours)
+    result = engine.generate_20year_projection(
+        region=region,
+        scenario=ScenarioType.CENTRAL,
+        battery=battery,
+    )
     if hasattr(result, "model_dump"):
         return result.model_dump()
     elif isinstance(result, dict):
@@ -480,7 +505,22 @@ def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Di
         return {"region": region, "year": year, "status": "no_data"}
 
     engine = CoOptimizationEngine(battery, config)
-    result = engine.run(price_data=rows)
+
+    # Transform row data to engine expected format
+    energy_prices = [
+        {
+            "timestamp": r.get("settlement_date", ""),
+            "price": float(r.get("rrp_aud_mwh") or 0.0),
+            "interval_hours": 5.0 / 60.0,
+        }
+        for r in rows
+    ]
+    fcas_prices = {}
+    for svc in config.fcas_services:
+        col = f"{svc}_rrp"
+        fcas_prices[svc] = [float(r.get(col) or 0.0) for r in rows]
+
+    result = engine.optimize(energy_prices=energy_prices, fcas_prices=fcas_prices)
     if hasattr(result, "__dict__"):
         return {k: v for k, v in vars(result).items() if not k.startswith("_")}
     return {"region": region, "year": year, "result": str(result)}
@@ -592,11 +632,14 @@ def _exec_compare_regions(params: Dict[str, Any], ctx: AgentContext) -> Dict[str
 def _exec_risk_stratification(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute revenue risk stratification."""
     from engines.risk_stratification_engine import RiskStratificationEngine
+    from models.financial_params import BatterySpecs
     from deps import get_db
 
     db = get_db()
     region = params.get("region", ctx.effective_region)
     year = params.get("year", ctx.effective_year)
+    power_mw = params.get("power_mw", 100.0)
+    duration_hours = params.get("duration_hours", 4.0)
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
@@ -607,13 +650,14 @@ def _exec_risk_stratification(params: Dict[str, Any], ctx: AgentContext) -> Dict
             f"WHERE region_id = ? ORDER BY settlement_date ASC",
             (region,),
         )
-        rows = [{"settlement_date": r[0], "rrp_aud_mwh": float(r[1] or 0.0)} for r in cursor.fetchall()]
+        rows = [{"price": float(r[1] or 0.0), "interval_hours": 5.0 / 60.0} for r in cursor.fetchall()]
 
     if not rows:
         return {"region": region, "status": "no_data"}
 
+    battery = BatterySpecs(power_mw=power_mw, duration_hours=duration_hours)
     engine = RiskStratificationEngine()
-    result = engine.stratify_historical_revenue(rows, power_mw=params.get("power_mw", 100.0))
+    result = engine.stratify_historical_revenue(rows, fcas_revenue=0.0, battery=battery)
     if hasattr(result, "model_dump"):
         return result.model_dump()
     elif isinstance(result, dict):
@@ -650,16 +694,19 @@ def _exec_data_quality(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, A
 
 def _exec_cross_validation(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute multi-source cross validation."""
+    from datetime import date as _date
     from pathlib import Path
     from engines.cross_validation_service import CrossValidationService
     from models.forward_price_models import EventRegistry
 
     data_dir = Path(__file__).resolve().parent.parent.parent / "data"
     evidence_path = data_dir / "financial_evidence.json"
-    registry = EventRegistry()
+    registry = EventRegistry(events=[], last_updated=_date.today())
 
     service = CrossValidationService(evidence_path=evidence_path, event_registry=registry)
-    result = service.validate()
+    category = params.get("category", "revenue_benchmarks")
+    region = params.get("region", ctx.effective_region)
+    result = service.get_cross_validation_response(category=category, region=region)
     if hasattr(result, "model_dump"):
         return result.model_dump()
     elif isinstance(result, dict):
@@ -669,6 +716,7 @@ def _exec_cross_validation(params: Dict[str, Any], ctx: AgentContext) -> Dict[st
 
 def _exec_narrative_attribution(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute narrative causal attribution."""
+    from datetime import date as _date
     from engines.narrative_engine import NarrativeEngine
     from models.forward_price_models import EventRegistry
 
@@ -677,13 +725,12 @@ def _exec_narrative_attribution(params: Dict[str, Any], ctx: AgentContext) -> Di
     metric_name = params.get("metric_name", "npv")
     metric_value = params.get("metric_value", 0.0)
 
-    registry = EventRegistry()
+    registry = EventRegistry(events=[], last_updated=_date.today())
     engine = NarrativeEngine(registry)
-    result = engine.generate_attribution(
-        region=region,
+    result = engine.generate_module_conclusion(
         module_name=module_name,
-        metric_name=metric_name,
-        metric_value=metric_value,
+        region=region,
+        metrics={metric_name: metric_value},
     )
     if hasattr(result, "model_dump"):
         return result.model_dump()
