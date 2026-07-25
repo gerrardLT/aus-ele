@@ -257,8 +257,8 @@ wait_for_running() {
 main() {
     log "开始部署：GIT_SHA=${GIT_SHA}"
     preflight
-    write_env_file
     checkout_revision
+    write_env_file
     login_and_pull
     compose_up
     wait_for_running
