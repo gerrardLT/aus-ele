@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# IDE / Tool cache
+.qoder/
 env/
 build/
 develop-eggs/
