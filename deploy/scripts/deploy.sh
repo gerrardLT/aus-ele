@@ -133,9 +133,16 @@ write_env_file() {
         echo "AUS_ELE_JWT_SECRET=${AUS_ELE_JWT_SECRET}"
         echo "FINGRID_API_KEY=${FINGRID_API_KEY}"
         echo "AUS_ELE_PG_PASSWORD=${AUS_ELE_PG_PASSWORD:-aemo_pg_pass_2026}"
+        # AI Agent LLM 配置（U6）
+        echo "AUS_ELE_AGENT_LLM_PROVIDER=${AUS_ELE_AGENT_LLM_PROVIDER:-openai}"
+        echo "AUS_ELE_AGENT_LLM_API_KEY=${AUS_ELE_AGENT_LLM_API_KEY:-}"
+        echo "AUS_ELE_AGENT_LLM_BASE_URL=${AUS_ELE_AGENT_LLM_BASE_URL:-}"
+        echo "AUS_ELE_AGENT_LLM_MODEL=${AUS_ELE_AGENT_LLM_MODEL:-gpt-4o}"
+        # CORS（生产域名）
+        echo "AUS_ELE_CORS_ALLOW_ORIGINS=${AUS_ELE_CORS_ALLOW_ORIGINS:-}"
     } >>"${ENV_FILE}"
 
-    log ".env.prod 写入完成（含变量: REGISTRY, IMAGE_PREFIX, IMAGE_TAG, API_HOST_PORT, WEB_HOST_PORT, AUS_ELE_JWT_SECRET, FINGRID_API_KEY）"
+    log ".env.prod 写入完成（含变量: REGISTRY, IMAGE_PREFIX, IMAGE_TAG, ports, JWT, FINGRID, LLM, CORS）"
 }
 
 # ---------------------------------------------------------------------------
