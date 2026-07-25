@@ -62,6 +62,13 @@ class AgentOrchestrator:
         report = await orchestrator.run("分析 NSW1 投资可行性", context)
     """
 
+    # Tools that are pure-read and safe to cache within a session
+    _CACHEABLE_TOOLS = {
+        "data_quality_check", "price_trend_analysis", "peak_analysis",
+        "spike_profit_analysis", "saturation_check", "market_screening",
+    }
+    _CACHE_TTL_SECONDS = 300  # 5 minutes
+
     def __init__(
         self,
         llm: LLMAdapter,
@@ -75,6 +82,7 @@ class AgentOrchestrator:
         self.max_steps = max_steps
         self.tool_timeout = tool_timeout
         self.total_timeout = total_timeout
+        self._tool_cache: Dict[str, tuple] = {}  # key -> (timestamp, ToolResult)
 
     async def run(
         self,
@@ -743,7 +751,7 @@ class AgentOrchestrator:
         context: AgentContext,
         step_idx: int,
     ) -> ToolResult:
-        """Execute a single tool with context-aware parameter injection."""
+        """Execute a single tool with context-aware parameter injection and caching."""
         # Inject context defaults
         arguments = dict(params)
         if "region" not in arguments:
@@ -751,14 +759,31 @@ class AgentOrchestrator:
         if "year" not in arguments:
             arguments["year"] = context.effective_year
 
+        # Session-level cache for read-only tools
+        if tool_name in self._CACHEABLE_TOOLS:
+            cache_key = f"{tool_name}:{arguments.get('region')}:{arguments.get('year')}"
+            cached = self._tool_cache.get(cache_key)
+            if cached:
+                ts, result = cached
+                if time.perf_counter() - ts < self._CACHE_TTL_SECONDS:
+                    logger.debug("Cache hit for %s", cache_key)
+                    return result
+
         call_id = f"call_{step_idx}_{tool_name}"
-        return await self.tools.execute(
+        result = await self.tools.execute(
             tool_name=tool_name,
             arguments=arguments,
             context=context,
             call_id=call_id,
             timeout_seconds=self.tool_timeout,
         )
+
+        # Store in cache if successful
+        if tool_name in self._CACHEABLE_TOOLS and result.status == ToolStatus.SUCCESS:
+            cache_key = f"{tool_name}:{arguments.get('region')}:{arguments.get('year')}"
+            self._tool_cache[cache_key] = (time.perf_counter(), result)
+
+        return result
 
     # =========================================================================
     # Synthesis

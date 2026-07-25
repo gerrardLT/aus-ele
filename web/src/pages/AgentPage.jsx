@@ -57,6 +57,14 @@ export default function AgentPage() {
   const [error, setError] = useState(null);
   const [workflows, setWorkflows] = useState([]);
   const [history, setHistory] = useState([]);
+  const [showParams, setShowParams] = useState(false);
+  const [bessParams, setBessParams] = useState({
+    power_mw: 100,
+    duration_hours: 4,
+    capex_per_kwh: 400,
+    discount_rate: 0.08,
+  });
+  const [compareList, setCompareList] = useState([]);
 
   // Abort controller for the in-flight SSE stream (stop button / unmount).
   const abortRef = useRef(null);
@@ -216,6 +224,7 @@ export default function AgentPage() {
         region: region || undefined,
         workflow_template: workflowId || undefined,
         max_steps: 15,
+        params_override: bessParams,
       };
 
       try {
@@ -238,7 +247,7 @@ export default function AgentPage() {
         refreshHistory();
       }
     },
-    [messages, streaming, market, region, handleEvent, patchActive, refreshHistory],
+    [messages, streaming, market, region, bessParams, handleEvent, patchActive, refreshHistory],
   );
 
   const handleSend = useCallback(() => {
@@ -253,6 +262,14 @@ export default function AgentPage() {
     if (abortRef.current) abortRef.current.abort();
     setMessages([]);
     setError(null);
+    setCompareList([]);
+  }, []);
+
+  const handleCompare = useCallback((report) => {
+    setCompareList((prev) => {
+      if (prev.length >= 2) return [prev[1], report];
+      return [...prev, report];
+    });
   }, []);
 
   const handleLoadHistory = useCallback(
@@ -315,6 +332,13 @@ export default function AgentPage() {
       onReset={handleReset}
       onKeyDown={handleKeyDown}
       onLoadHistory={handleLoadHistory}
+      showParams={showParams}
+      setShowParams={setShowParams}
+      bessParams={bessParams}
+      setBessParams={setBessParams}
+      compareList={compareList}
+      setCompareList={setCompareList}
+      onCompare={handleCompare}
       onWorkflow={(wf) =>
         sendMessage({ text: input.trim() || `运行 ${wf.name} 工作流`, workflowId: wf.id })
       }
@@ -356,6 +380,13 @@ function AgentLayout({
   onKeyDown,
   onWorkflow,
   onLoadHistory,
+  showParams,
+  setShowParams,
+  bessParams,
+  setBessParams,
+  compareList,
+  setCompareList,
+  onCompare,
 }) {
   return (
     <div className="flex min-h-screen">
@@ -505,10 +536,56 @@ function AgentLayout({
               ))}
             </div>
           )}
+
+          {/* Params toggle */}
+          <button
+            onClick={() => setShowParams((v) => !v)}
+            disabled={streaming}
+            className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+              showParams
+                ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
+                : 'border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-text)]'
+            }`}
+          >
+            BESS 参数
+          </button>
         </div>
+
+        {/* Expandable BESS parameter panel */}
+        {showParams && (
+          <div className="flex flex-wrap items-center gap-4 border-b border-[var(--color-border)] px-8 py-3">
+            {[
+              { key: 'power_mw', label: '功率 (MW)', min: 10, max: 500, step: 10 },
+              { key: 'duration_hours', label: '时长 (h)', min: 1, max: 8, step: 0.5 },
+              { key: 'capex_per_kwh', label: 'CAPEX ($/kWh)', min: 150, max: 700, step: 25 },
+              { key: 'discount_rate', label: '折现率', min: 0.04, max: 0.15, step: 0.01, fmt: (v) => `${(v * 100).toFixed(0)}%` },
+            ].map(({ key, label, min, max, step, fmt }) => (
+              <label key={key} className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+                <span className="w-20 shrink-0">{label}</span>
+                <input
+                  type="range"
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={bessParams[key]}
+                  onChange={(e) => setBessParams((p) => ({ ...p, [key]: Number(e.target.value) }))}
+                  disabled={streaming}
+                  className="w-24 accent-[var(--color-primary)]"
+                />
+                <span className="w-14 text-right font-mono text-[11px] text-[var(--color-text)]">
+                  {fmt ? fmt(bessParams[key]) : bessParams[key]}
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
 
         {/* Conversation */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-6">
+          {/* Comparison panel */}
+          {compareList.length > 0 && (
+            <ComparisonPanel reports={compareList} onClear={() => setCompareList([])} />
+          )}
           {messages.length === 0 ? (
             <EmptyState region={region} />
           ) : (
@@ -517,7 +594,7 @@ function AgentLayout({
                 m.role === 'user' ? (
                   <UserBubble key={m.id} text={m.content} />
                 ) : (
-                  <AssistantMessage key={m.id} message={m} />
+                  <AssistantMessage key={m.id} message={m} onCompare={onCompare} />
                 ),
               )}
             </div>
@@ -601,7 +678,7 @@ function UserBubble({ text }) {
   );
 }
 
-function AssistantMessage({ message }) {
+function AssistantMessage({ message, onCompare }) {
   const { answer, trace, status_line, error, report, streaming, answerDone } = message;
   const hasTrace = trace && trace.length > 0;
   const isDone = !streaming;
@@ -619,7 +696,7 @@ function AssistantMessage({ message }) {
       {/* ① Structured report (conclusion) — always visible, top priority */}
       {report && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <ReportView report={report} />
+          <ReportView report={report} onCompare={onCompare} />
         </div>
       )}
 
@@ -701,6 +778,23 @@ function Collapsible({ title, defaultOpen = false, badge, children }) {
   );
 }
 
+// ─── Error recovery suggestions ────────────────────────────────────────────────
+
+function getErrorSuggestion(toolName, errorMsg) {
+  const msg = (errorMsg || '').toLowerCase();
+  if (msg.includes('no_data') || msg.includes('no projects') || msg.includes('not found'))
+    return '该区域数据不足，尝试切换年份或区域';
+  if (msg.includes('connection') || msg.includes('timeout'))
+    return '数据库连接异常，稍后重试';
+  if (msg.includes('capacity') || msg.includes('loader'))
+    return '容量数据文件缺失或格式异常';
+  if (toolName === 'co_optimized_backtest' && msg.includes('infeasible'))
+    return 'MILP 求解不可行，尝试缩短时长或减少 FCAS 服务';
+  if (toolName === 'forward_spread_projection')
+    return '前瞻引擎依赖煤电退役数据，确认 data/ 目录下文件完整';
+  return null;
+}
+
 // ─── Tool trace (ReAct live steps) ──────────────────────────────────────────
 
 function ToolTrace({ trace, totalSteps }) {
@@ -759,6 +853,11 @@ function ToolTrace({ trace, totalSteps }) {
           {t.error && (
             <div className="mt-1 pl-4 text-[11px] leading-5 text-[var(--color-error)]">
               {t.error}
+              {getErrorSuggestion(t.name, t.error) && (
+                <span className="ml-1 text-[var(--color-muted)]">
+                  → {getErrorSuggestion(t.name, t.error)}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -769,8 +868,12 @@ function ToolTrace({ trace, totalSteps }) {
 
 // ─── Report View ──────────────────────────────────────────────────────────────
 
-function ReportView({ report }) {
+function ReportView({ report, onCompare }) {
   const status = STATUS_MAP[report.status] || STATUS_MAP.running;
+
+  const handleExportPDF = () => {
+    window.print();
+  };
 
   return (
     <div className="space-y-6">
@@ -793,6 +896,12 @@ function ReportView({ report }) {
             {report.workflow_type}
           </span>
         )}
+        <button
+          onClick={handleExportPDF}
+          className="ml-auto rounded border border-[var(--color-border)] px-2.5 py-1 text-[10px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-text)] hover:text-[var(--color-text)] print:hidden"
+        >
+          导出 PDF
+        </button>
       </div>
 
       {/* Executive Summary */}
@@ -888,12 +997,12 @@ function ReportView({ report }) {
       )}
 
       {/* Footer: base params + suggested follow-ups */}
-      <ReportFooter report={report} />
+      <ReportFooter report={report} onCompare={onCompare} />
     </div>
   );
 }
 
-function ReportFooter({ report }) {
+function ReportFooter({ report, onCompare }) {
   const params = report.metadata?.params;
   const hasParams = params && (params.power_mw || params.duration_hours);
 
@@ -926,6 +1035,14 @@ function ReportFooter({ report }) {
               折现率 {(params.discount_rate * 100).toFixed(0)}%
             </span>
           )}
+          {onCompare && (
+            <button
+              onClick={() => onCompare(report)}
+              className="ml-auto rounded border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+            >
+              + 加入对比
+            </button>
+          )}
         </div>
       )}
       <div>
@@ -944,5 +1061,47 @@ function ReportFooter({ report }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// ─── Comparison Panel ──────────────────────────────────────────────────────────
+
+function ComparisonPanel({ reports, onClear }) {
+  if (reports.length === 0) return null;
+
+  return (
+    <div className="mb-6 rounded-xl border border-[var(--color-primary)]/30 bg-[var(--color-surface)] p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-primary)]">
+          对比视图 ({reports.length}/2)
+        </span>
+        <button
+          onClick={onClear}
+          className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)]"
+        >
+          清除
+        </button>
+      </div>
+      <div className={`grid gap-4 ${reports.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        {reports.map((r, i) => {
+          const p = r.metadata?.params || {};
+          const npv = r.stage_results?.find((s) => s.tool_name === 'investment_analysis');
+          return (
+            <div key={i} className="rounded-lg border border-[var(--color-border)] p-3">
+              <div className="mb-2 text-[11px] font-medium text-[var(--color-text)]">
+                {r.region} · {p.power_mw || '?'}MW/{p.duration_hours || '?'}h · CAPEX {p.capex_per_kwh || '?'}
+              </div>
+              <div className="space-y-1 text-[11px] text-[var(--color-muted)]">
+                <div>状态: {STATUS_MAP[r.status]?.label || r.status}</div>
+                <div>置信度: {r.confidence_level}</div>
+                {r.executive_summary && (
+                  <div className="line-clamp-3">{r.executive_summary}</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

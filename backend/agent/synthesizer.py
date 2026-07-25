@@ -118,25 +118,60 @@ def _extract_section(text: str, section_name: str) -> str:
 
 
 def _infer_confidence(tool_results: List[ToolResult], llm_text: str) -> ConfidenceLevel:
-    """Infer confidence level from tool results and LLM output."""
-    # Check LLM text for explicit confidence markers
-    text_lower = llm_text.lower()
-    if "high" in text_lower or "高置信" in text_lower:
-        return ConfidenceLevel.HIGH
-    if "low" in text_lower or "低置信" in text_lower:
-        return ConfidenceLevel.LOW
+    """Infer confidence level from tool results, data quality, and LLM output.
 
-    # Infer from tool success rate
+    Upgraded algorithm considers:
+    1. Critical tool success (investment_analysis, co_optimized_backtest)
+    2. Data quality grade (preview caps at MEDIUM)
+    3. Overall tool success ratio
+    4. LLM explicit confidence markers (only as tiebreaker)
+    """
     total = len(tool_results)
     if total == 0:
         return ConfidenceLevel.LOW
+
     success = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
     ratio = success / total
-    if ratio >= 0.9:
-        return ConfidenceLevel.HIGH
+
+    # Check data quality — preview grade caps confidence at MEDIUM
+    data_grade_preview = False
+    for r in tool_results:
+        if r.tool_name == "data_quality_check" and r.status == ToolStatus.SUCCESS:
+            markets = r.data.get("markets", [])
+            if isinstance(markets, list):
+                for m in markets:
+                    if isinstance(m, dict) and m.get("data_grade") == "preview":
+                        data_grade_preview = True
+                        break
+
+    # Check critical tools
+    CRITICAL_TOOLS = {"investment_analysis", "co_optimized_backtest", "merchant_risk_simulate"}
+    critical_failed = any(
+        r.tool_name in CRITICAL_TOOLS and r.status != ToolStatus.SUCCESS
+        for r in tool_results
+    )
+
+    # Base confidence from success ratio
+    if ratio >= 0.9 and not critical_failed:
+        base = ConfidenceLevel.HIGH
     elif ratio >= 0.6:
-        return ConfidenceLevel.MEDIUM
-    return ConfidenceLevel.LOW
+        base = ConfidenceLevel.MEDIUM
+    else:
+        base = ConfidenceLevel.LOW
+
+    # Downgrade rules
+    if data_grade_preview and base == ConfidenceLevel.HIGH:
+        base = ConfidenceLevel.MEDIUM
+    if critical_failed and base == ConfidenceLevel.HIGH:
+        base = ConfidenceLevel.MEDIUM
+
+    # LLM text as tiebreaker (only upgrade MEDIUM→HIGH if all tools succeeded)
+    if base == ConfidenceLevel.MEDIUM and ratio == 1.0 and not data_grade_preview:
+        text_lower = llm_text.lower()
+        if "high" in text_lower or "高置信" in text_lower:
+            base = ConfidenceLevel.HIGH
+
+    return base
 
 
 # =============================================================================
