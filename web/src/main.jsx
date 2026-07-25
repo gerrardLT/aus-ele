@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import { resolveRootPage } from './lib/pageRouter.js'
 import { FilterProvider } from './contexts/FilterContext'
+import { ThemeProvider } from './contexts/ThemeContext'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,10 +48,12 @@ const rootElement = rootPage === 'wem'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <Suspense fallback={<BootFallback />}>
-        {rootElement}
-      </Suspense>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <Suspense fallback={<BootFallback />}>
+          {rootElement}
+        </Suspense>
+      </QueryClientProvider>
+    </ThemeProvider>
   </StrictMode>,
 )

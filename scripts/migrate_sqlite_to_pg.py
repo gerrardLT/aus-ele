@@ -260,6 +260,7 @@ def migrate_table(
     table: TableInfo,
     dry_run: bool,
     stats: MigrationStats,
+    only_missing: bool = False,
 ) -> bool:
     """
     Migrate a single table from SQLite to PostgreSQL.
@@ -269,6 +270,10 @@ def migrate_table(
       TRUNCATE + INSERT using the existing PG column order.
     - If table doesn't exist in PG:
       CREATE TABLE (inferred from SQLite schema) + INSERT.
+    - If ``only_missing`` is True: existing PG tables are left untouched (no
+      TRUNCATE), and only tables absent from PG are created and loaded. This
+      is the safe, additive mode for backfilling missing tables without
+      clobbering data already present in PostgreSQL.
 
     Returns True on success, False on failure.
     """
@@ -295,6 +300,14 @@ def migrate_table(
 
         # Decide whether to use existing PG schema or create new table
         use_existing_schema = _pg_table_exists(pg_cursor, table.name)
+
+        if use_existing_schema and only_missing:
+            logger.info(
+                "    Table '%s' already exists in PG, skipping (only-missing mode)",
+                table.name,
+            )
+            stats.tables_skipped += 1
+            return True
 
         if use_existing_schema:
             logger.info("    Table '%s' already exists in PG, using existing schema", table.name)
@@ -389,7 +402,7 @@ def migrate_table(
         return False
 
 
-def run_migration(source_db: str, target_dsn: str, dry_run: bool) -> MigrationStats:
+def run_migration(source_db: str, target_dsn: str, dry_run: bool, only_missing: bool = False) -> MigrationStats:
     """
     Execute the full SQLite → PostgreSQL migration.
 
@@ -472,7 +485,7 @@ def run_migration(source_db: str, target_dsn: str, dry_run: bool) -> MigrationSt
             stats.tables_skipped += 1
             continue
 
-        migrate_table(sqlite_conn, pg_conn, table, dry_run, stats)
+        migrate_table(sqlite_conn, pg_conn, table, dry_run, stats, only_missing)
 
     # Cleanup
     sqlite_conn.close()
@@ -548,6 +561,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Number of rows per INSERT batch (default: {BATCH_SIZE})",
     )
     parser.add_argument(
+        "--only-missing",
+        action="store_true",
+        default=False,
+        help=(
+            "Only create and load tables that do not yet exist in PostgreSQL. "
+            "Existing PG tables are left untouched (no TRUNCATE). Safe for "
+            "backfilling missing tables without clobbering existing data."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -576,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Batch size: %d", BATCH_SIZE)
     logger.info("")
 
-    stats = run_migration(args.source_db, args.target_dsn, args.dry_run)
+    stats = run_migration(args.source_db, args.target_dsn, args.dry_run, args.only_missing)
 
     if stats.tables_failed > 0:
         logger.warning(

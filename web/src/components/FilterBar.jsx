@@ -26,7 +26,7 @@ export default function FilterBar({ config, years, lang }) {
   const btnInactive = 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]';
 
   return (
-    <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+    <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-md p-4">
       {/* Primary row: Year + Region */}
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">

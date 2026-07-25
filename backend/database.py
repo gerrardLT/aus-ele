@@ -10,6 +10,15 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s', date
 logger = logging.getLogger(__name__)
 
 
+class DatabaseUnavailableError(RuntimeError):
+    """Raised when a database connection cannot be obtained.
+
+    Distinct from ordinary query errors so the API layer can map it to
+    ``503 Service Unavailable`` (transient, retryable) instead of an opaque
+    ``500``. Typical cause: the PostgreSQL connection pool is exhausted.
+    """
+
+
 def _pg_pool():
     """Lazy-init singleton psycopg2 connection pool."""
     if not hasattr(_pg_pool, "_pool") or _pg_pool._pool is None:
@@ -190,8 +199,25 @@ class _PGConnWrapper:
     def __enter__(self):
         return self
 
-    def __exit__(self, *args):
-        pass
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # M-4 transaction safety: when the connection is used as a context
+        # manager, commit on clean exit and roll back on exception. This closes
+        # the silent-data-loss hole where a write path forgets an explicit
+        # ``conn.commit()`` (previously ``__exit__`` was a no-op and
+        # ``get_connection``'s finally always rolled back, discarding uncommitted
+        # writes). A commit after an explicit commit is a harmless no-op, and the
+        # ``get_connection`` finally rollback remains as a backstop.
+        if exc_type is None:
+            try:
+                self._conn.commit()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self._conn.rollback()
+                raise
+        else:
+            with contextlib.suppress(Exception):
+                self._conn.rollback()
+        return False
 
 class DatabaseManager:
     WEM_ESS_MARKET_TABLE = "wem_ess_market_price"
@@ -330,7 +356,13 @@ class DatabaseManager:
     @contextlib.contextmanager
     def get_connection(self):
         pool = _pg_pool()
-        conn = pool.getconn()
+        try:
+            conn = pool.getconn()
+        except Exception as exc:
+            # Pool exhausted or unreachable: surface a transient, retryable
+            # error so the API layer returns 503 rather than a bare 500.
+            logger.error("Unable to acquire PG connection from pool: %s", exc)
+            raise DatabaseUnavailableError("Database connection pool unavailable") from exc
         try:
             conn.autocommit = False
             yield _PGConnWrapper(conn, self)
@@ -3074,6 +3106,48 @@ class DatabaseManager:
             )
             row = cursor.fetchone()
         return int((row or [0])[0] or 0)
+
+    def reserve_external_api_quota(
+        self,
+        *,
+        client_id: str,
+        request_units: int,
+        daily_unit_limit: int | None,
+        created_at_from: str,
+        endpoint: str,
+        http_method: str,
+        api_version: str,
+        created_at: str,
+    ) -> int:
+        """Atomically check quota and record usage in a single transaction.
+
+        Returns the used_units *before* this reservation.
+        Raises ValueError if the quota would be exceeded.
+        """
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT COALESCE(SUM(request_units), 0)
+                FROM {self.API_USAGE_TABLE}
+                WHERE client_id = ? AND created_at >= ?
+                """,
+                (client_id, created_at_from),
+            )
+            used_units = int((cursor.fetchone() or [0])[0] or 0)
+            if daily_unit_limit is not None and used_units + request_units > daily_unit_limit:
+                raise ValueError("quota_exceeded")
+            conn.execute(
+                f"""
+                INSERT INTO {self.API_USAGE_TABLE} (
+                    client_id, endpoint, http_method, status_code, request_units, latency_ms, api_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (client_id, endpoint, http_method, 200, request_units, None, api_version, created_at),
+            )
+            conn.commit()
+        return used_units
 
     def summarize_external_api_usage(
         self,

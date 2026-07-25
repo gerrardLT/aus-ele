@@ -140,6 +140,27 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
         ],
         default_params={},
     ),
+    # U6: Investment screening — quick multi-region NPV comparison + decision
+    "investment_screening": WorkflowTemplate(
+        id="investment_screening",
+        name="投资筛选",
+        description="快速多区域投资筛选：compare_regions NPV 排名 → 蚕食检查 → 决策建议",
+        steps=[
+            "compare_regions",
+            "cannibalization_forecast",
+            "investment_analysis",
+        ],
+        parallel_groups=[
+            [0],          # compare_regions first
+            [1],          # cannibalization check
+            [2],          # detailed analysis on best region
+        ],
+        default_params={
+            "regions": ["SA1", "QLD1", "NSW1", "VIC1"],
+            "power_mw": 100.0,
+            "duration_hours": 4.0,
+        },
+    ),
 }
 
 

@@ -53,6 +53,35 @@ _TASK_PREFIX = "agent_task:"
 # In-memory fallback (single-worker or Redis-down scenarios)
 _fallback_tasks: Dict[str, dict] = {}
 
+
+def _evict_expired_tasks() -> None:
+    """Remove in-memory tasks older than TASK_TTL_SECONDS.
+
+    Called opportunistically on each task store/get to bound memory usage
+    in long-running processes (Redis handles its own TTL expiry).
+    """
+    now = datetime.now(timezone.utc)
+    expired = [
+        tid for tid, data in _fallback_tasks.items()
+        if _task_age_seconds(data, now) > TASK_TTL_SECONDS
+    ]
+    for tid in expired:
+        _fallback_tasks.pop(tid, None)
+
+
+def _task_age_seconds(data: dict, now: datetime) -> float:
+    """Return age of a task in seconds based on its created_at field."""
+    created_raw = data.get("created_at")
+    if not created_raw:
+        return 0.0
+    try:
+        created = datetime.fromisoformat(created_raw)
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return (now - created).total_seconds()
+    except (ValueError, TypeError):
+        return 0.0
+
 # Strong references to in-flight background tasks. asyncio only holds a weak
 # reference to tasks created via create_task, so without this set a task may be
 # garbage-collected mid-execution and silently cancelled.
@@ -70,6 +99,8 @@ def _get_redis_client():
 
 def _store_task(task_id: str, data: dict) -> None:
     """Persist task state to Redis (with in-memory fallback)."""
+    # Opportunistically evict stale entries to bound memory usage.
+    _evict_expired_tasks()
     # Always keep in-memory as hot cache
     _fallback_tasks[task_id] = data
     client = _get_redis_client()
@@ -363,6 +394,32 @@ def _fetch_history(limit: int) -> list:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_agent_log_table_ready = False
+
+_CREATE_AGENT_LOG_TABLE = """
+    CREATE TABLE IF NOT EXISTS agent_execution_log (
+        id TEXT PRIMARY KEY,
+        query TEXT NOT NULL,
+        market TEXT,
+        region TEXT,
+        workflow_type TEXT,
+        status TEXT,
+        steps_json TEXT,
+        report_json TEXT,
+        total_duration_ms REAL,
+        created_at TIMESTAMPTZ DEFAULT now()
+    )
+"""
+
+
+def _ensure_agent_log_table(cursor) -> None:
+    """Create the agent_execution_log table once per process lifetime."""
+    global _agent_log_table_ready
+    if _agent_log_table_ready:
+        return
+    cursor.execute(_CREATE_AGENT_LOG_TABLE)
+    _agent_log_table_ready = True
+
 
 def _log_execution(report) -> None:
     """Log agent execution to database (best-effort, non-blocking)."""
@@ -372,21 +429,7 @@ def _log_execution(report) -> None:
         db = get_db()
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            # Ensure table exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agent_execution_log (
-                    id TEXT PRIMARY KEY,
-                    query TEXT NOT NULL,
-                    market TEXT,
-                    region TEXT,
-                    workflow_type TEXT,
-                    status TEXT,
-                    steps_json TEXT,
-                    report_json TEXT,
-                    total_duration_ms REAL,
-                    created_at TIMESTAMPTZ DEFAULT now()
-                )
-            """)
+            _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
                 "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms) "
@@ -428,20 +471,7 @@ def _log_execution_dict(report: dict) -> None:
         db = get_db()
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agent_execution_log (
-                    id TEXT PRIMARY KEY,
-                    query TEXT NOT NULL,
-                    market TEXT,
-                    region TEXT,
-                    workflow_type TEXT,
-                    status TEXT,
-                    steps_json TEXT,
-                    report_json TEXT,
-                    total_duration_ms REAL,
-                    created_at TIMESTAMPTZ DEFAULT now()
-                )
-            """)
+            _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
                 "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms) "

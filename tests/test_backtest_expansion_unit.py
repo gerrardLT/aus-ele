@@ -41,6 +41,10 @@ from engines.backtest_expansion import (
 )
 
 
+# Real AEMO database path; used to skip engine-delegation tests when absent.
+_REAL_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "aemo_data.db"
+
+
 # ---------------------------------------------------------------------------
 # 辅助：构造最小临时 AEMO db (已废弃 - PG only)
 # ---------------------------------------------------------------------------

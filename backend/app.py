@@ -13,8 +13,9 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from zoneinfo import ZoneInfo
 
@@ -200,6 +201,38 @@ class TraceHeaderMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(TraceHeaderMiddleware)
 configure_telemetry(app)
+
+
+# --- Global unhandled-exception handler (H-2 follow-up) ---
+# Any exception that escapes a route handler is logged server-side (with the
+# current trace id for correlation) but returned to the client as an opaque
+# 500, so internal details (table/column names, file paths, SQL fragments,
+# third-party URLs) never leak. HTTPException is handled by FastAPI itself and
+# therefore does not reach this handler.
+@app.exception_handler(Exception)
+async def _handle_unhandled_exception(request: Request, exc: Exception):  # noqa: ARG001
+    trace_id = get_current_trace_id()
+    logger.exception(
+        "Unhandled exception on %s %s (trace_id=%s)",
+        request.method,
+        request.url.path,
+        trace_id or "-",
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# Map database unavailability (e.g. connection-pool exhaustion) to a transient,
+# retryable 503 instead of the generic 500 above.
+from database import DatabaseUnavailableError  # noqa: E402
+
+
+@app.exception_handler(DatabaseUnavailableError)
+async def _handle_database_unavailable(request: Request, exc: DatabaseUnavailableError):  # noqa: ARG001
+    logger.error("Database unavailable on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Service temporarily unavailable; please retry later."},
+    )
 
 # --- Route registration ---
 app.include_router(health_router)

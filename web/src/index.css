@@ -2,6 +2,12 @@
 @import "tailwindcss";
 
 @theme {
+  --font-sans: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Source Serif 4', ui-serif, Georgia, serif;
+}
+
+/* --- U1: Light theme tokens (default fallback) --- */
+:root, [data-theme="light"] {
   --color-primary: oklch(0.50 0.2 260);
   --color-background: oklch(0.965 0.008 250);
   --color-panel: oklch(0.985 0.005 250);
@@ -14,9 +20,26 @@
   --color-inverted: oklch(0.28 0.03 255);
   --color-inverted-text: oklch(0.985 0.004 250);
   --color-bg: var(--color-background);
+  --glow-opacity: 0;
+  --glow-color: transparent;
+}
 
-  --font-sans: 'Archivo', ui-sans-serif, system-ui, sans-serif;
-  --font-serif: 'Source Serif 4', ui-serif, Georgia, serif;
+/* --- U1: Dark theme tokens (dark-first default) --- */
+[data-theme="dark"] {
+  --color-primary: oklch(0.65 0.18 260);
+  --color-background: oklch(0.13 0.012 260);
+  --color-panel: oklch(0.16 0.01 258);
+  --color-surface: oklch(0.19 0.008 256);
+  --color-surface-hover: oklch(0.22 0.012 254);
+  --color-text: oklch(0.92 0.01 250);
+  --color-muted: oklch(0.60 0.015 252);
+  --color-border: oklch(0.28 0.015 255);
+  --color-error: oklch(0.62 0.2 25);
+  --color-inverted: oklch(0.92 0.01 250);
+  --color-inverted-text: oklch(0.14 0.012 260);
+  --color-bg: var(--color-background);
+  --glow-opacity: 1;
+  --glow-color: oklch(0.65 0.18 260);
 }
 
 @layer base {
@@ -28,9 +51,9 @@
     font-kerning: normal;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* Strict layout default padding */
     padding: 0;
     margin: 0;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -39,29 +62,48 @@
     letter-spacing: 0;
   }
 
-  /* Custom generic classes for the minimalist styling */
   .grid-container {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 1.5rem; /* 24px */
+    gap: 1.5rem;
     width: 100%;
     max-width: none;
     margin: 0 auto;
     padding: 0 clamp(28px, 3vw, 56px);
   }
 
-  /* Custom ultra-minimal scrollbar */
   ::-webkit-scrollbar {
     width: 4px;
     height: 4px;
   }
   ::-webkit-scrollbar-track {
-    background: transparent; 
+    background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--color-border); 
+    background: var(--color-border);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-muted); 
+    background: var(--color-muted);
+  }
+}
+
+/* --- U1: Data glow layer (active only in dark mode via --glow-color) --- */
+@layer utilities {
+  .glow-line {
+    filter: drop-shadow(0 0 4px var(--glow-color));
+  }
+  .glow-kpi {
+    text-shadow: 0 0 12px var(--glow-color);
+  }
+  .panel-glass {
+    backdrop-filter: blur(12px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, calc(0.04 * var(--glow-opacity)));
+  }
+  .panel-depth {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .panel-depth:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, calc(0.15 * var(--glow-opacity)));
   }
 }

@@ -48,9 +48,12 @@ async def get_forward_scenarios() -> List[ScenarioDefinition]:
         engine = get_forward_price_engine()
         return engine.get_scenarios()
     except FileNotFoundError as e:
+        # Log the missing path server-side but return an opaque detail so the
+        # filesystem location is not disclosed to the client.
+        logger.error("Forward-price data dependency unavailable: %s", e)
         raise HTTPException(
             status_code=503,
-            detail=f"Data dependency unavailable: {e}",
+            detail="Data dependency unavailable; please retry later.",
         )
 
 
@@ -106,9 +109,12 @@ async def get_forward_scenarios_by_region(
             low=low,
         )
     except FileNotFoundError as e:
+        # Log the missing path server-side but return an opaque detail so the
+        # filesystem location is not disclosed to the client.
+        logger.error("Forward-price data dependency unavailable: %s", e)
         raise HTTPException(
             status_code=503,
-            detail=f"Data dependency unavailable: {e}",
+            detail="Data dependency unavailable; please retry later.",
         )
     except ValueError as e:
         raise HTTPException(

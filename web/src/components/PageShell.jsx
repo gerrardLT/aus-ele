@@ -9,6 +9,8 @@
 
 import SidebarNavigation from './SidebarNavigation';
 import FilterBar from './FilterBar';
+import { useTheme } from '../contexts/ThemeContext';
+import { Sun, Moon } from 'lucide-react';
 
 export default function PageShell({
   config,
@@ -20,8 +22,8 @@ export default function PageShell({
   years,
   children,
 }) {
-  // Derive activePage from config.id
   const activePage = config.id === 'WEM' ? 'wem' : 'aemo';
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <div className="min-h-screen pb-20">
@@ -46,13 +48,22 @@ export default function PageShell({
                   {lang === 'zh' ? '结算间隔' : 'Settlement'}: {config.settlementIntervalMinutes} min · {config.timezoneLabel}
                 </p>
               </div>
-              <button
-                onClick={onLangToggle}
-                className="px-3 py-1.5 text-xs font-bold border border-[var(--color-border)] rounded-full hover:border-[var(--color-text)] transition-colors"
-                aria-label="Toggle language"
-              >
-                {lang === 'zh' ? 'EN' : '中文'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleTheme}
+                  className="p-2 border border-[var(--color-border)] rounded-full hover:border-[var(--color-text)] transition-colors"
+                  aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                  {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+                </button>
+                <button
+                  onClick={onLangToggle}
+                  className="px-3 py-1.5 text-xs font-bold border border-[var(--color-border)] rounded-full hover:border-[var(--color-text)] transition-colors"
+                  aria-label="Toggle language"
+                >
+                  {lang === 'zh' ? 'EN' : '中文'}
+                </button>
+              </div>
             </div>
 
             {/* FilterBar */}

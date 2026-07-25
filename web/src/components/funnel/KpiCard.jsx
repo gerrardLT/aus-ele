@@ -61,7 +61,7 @@ export default function KpiCard({ label, value, unit, sentiment = 'neutral', onC
 
       {/* 数值 + 单位 */}
       <div className="mt-1 flex items-baseline">
-        <span className={`${valueSize} font-bold font-mono ${colorClass}`}>
+        <span className={`${valueSize} font-bold font-mono glow-kpi ${colorClass}`}>
           {value ?? '--'}
         </span>
         {unit && (

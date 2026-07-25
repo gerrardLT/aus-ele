@@ -133,7 +133,9 @@ export const MARKET_CONFIGS = {
         title: { zh: '投资决策', en: 'Investment Decision' },
         coreQuestion: { zh: '最终投资建议是什么？', en: "What's the final investment recommendation?" },
         modules: [
-          { component: 'ReportPreview', dataDependencies: ['/api/reports'], loadPriority: 1, enabled: true },
+          { component: 'DecisionTerminal', dataDependencies: ['/api/investment-analysis'], loadPriority: 1, enabled: true },
+          { component: 'ScenarioSplit', dataDependencies: ['/api/investment-analysis'], loadPriority: 2, enabled: true },
+          { component: 'ReportPreview', dataDependencies: ['/api/reports'], loadPriority: 3, enabled: true },
         ],
       },
     ],

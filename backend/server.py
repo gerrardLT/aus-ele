@@ -132,6 +132,7 @@ from external_api_v1 import (
     check_external_api_quota,
     meter_external_api_usage,
     paginate_items,
+    reserve_external_api_quota,
     seed_external_api_client,
     summarize_external_api_quota,
     wrap_external_response,
@@ -179,6 +180,24 @@ _REGIME_LAYER_CACHE_LOCK = threading.Lock()
 _REGIME_LAYER_CACHE_TTL_SECONDS = 300
 install_json_log_formatter_if_enabled()
 install_structured_log_sink_if_configured()
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    workspace_id: str
+
+
+class SetPasswordRequest(BaseModel):
+    principal_id: str
+    password: str
+
+
+class DomainJoinRequest(BaseModel):
+    organization_id: str
+    email: str
+    display_name: str
+    password: str
 
 
 class AlertRuleUpsert(BaseModel):
@@ -1167,6 +1186,7 @@ def _build_decision_adjusted_scenarios(
     baseline_arbitrage: float,
     baseline_fcas: float,
     p3_decision: dict | None,
+    dod_severity_history: list[float] | None = None,
 ):
     if not p3_decision:
         return None
@@ -1189,6 +1209,7 @@ def _build_decision_adjusted_scenarios(
             adjusted_arbitrage,
             adjusted_fcas,
             annual_cycles_history,
+            dod_severity_history,
         )
         for config in scenario_configs
     ]
@@ -1200,6 +1221,7 @@ def _build_decision_adjusted_monte_carlo(
     baseline_arbitrage: float,
     baseline_fcas: float,
     p3_decision: dict | None,
+    dod_severity_history: list[float] | None = None,
 ):
     if not p3_decision or not params.monte_carlo.enabled:
         return None
@@ -1214,6 +1236,7 @@ def _build_decision_adjusted_monte_carlo(
         adjusted_arbitrage,
         adjusted_fcas,
         annual_cycles_history,
+        dod_severity_history,
     )
 
 
@@ -1508,12 +1531,49 @@ def _run_standardized_bess_backtest(backtest_params: BessBacktestParams) -> dict
     if not intervals:
         return None
 
+    # Realistic limited-foresight dispatch: consecutive rolling daily windows
+    # with SoC carried over between windows (see engines.bess_backtest_v1). This
+    # is both tractable (a single year-long MILP is not) and closer to how real
+    # operators dispatch against a ~24h pre-dispatch horizon.
     result = run_bess_backtest_v1(backtest_params, intervals)
     summary = result["summary"]
+
+    # Perfect-foresight upper bound (single full-horizon solve, window_hours<=0)
+    # is the denominator for the industry-standard "% of perfect foresight"
+    # metric. Measuring the haircut empirically on the same price history retires
+    # the legacy static 15% guess. Guarded: if the large full-horizon solve
+    # fails, we degrade gracefully to reporting the rolling result only.
+    perfect_net = None
+    perfect_foresight_ratio = None
+    try:
+        perfect_result = run_bess_backtest_v1(backtest_params, intervals, window_hours=0.0)
+        perfect_net = perfect_result["summary"]["net_revenue"]
+        if perfect_net:
+            perfect_foresight_ratio = summary["net_revenue"] / perfect_net
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning(
+            "Perfect-foresight benchmark failed for %s %s: %s",
+            backtest_params.region,
+            backtest_params.year,
+            exc,
+        )
+
+    # Derive a DoD-severity multiplier from the optimized SoC trajectory via
+    # rainflow cycle counting (ASTM E1049). This replaces the annual_cycles/365
+    # average-DoD proxy in the degradation model: deep cycling degrades more per
+    # unit of throughput than shallow cycling.
+    from engines.rainflow import dod_severity_from_soc
+    soc_series = [float(item["soc_mwh"]) for item in result["timeline"]]
+    _, dod_severity = dod_severity_from_soc(soc_series, backtest_params.energy_mwh)
+
     return {
         "annual_revenue": summary["gross_revenue"],
         "annual_net_revenue": summary["net_revenue"],
         "annual_cycles": summary["equivalent_cycles"],
+        "dod_severity": dod_severity,
+        "perfect_foresight_net": perfect_net,
+        "perfect_foresight_ratio": perfect_foresight_ratio,
+        "foresight_window_hours": summary.get("foresight_window_hours"),
         "backtest_mode": "optimized_hindsight",
         "revenue_scope": "trajectory_gross_energy",
         "methodology_version": "bess_backtest_v1",
@@ -1751,20 +1811,30 @@ def _default_oidc_discovery_document(provider: dict) -> dict:
 
 
 def _metered_v1_call(*, x_api_key: str | None, endpoint: str, http_method: str, request_units: int, handler):
-    started_at = time.perf_counter()
-    client = None
-    status_code = 200
+    client = authenticate_external_api_key(db, x_api_key)
+    # Atomically check quota and record usage in a single transaction to avoid
+    # a TOCTOU race that could let concurrent requests exceed the daily limit.
     try:
-        client = authenticate_external_api_key(db, x_api_key)
-        check_external_api_quota(db, client=client, request_units=request_units)
+        quota = reserve_external_api_quota(
+            db,
+            client=client,
+            request_units=request_units,
+            endpoint=endpoint,
+            http_method=http_method,
+            api_version="v1",
+        )
+    except HTTPException as exc:
+        if isinstance(exc.detail, str):
+            exc.detail = build_external_api_error(code="request_error", message=exc.detail)
+        raise
+    try:
         payload = handler(client)
         if isinstance(payload, dict):
             meta = payload.setdefault("meta", {})
             if isinstance(meta, dict):
-                meta["quota"] = summarize_external_api_quota(db, client=client)
+                meta["quota"] = quota
         return payload
     except HTTPException as exc:
-        status_code = exc.status_code
         if isinstance(exc.detail, str):
             if exc.status_code == 403:
                 exc.detail = build_external_api_error(code="access_denied", message=exc.detail)
@@ -1775,19 +1845,6 @@ def _metered_v1_call(*, x_api_key: str | None, endpoint: str, http_method: str, 
             else:
                 exc.detail = build_external_api_error(code="request_error", message=exc.detail)
         raise
-    finally:
-        if client is not None:
-            latency_ms = round((time.perf_counter() - started_at) * 1000)
-            meter_external_api_usage(
-                db,
-                client_id=client["client_id"],
-                endpoint=endpoint,
-                http_method=http_method,
-                status_code=status_code,
-                request_units=request_units,
-                latency_ms=latency_ms,
-                api_version="v1",
-            )
 
 
 def _build_request_trace_id(endpoint: str) -> str:
@@ -4440,9 +4497,9 @@ def create_organization_domain_route(
 
 
 @app.post("/api/auth/password/set")
-def set_password_route(principal_id: str = Query(...), password: str = Query(...)):
+def set_password_route(body: SetPasswordRequest):
     try:
-        return set_principal_password(db, principal_id=principal_id, password=password)
+        return set_principal_password(db, principal_id=body.principal_id, password=body.password)
     except HTTPException:
         raise
     except Exception as exc:
@@ -4451,9 +4508,9 @@ def set_password_route(principal_id: str = Query(...), password: str = Query(...
 
 
 @app.post("/api/auth/login")
-def login_route(email: str = Query(...), password: str = Query(...), workspace_id: str = Query(...)):
+def login_route(body: LoginRequest):
     try:
-        return login_with_password(db, email=email, password=password, workspace_id=workspace_id)
+        return login_with_password(db, email=body.email, password=body.password, workspace_id=body.workspace_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -4462,19 +4519,14 @@ def login_route(email: str = Query(...), password: str = Query(...), workspace_i
 
 
 @app.post("/api/auth/domain-join")
-def domain_join_route(
-    organization_id: str = Query(...),
-    email: str = Query(...),
-    display_name: str = Query(...),
-    password: str = Query(...),
-):
+def domain_join_route(body: DomainJoinRequest):
     try:
         return join_organization_by_domain(
             db,
-            organization_id=organization_id,
-            email=email,
-            display_name=display_name,
-            password=password,
+            organization_id=body.organization_id,
+            email=body.email,
+            display_name=body.display_name,
+            password=body.password,
         )
     except HTTPException:
         raise
@@ -5334,7 +5386,12 @@ def get_grid_forecast_coverage(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 def run_sync_scrapers(lock_pre_acquired: bool = False):
-    """Background task to run scrapers and update the database."""
+    """Background task to run scrapers and update the database.
+
+    Each scraper runs independently; a single scraper failure no longer
+    prevents the remaining scrapers from running or the data-version
+    timestamp from advancing (which invalidates stale analysis caches).
+    """
     lock_acquired = lock_pre_acquired
     try:
         if not lock_acquired:
@@ -5344,36 +5401,45 @@ def run_sync_scrapers(lock_pre_acquired: bool = False):
                 return {"status": "skipped", "reason": "already_running"}
 
         logger.info("Starting Background Data Syncing Tasks...")
-        # WEM and NEM Sync: Incremental (Last 14 days)
         now_local = _scheduler_now()
         two_weeks_ago = (now_local - datetime.timedelta(days=14)).strftime('%Y-%m-%d')
         today = now_local.strftime('%Y-%m-%d')
-        
-        logger.info(f"Running WEM Scraper from {two_weeks_ago} to {today}...")
-        _run_scraper("aemo_wem_scraper.py", "--start", two_weeks_ago, "--end", today)
-
-        logger.info("Running WEM ESS slim sync for latest 30 days...")
-        _run_scraper("aemo_wem_ess_scraper.py", "--days", "30")
-        
-        logger.info("Running NEM Scraper...")
         start_month = (now_local - datetime.timedelta(days=14)).strftime('%Y-%m')
         end_month = now_local.strftime('%Y-%m')
-        _run_scraper(
-            "aemo_nem_scraper.py",
-            "--start",
-            start_month,
-            "--end",
-            end_month,
-            "--fcas",
-        )
 
-        logger.info("Running Grid Event Scraper...")
-        _run_scraper("aemo_grid_event_scraper.py", "--days", "180")
+        scraper_steps = [
+            ("aemo_wem_scraper.py", ["--start", two_weeks_ago, "--end", today]),
+            ("aemo_wem_ess_scraper.py", ["--days", "30"]),
+            ("aemo_nem_scraper.py", ["--start", start_month, "--end", end_month, "--fcas"]),
+            ("aemo_grid_event_scraper.py", ["--days", "180"]),
+        ]
 
-        
-        # Record Success Time
-        db.set_last_update_time(now_local.strftime('%Y-%m-%d %H:%M:%S'))
-        logger.info("Data Syncing Completed successfully!")
+        succeeded: list[str] = []
+        failures: list[dict] = []
+        for script_name, args in scraper_steps:
+            try:
+                logger.info("Running %s %s ...", script_name, " ".join(args))
+                _run_scraper(script_name, *args)
+                succeeded.append(script_name)
+            except Exception as exc:
+                logger.error("Scraper %s failed: %s", script_name, exc)
+                failures.append({"scraper": script_name, "detail": str(exc)})
+
+        # Advance the data-version timestamp as long as at least one scraper
+        # succeeded, so downstream caches are invalidated for the fresh data.
+        if succeeded:
+            db.set_last_update_time(now_local.strftime('%Y-%m-%d %H:%M:%S'))
+            logger.info("Data sync completed: %d/%d scrapers ok.", len(succeeded), len(scraper_steps))
+        else:
+            logger.error("All %d scrapers failed; data version NOT advanced.", len(scraper_steps))
+
+        if failures:
+            return {
+                "status": "partial" if succeeded else "error",
+                "succeeded": succeeded,
+                "failures": failures,
+                "detail": "; ".join(f"{f['scraper']}: {f['detail']}" for f in failures),
+            }
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Error in data sync task: {e}")
@@ -5523,6 +5589,19 @@ def get_finland_market_model():
     return build_finland_market_model_payload(db)
 
 
+def _finland_key_error_detail(exc: KeyError) -> str:
+    """Return a client-safe 404 detail for a Finland board KeyError.
+
+    ``str(KeyError)`` renders the missing key wrapped in quotes (e.g.
+    ``"'some_internal_key'"``), which leaks internal identifier formatting. We
+    surface only the bare key/message text so the response stays actionable
+    without exposing internal structure.
+    """
+    if exc.args:
+        return str(exc.args[0])
+    return "Requested resource not found"
+
+
 @app.get(
     "/api/finland/board/overview",
     summary="Get Finland board overview",
@@ -5543,7 +5622,7 @@ def get_finland_board_overview(
     except HTTPException:
         raise
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_finland_key_error_detail(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -5577,7 +5656,7 @@ def get_finland_board_table(
     except HTTPException:
         raise
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_finland_key_error_detail(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -5613,7 +5692,7 @@ def get_finland_board_chart(
     except HTTPException:
         raise
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_finland_key_error_detail(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -5652,7 +5731,7 @@ def get_finland_board_readiness():
     except HTTPException:
         raise
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=_finland_key_error_detail(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -7138,6 +7217,9 @@ INVESTMENT_BACKTEST_CACHE_SCOPE = "investment_backtest_v1"
 INVESTMENT_FCAS_CACHE_SCOPE = "investment_fcas_baseline_v1"
 _ANALYSIS_INFLIGHT_LOCK = threading.Lock()
 _ANALYSIS_INFLIGHT: Dict[str, dict] = {}
+# Max seconds a waiting request will block on an in-flight computation before
+# giving up with 503. Prevents indefinite hangs if the owner thread stalls.
+_ANALYSIS_INFLIGHT_WAIT_TIMEOUT_SECONDS = 60
 
 def _analysis_data_version() -> str:
     return db.get_last_update_time() or "no_last_update"
@@ -7221,6 +7303,9 @@ def _build_backtest_summary(params: InvestmentParams, data_version: str) -> dict
     total_arb_revenue = 0.0
     total_arb_net_revenue = 0.0
     total_cycles = 0.0
+    total_dod_severity = 0.0
+    total_perfect_net = 0.0
+    perfect_years = 0
     valid_years = 0
     backtest_modes = []
     revenue_scopes = []
@@ -7234,6 +7319,11 @@ def _build_backtest_summary(params: InvestmentParams, data_version: str) -> dict
         total_arb_revenue += standardized_result["annual_revenue"]
         total_arb_net_revenue += standardized_result["annual_net_revenue"]
         total_cycles += standardized_result["annual_cycles"]
+        total_dod_severity += standardized_result.get("dod_severity", 1.0)
+        perfect_net = standardized_result.get("perfect_foresight_net")
+        if perfect_net:
+            total_perfect_net += perfect_net
+            perfect_years += 1
         valid_years += 1
         backtest_modes.append(standardized_result["backtest_mode"])
         revenue_scopes.append(standardized_result["revenue_scope"])
@@ -7253,6 +7343,16 @@ def _build_backtest_summary(params: InvestmentParams, data_version: str) -> dict
         "avg_annual_arbitrage_raw": total_arb_revenue / valid_years if valid_years > 0 else 0.0,
         "avg_annual_arbitrage_net": total_arb_net_revenue / valid_years if valid_years > 0 else 0.0,
         "avg_annual_cycles": total_cycles / valid_years if valid_years > 0 else 365.0,
+        "avg_dod_severity": total_dod_severity / valid_years if valid_years > 0 else 1.0,
+        "avg_annual_arbitrage_perfect": total_perfect_net / perfect_years if perfect_years > 0 else None,
+        "perfect_foresight_ratio": (
+            total_arb_net_revenue / total_perfect_net
+            if perfect_years > 0 and total_perfect_net
+            else None
+        ),
+        "foresight_haircut_source": (
+            "empirical_rolling_vs_perfect_foresight" if perfect_years > 0 and total_perfect_net else "rolling_only"
+        ),
         "valid_years": valid_years,
         "backtest_mode": " / ".join(dict.fromkeys(backtest_modes)) if backtest_modes else "unavailable",
         "revenue_scope": " / ".join(dict.fromkeys(revenue_scopes)) if revenue_scopes else "unavailable",
@@ -7421,6 +7521,10 @@ def _build_investment_response(
         assumptions.append("WEM auto FCAS falls back to manual input because only slim preview data is available.")
     if backtest_summary.get("valid_years", 0) == 0:
         assumptions.append("No standardized BESS backtest coverage was available for the requested years.")
+    if params.tax_config is not None:
+        assumptions.append("Headline NPV/IRR are reported pre-tax; after-tax metrics are attached and preferred for display.")
+    else:
+        assumptions.append("Headline NPV/IRR are reported pre-tax (no tax_config provided).")
     if p3_decision:
         assumptions.append(
             f"P3 decision strategy: {(p3_decision.get('decision_summary') or {}).get('recommended_strategy', 'unavailable')}."
@@ -7450,6 +7554,19 @@ def _build_investment_response(
             "project_life": params.financial.project_life_years,
         },
         "base_metrics": base_metrics,
+        # Headline metrics basis annotation (P2-tax). base_metrics / metrics are
+        # ALWAYS pre-tax for backward compatibility; when a tax_config is
+        # supplied the enrichment step attaches after_tax_metrics and the
+        # frontend should prefer them. When absent this is explicitly a pre-tax
+        # headline. after_tax_available is confirmed by the enrichment step.
+        "headline_basis": "pre_tax",
+        "metrics_basis": {
+            "base_metrics": "pre_tax",
+            "after_tax_available": params.tax_config is not None,
+            "recommended_display_basis": (
+                "after_tax" if params.tax_config is not None else "pre_tax"
+            ),
+        },
         "scenarios": scenario_response_payloads,
         "monte_carlo": mc_result.model_dump() if mc_result else None,
         "assumptions": assumptions,
@@ -7469,6 +7586,29 @@ def _build_investment_response(
             "methodology_version": primary_driver.get("methodology_version", "unavailable"),
             "revenue_scope": backtest_summary.get("revenue_scope", "unavailable"),
             "baseline_source": arbitrage_baseline_source,
+            # Realizable arbitrage traceability. Two independent, multiplicative
+            # haircuts are surfaced so the frontend can render an evidence-backed
+            # credibility badge instead of a static guess:
+            #   * perfect_foresight_ratio / foresight_horizon_haircut - measured
+            #     empirically by the receding-horizon (MPC) backtest (rolling vs
+            #     perfect foresight on the SAME realised price history). This is
+            #     the value lost purely to a finite look-ahead window (~1%).
+            #   * forecast_error_haircut - the modelled loss from dispatching
+            #     against imperfect forecasts, anchored to the literature
+            #     (arXiv:2501.07121, ~11%). The MPC backtest cannot measure this
+            #     because it optimises against realised prices.
+            # net_energy_revenue already has BOTH haircuts applied downstream via
+            # _derive_arbitrage_baseline; these fields expose the decomposition.
+            "perfect_foresight_net": backtest_summary.get("avg_annual_arbitrage_perfect"),
+            "perfect_foresight_ratio": backtest_summary.get("perfect_foresight_ratio"),
+            "foresight_horizon_haircut": (
+                1.0 - backtest_summary["perfect_foresight_ratio"]
+                if backtest_summary.get("perfect_foresight_ratio") is not None
+                else None
+            ),
+            "foresight_horizon_source": backtest_summary.get("foresight_haircut_source"),
+            "forecast_error_haircut": params.forecast_inefficiency,
+            "forecast_error_source": "literature:arXiv:2501.07121",
         },
         "backtest_mode": backtest_summary.get("backtest_mode", "unavailable"),
         "revenue_scope": backtest_summary.get("revenue_scope", "unavailable"),
@@ -7691,7 +7831,11 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
         })
         inflight_entry, is_owner = _acquire_inflight_entry(inflight_key)
         if not is_owner:
-            inflight_entry["event"].wait()
+            if not inflight_entry["event"].wait(timeout=_ANALYSIS_INFLIGHT_WAIT_TIMEOUT_SECONDS):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Analysis request timed out waiting for an in-flight computation",
+                )
             if inflight_entry["error"] is not None:
                 raise inflight_entry["error"]
             return inflight_entry["response"]
@@ -7726,6 +7870,10 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                 )
 
             annual_cycles_history = [avg_annual_cycles] * params.financial.project_life_years
+            # DoD-severity from the backtest SoC trajectory (rainflow), applied to
+            # the degradation model. 1.0 = full-depth cycles when unavailable.
+            avg_dod_severity = backtest_summary.get("avg_dod_severity", 1.0)
+            dod_severity_history = [avg_dod_severity] * params.financial.project_life_years
 
             base_scenario_config = params.scenarios[0] if params.scenarios else None
             if not base_scenario_config:
@@ -7738,6 +7886,7 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                 baseline_arbitrage,
                 baseline_fcas,
                 annual_cycles_history,
+                dod_severity_history,
             )
 
             scenarios = [base_result]
@@ -7749,6 +7898,7 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                         baseline_arbitrage,
                         baseline_fcas,
                         annual_cycles_history,
+                        dod_severity_history,
                     )
                 )
 
@@ -7759,6 +7909,7 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                     baseline_arbitrage,
                     baseline_fcas,
                     annual_cycles_history,
+                    dod_severity_history,
                 )
 
             p3_decision = _build_investment_p3_decision(params)
@@ -7768,6 +7919,7 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                 baseline_arbitrage,
                 baseline_fcas,
                 p3_decision,
+                dod_severity_history,
             )
             decision_adjusted_result = decision_adjusted_scenarios[0] if decision_adjusted_scenarios else None
             decision_adjusted_monte_carlo = _build_decision_adjusted_monte_carlo(
@@ -7776,6 +7928,7 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
                 baseline_arbitrage,
                 baseline_fcas,
                 p3_decision,
+                dod_severity_history,
             )
 
             response = _build_investment_response(
@@ -7814,8 +7967,7 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
         raise
     except Exception as e:
         logger.error(f"Investment analysis error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 if __name__ == "__main__":

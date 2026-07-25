@@ -428,4 +428,4 @@ async def get_regional_ranking(
         raise
     except Exception as e:
         logger.error("Error in regional-ranking: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

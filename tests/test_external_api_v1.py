@@ -4,7 +4,7 @@ import unittest
 
 from fastapi import HTTPException
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_pg_tables
 
 ensure_repo_import_paths()
 
@@ -29,6 +29,9 @@ class ExternalApiV1Tests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        # All DatabaseManagers share one PG database, so usage/client rows seeded
+        # by previous runs leak in and break count/quota assertions. Reset them.
+        reset_pg_tables(self.db, "external_api_usage", "external_api_client")
 
     def tearDown(self):
         if os.path.exists(self.db_path):

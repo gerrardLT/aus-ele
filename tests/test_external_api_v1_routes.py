@@ -7,7 +7,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_pg_tables
 
 ensure_repo_import_paths()
 
@@ -23,6 +23,9 @@ class ExternalApiV1RouteTests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        # All DatabaseManagers share one PG database, so usage/client rows seeded
+        # by previous runs leak in and break count/quota assertions. Reset them.
+        reset_pg_tables(self.db, "external_api_usage", "external_api_client")
         self.original_db = server.db
         server.db = self.db
         server.job_orchestrator.db = self.db
@@ -285,7 +288,10 @@ class ExternalApiV1RouteTests(unittest.TestCase):
         self.assertEqual(payload["endpoint"], "developer/portal")
         self.assertEqual(payload["data"]["client"]["client_id"], "starter-client")
         self.assertEqual(payload["data"]["quota"]["daily_unit_limit"], 1000)
-        self.assertEqual(payload["data"]["billing"]["totals"]["request_units"], 250)
+        # 250 explicit units above + 1 unit metered by the developer-portal call
+        # itself (_metered_v1_call reserves quota before building the billing
+        # summary), so the billing total is 251.
+        self.assertEqual(payload["data"]["billing"]["totals"]["request_units"], 251)
         self.assertEqual(payload["data"]["ledger"]["items"][0]["client_id"], "starter-client")
 
     def test_v1_query_path_uses_shared_scope_guard(self):
@@ -505,4 +511,4 @@ class ExternalApiV1RouteTests(unittest.TestCase):
             response = self.client.get("/api/finland/board/table", params={"view": "nope"})
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "'Unsupported Finland board view: nope'")
+        self.assertEqual(response.json()["detail"], "Unsupported Finland board view: nope")

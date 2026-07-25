@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import collections
 import datetime
 import hashlib
 import hmac
 import json
 import os
 import secrets
+import threading
 import uuid
 
 from fastapi import HTTPException
@@ -30,6 +32,40 @@ ORG_ROLE_PERMISSIONS = {
 
 def _utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# Login rate limiter — sliding window, per-email
+# ---------------------------------------------------------------------------
+_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = int(os.environ.get("AUS_ELE_LOGIN_RATE_LIMIT", "5"))
+_LOGIN_RATE_LIMIT_WINDOW_SECONDS = 60
+
+_login_attempts: dict[str, collections.deque] = {}
+_login_rate_lock = threading.Lock()
+
+
+def _check_login_rate_limit(email: str) -> None:
+    """Raise 429 if the email has exceeded login attempts within the window."""
+    now = _utc_now()
+    key = email.lower().strip()
+    with _login_rate_lock:
+        attempts = _login_attempts.setdefault(key, collections.deque())
+        # Evict expired entries
+        while attempts and (now - attempts[0]).total_seconds() > _LOGIN_RATE_LIMIT_WINDOW_SECONDS:
+            attempts.popleft()
+        if len(attempts) >= _LOGIN_RATE_LIMIT_MAX_ATTEMPTS:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many login attempts. Please try again later.",
+            )
+        attempts.append(now)
+
+
+def _clear_login_rate_limit(email: str) -> None:
+    """Clear rate limit state on successful login."""
+    key = email.lower().strip()
+    with _login_rate_lock:
+        _login_attempts.pop(key, None)
 
 
 def _utc_now() -> datetime.datetime:
@@ -392,10 +428,14 @@ def resolve_principal_for_oidc_claims(db, *, provider_key: str, subject: str, em
 
 
 def login_with_password(db, *, email: str, password: str, workspace_id: str) -> dict:
+    _check_login_rate_limit(email)
     principal = db.fetch_principal_by_email(email)
     if not principal or not principal.get("password_hash") or not principal.get("password_salt"):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    if _hash_password(password, principal["password_salt"]) != principal["password_hash"]:
+    if not hmac.compare_digest(
+        _hash_password(password, principal["password_salt"]).encode(),
+        principal["password_hash"].encode(),
+    ):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     workspace = db.fetch_workspace(workspace_id)
     membership = db.fetch_workspace_membership(workspace_id, principal["principal_id"])
@@ -436,6 +476,7 @@ def login_with_password(db, *, email: str, password: str, workspace_id: str) -> 
         target_id=session["session_id"],
         detail_json={"email": email},
     )
+    _clear_login_rate_limit(email)
     return {
         **session,
         "access_token": access_token["token"],
@@ -445,7 +486,12 @@ def login_with_password(db, *, email: str, password: str, workspace_id: str) -> 
     }
 
 
+def _oidc_session_ttl_seconds() -> int:
+    return int(os.environ.get("AUS_ELE_OIDC_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
+
+
 def issue_oidc_session(db, *, principal_id: str, organization_id: str, workspace_id: str, auth_identity_id: str, auth_method: str = "oidc") -> dict:
+    expires_at = _utc_now() + datetime.timedelta(seconds=_oidc_session_ttl_seconds())
     session = db.upsert_auth_session(
         {
             "session_id": f"sess_{uuid.uuid4().hex[:12]}",
@@ -457,7 +503,7 @@ def issue_oidc_session(db, *, principal_id: str, organization_id: str, workspace
             "auth_method": auth_method,
             "created_at": _utc_now_iso(),
             "last_seen_at": _utc_now_iso(),
-            "expires_at": None,
+            "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
             "revoked": 0,
         }
     )

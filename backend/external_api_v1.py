@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 from typing import Any
 
 from fastapi import HTTPException
 from deps import utc_now_iso as _utc_now_iso
+
+
+def _hash_api_key(raw_key: str) -> str:
+    """Produce a SHA-256 hex digest of the raw API key for storage."""
+    return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
 def _utc_day_start_iso() -> str:
@@ -49,10 +55,10 @@ def seed_external_api_client(
     enabled: bool = True,
 ) -> dict:
     now = _utc_now_iso()
-    return db.upsert_external_api_client(
+    record = db.upsert_external_api_client(
         {
             "client_id": client_id,
-            "api_key": api_key,
+            "api_key": _hash_api_key(api_key),
             "client_name": client_name,
             "plan": plan,
             "organization_id": organization_id,
@@ -62,6 +68,9 @@ def seed_external_api_client(
             "updated_at": now,
         }
     )
+    # Return the raw key only at creation time — it cannot be retrieved later
+    record["api_key_raw"] = api_key
+    return record
 
 
 def authenticate_external_api_key(db, api_key: str | None) -> dict:
@@ -70,7 +79,7 @@ def authenticate_external_api_key(db, api_key: str | None) -> dict:
             status_code=401,
             detail=build_external_api_error(code="missing_api_key", message="Missing API key"),
         )
-    client = db.fetch_external_api_client_by_key(api_key)
+    client = db.fetch_external_api_client_by_key(_hash_api_key(api_key))
     if not client or not client.get("enabled"):
         raise HTTPException(
             status_code=401,
@@ -108,6 +117,52 @@ def check_external_api_quota(db, *, client: dict, request_units: int) -> dict:
             ),
         )
     return quota
+
+
+def reserve_external_api_quota(
+    db,
+    *,
+    client: dict,
+    request_units: int,
+    endpoint: str,
+    http_method: str,
+    api_version: str = "v1",
+) -> dict:
+    """Atomically check quota and record usage in a single DB transaction.
+
+    This eliminates the TOCTOU race between check and meter.
+    Returns the quota summary dict.
+    Raises HTTPException 429 if quota is exceeded.
+    """
+    daily_unit_limit = PLAN_DAILY_UNIT_LIMITS.get(client.get("plan"), 1000)
+    try:
+        used_units = db.reserve_external_api_quota(
+            client_id=client["client_id"],
+            request_units=request_units,
+            daily_unit_limit=daily_unit_limit,
+            created_at_from=_utc_day_start_iso(),
+            endpoint=endpoint,
+            http_method=http_method,
+            api_version=api_version,
+            created_at=_utc_now_iso(),
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=429,
+            detail=build_external_api_error(
+                code="quota_exceeded",
+                message="Daily API quota exceeded",
+                retryable=False,
+            ),
+        )
+    remaining_units = None if daily_unit_limit is None else max(0, daily_unit_limit - used_units - request_units)
+    return {
+        "plan": client.get("plan"),
+        "window": "day",
+        "daily_unit_limit": daily_unit_limit,
+        "used_units": used_units + request_units,
+        "remaining_units": remaining_units,
+    }
 
 
 def _estimate_usage_cost_usd(*, plan: str, request_units: int) -> float:

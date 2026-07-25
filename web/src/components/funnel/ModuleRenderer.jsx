@@ -51,6 +51,10 @@ const MODULE_REGISTRY = {
   ReportPreview: lazy(() => import('../ReportPreview')),
   WemEssAnalysis: lazy(() => import('../wem/WemEssAnalysis')),
   WemCsvUploader: lazy(() => import('../wem/WemCsvUploader')),
+  // U3: Decision Terminal
+  DecisionTerminal: lazy(() => import('../modules/DecisionTerminal')),
+  // U5: What-if Scenario Split
+  ScenarioSplit: lazy(() => import('../modules/ScenarioSplit')),
 };
 
 // --- ErrorBoundary ---
@@ -81,13 +85,38 @@ class ModuleErrorBoundary extends Component {
   }
 }
 
+// --- Module Loading Copy (S6/F1) ---
+// Per-module loading messages shown during Suspense fallback.
+const MODULE_LOADING_COPY = {
+  InvestmentAnalysis: { zh: '正在求解 20 年现金流与蒙特卡洛分布…（首次约 30-60 秒）', en: 'Solving 20-year cash flows & Monte Carlo… (first run ~30-60s)', variant: 'compute' },
+  CoOptimizedBacktest: { zh: '正在运行能量+FCAS 联合优化 MILP…', en: 'Running energy+FCAS joint MILP optimization…', variant: 'compute' },
+  CannibalizationSimulator: { zh: '正在模拟容量增长蚕食效应…', en: 'Simulating capacity growth cannibalization…', variant: 'compute' },
+  MerchantRiskQuantifier: { zh: '正在运行蒙特卡洛风险量化…', en: 'Running Monte Carlo risk quantification…', variant: 'compute' },
+  SpikeProfitAnalysis: { zh: '正在分析极端价格事件…', en: 'Analyzing extreme price events…', variant: 'chart' },
+  RegionalRanking: { zh: '正在计算区域投资排名…', en: 'Computing regional investment ranking…', variant: 'chart' },
+};
+
 // --- ModuleLoadingSkeleton ---
 // Animated pulse placeholder shown while a module is loading.
-export function ModuleLoadingSkeleton() {
+// S6/F1: accepts `label` and `variant` ('chart' | 'compute') for contextual copy.
+export function ModuleLoadingSkeleton({ label, variant = 'chart' }) {
   return (
-    <div className="module-loading-skeleton" aria-busy="true" aria-label="Loading module">
+    <div className="module-loading-skeleton" aria-busy="true" aria-label={label || 'Loading module'}>
+      {label && (
+        <p style={{
+          fontSize: '13px',
+          color: '#666',
+          marginBottom: '8px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+        }}>
+          {variant === 'compute' && <span aria-hidden="true">⚙️</span>}
+          {label}
+        </p>
+      )}
       <div className="skeleton-pulse" style={{
-        height: '120px',
+        height: variant === 'compute' ? '80px' : '120px',
         borderRadius: '8px',
         background: 'linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%)',
         backgroundSize: '200% 100%',
@@ -145,7 +174,12 @@ export default function ModuleRenderer({ moduleEntry, config, lang }) {
 
   return (
     <ModuleErrorBoundary moduleName={moduleEntry.component}>
-      <Suspense fallback={<ModuleLoadingSkeleton />}>
+      <Suspense fallback={
+        <ModuleLoadingSkeleton
+          label={MODULE_LOADING_COPY[moduleEntry.component]?.[lang] || MODULE_LOADING_COPY[moduleEntry.component]?.zh}
+          variant={MODULE_LOADING_COPY[moduleEntry.component]?.variant || 'chart'}
+        />
+      }>
         <ComponentLazy {...baseProps} {...extraProps} />
       </Suspense>
     </ModuleErrorBoundary>

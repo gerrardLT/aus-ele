@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 import time
 
 try:
@@ -21,32 +22,38 @@ class RedisResponseCache:
         self.prefix = prefix
         self._client = None
         self._last_failure_time: float = 0
+        # L-1: guard circuit-breaker state and the lazily-created client so
+        # concurrent workers cannot race on _last_failure_time / _client.
+        self._lock = threading.Lock()
 
     def _is_circuit_open(self) -> bool:
         """Return True if Redis recently failed and we should skip attempts."""
-        if self._last_failure_time == 0:
-            return False
-        return (time.monotonic() - self._last_failure_time) < _CIRCUIT_BREAKER_COOLDOWN_SECONDS
+        with self._lock:
+            if self._last_failure_time == 0:
+                return False
+            return (time.monotonic() - self._last_failure_time) < _CIRCUIT_BREAKER_COOLDOWN_SECONDS
 
     def _record_failure(self):
         """Record a failure timestamp for circuit breaker."""
-        self._last_failure_time = time.monotonic()
-        self._client = None
+        with self._lock:
+            self._last_failure_time = time.monotonic()
+            self._client = None
 
     def _get_client(self):
         if redis is None:
             return None
         if self._is_circuit_open():
             return None
-        if self._client is None:
-            self._client = redis.Redis.from_url(
-                self.url,
-                decode_responses=True,
-                socket_connect_timeout=0.3,
-                socket_timeout=0.3,
-                retry_on_timeout=False,
-            )
-        return self._client
+        with self._lock:
+            if self._client is None:
+                self._client = redis.Redis.from_url(
+                    self.url,
+                    decode_responses=True,
+                    socket_connect_timeout=0.3,
+                    socket_timeout=0.3,
+                    retry_on_timeout=False,
+                )
+            return self._client
 
     def _full_key(self, scope: str, cache_key: str) -> str:
         return f"{self.prefix}:{scope}:{cache_key}"

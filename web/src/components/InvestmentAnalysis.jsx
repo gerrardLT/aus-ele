@@ -20,6 +20,7 @@ import { formatRegimeName, normalizeRegimeCompact } from '../lib/regimeCompact';
 import { getDataGradeCaveat, getResultMetadata } from '../lib/resultMetadata';
 import { SummaryBlock } from './investment/KpiCard';
 import ParameterPanel from './investment/ParameterPanel';
+import ReactiveParamPanel from './modules/ReactiveParamPanel';
 import KpiDashboard from './investment/KpiDashboard';
 import CashFlowChart from './investment/CashFlowChart';
 import CashFlowTable from './investment/CashFlowTable';
@@ -46,7 +47,7 @@ export const INVESTMENT_PRESET_DEFAULTS = {
   capacity_payment_per_mw_year: 0,
   backtest_years: [2024, 2025],
   monte_carlo_enabled: false,
-  forecast_inefficiency: 0.15,
+  forecast_inefficiency: 0.11,
   fcas_activation_probability: 0.15,
   cost_of_debt: 0.06,
   target_dscr: 1.30,
@@ -284,6 +285,20 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
   const primaryBacktestDriver = backtest_reference?.drivers?.[0] || null;
   const backtestSourceYears = backtest_reference?.inputs?.map((item) => item.year).filter(Boolean).join(', ') || '-';
 
+  // --- P2: credibility & traceability derived values ---
+  const metricsBasis = result?.metrics_basis || null;
+  const afterTaxMetrics = result?.after_tax_metrics || null;
+  const afterTaxPreferred = metricsBasis?.recommended_display_basis === 'after_tax' && Boolean(afterTaxMetrics);
+  const perfectForesightNet = backtest_observed?.perfect_foresight_net ?? null;
+  const realizableNet = backtest_observed?.net_energy_revenue ?? null;
+  const perfectForesightPct = (perfectForesightNet && realizableNet != null && perfectForesightNet !== 0)
+    ? (realizableNet / perfectForesightNet)
+    : (backtest_observed?.perfect_foresight_ratio ?? null);
+  const foresightHorizonHaircut = backtest_observed?.foresight_horizon_haircut ?? null;
+  const forecastErrorHaircut = backtest_observed?.forecast_error_haircut ?? null;
+  const arbitrageBaselineSource = result?.arbitrage_baseline_source || backtest_observed?.baseline_source || null;
+  const pct1 = (value) => (value == null ? '-' : `${(value * 100).toFixed(1)}%`);
+
   const normalizedRegimeCompact = useMemo(() => normalizeRegimeCompact(result?.regime_compact), [result?.regime_compact]);
   const primaryRegime = normalizedRegimeCompact.primary_regime;
   const primaryRegimeName = formatRegimeName(primaryRegime?.regime, regimeCompactCopy);
@@ -343,6 +358,14 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
       <div className="grid grid-cols-12 gap-6">
         {/* 左侧参数面板 */}
         <div className="col-span-12 space-y-4 lg:col-span-4">
+          {/* U2: Reactive quick-tune sliders */}
+          <ReactiveParamPanel
+            params={params}
+            setParams={setParams}
+            onRun={(p) => runAnalysis(p)}
+            lang={lang}
+            loading={loading}
+          />
           <ParameterPanel
             params={params}
             setParams={setParams}
@@ -481,6 +504,115 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* P2: 可信度与可追溯 / Credibility & traceability */}
+              {backtest_observed && (
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <h4 className="text-sm font-bold uppercase tracking-wider">
+                      {lang === 'zh' ? '可信度与可追溯' : 'Credibility & Traceability'}
+                    </h4>
+                    {/* 口径徽章：税前/税后 */}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${afterTaxPreferred ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+                      {afterTaxPreferred
+                        ? (lang === 'zh' ? '税后口径' : 'After-tax basis')
+                        : (lang === 'zh' ? '税前口径' : 'Pre-tax basis')}
+                    </span>
+                    {/* 基线来源徽章 */}
+                    {arbitrageBaselineSource && (
+                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-800">
+                        {(lang === 'zh' ? '基线来源: ' : 'Baseline: ')}{arbitrageBaselineSource}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* % of perfect foresight：三值并列 */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <SummaryBlock
+                      label={lang === 'zh' ? '完美预见上界' : 'Perfect-foresight ceiling'}
+                      value={fmt(perfectForesightNet)}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '折扣后可实现' : 'Realizable (after haircuts)'}
+                      value={fmt(realizableNet)}
+                    />
+                    <SummaryBlock
+                      label={lang === 'zh' ? '占完美预见比' : '% of perfect foresight'}
+                      value={pct1(perfectForesightPct)}
+                    />
+                  </div>
+
+                  {/* 两段可追溯折扣分解 */}
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      <div className="mb-1 text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
+                        {lang === 'zh' ? '视界折扣（MPC 实测）' : 'Horizon haircut (MPC-measured)'}
+                      </div>
+                      <div className="font-mono text-sm font-bold">{pct1(foresightHorizonHaircut)}</div>
+                      <div className="mt-1 text-xs text-[var(--color-muted)]">
+                        {lang === 'zh'
+                          ? '滚动前视 vs 完美预见（同一份已实现价格）'
+                          : 'Rolling vs perfect foresight on the same realised prices'}
+                      </div>
+                    </div>
+                    <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      <div className="mb-1 text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
+                        {lang === 'zh' ? '预测误差折扣（文献）' : 'Forecast-error haircut (literature)'}
+                      </div>
+                      <div className="font-mono text-sm font-bold">{pct1(forecastErrorHaircut)}</div>
+                      <div className="mt-1 text-xs text-[var(--color-muted)]">
+                        {backtest_observed?.forecast_error_source || 'literature:arXiv:2501.07121'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 税前/税后对照（有税务时） */}
+                  {afterTaxMetrics && (
+                    <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 p-3">
+                      <div className="mb-2 text-[10px] uppercase tracking-widest text-emerald-800">
+                        {lang === 'zh' ? '税前 / 税后对照' : 'Pre-tax / After-tax comparison'}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                        <SummaryBlock label={lang === 'zh' ? '税前 NPV' : 'Pre-tax NPV'} value={fmt(afterTaxMetrics.pre_tax_npv)} />
+                        <SummaryBlock label={lang === 'zh' ? '税后 NPV' : 'After-tax NPV'} value={fmt(afterTaxMetrics.after_tax_npv)} />
+                        <SummaryBlock label={lang === 'zh' ? '税前 IRR' : 'Pre-tax IRR'} value={afterTaxMetrics.pre_tax_irr != null ? pct1(afterTaxMetrics.pre_tax_irr) : '-'} />
+                        <SummaryBlock label={lang === 'zh' ? '税后 IRR' : 'After-tax IRR'} value={afterTaxMetrics.after_tax_irr != null ? pct1(afterTaxMetrics.after_tax_irr) : '-'} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 不确定性与可复现（蒙特卡洛） */}
+                  {mc && (
+                    <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
+                          {lang === 'zh' ? '不确定性区间 (IRR)' : 'Uncertainty band (IRR)'}
+                        </span>
+                        {mc.seed != null && (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-mono text-slate-700">
+                            seed={mc.seed}
+                          </span>
+                        )}
+                        {mc.iterations != null && (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-mono text-slate-700">
+                            {mc.iterations}{lang === 'zh' ? ' 次迭代' : ' iters'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <SummaryBlock label="IRR P10" value={mc.irr_p10 != null ? pct1(mc.irr_p10) : '-'} />
+                        <SummaryBlock label="IRR P50" value={mc.irr_p50 != null ? pct1(mc.irr_p50) : '-'} />
+                        <SummaryBlock label="IRR P90" value={mc.irr_p90 != null ? pct1(mc.irr_p90) : '-'} />
+                      </div>
+                      <div className="mt-2 text-xs text-[var(--color-muted)]">
+                        {lang === 'zh'
+                          ? '相同种子可逐位复现；NPV 分布见下方蒙特卡洛面板。'
+                          : 'Same seed reproduces results bit-for-bit; NPV distribution in the Monte Carlo panel below.'}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

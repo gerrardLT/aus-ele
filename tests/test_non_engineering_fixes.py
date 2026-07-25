@@ -1,5 +1,4 @@
 import contextlib
-import contextlib
 import json
 import os
 import sqlite3
@@ -8,6 +7,8 @@ import threading
 import time
 import unittest
 from unittest import mock
+
+import pytest
 
 from tests.support import ensure_repo_import_paths
 

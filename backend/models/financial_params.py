@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional, Dict, Union, TYPE_CHECKING
+from typing import List, Literal, Optional, Dict, Union, TYPE_CHECKING
 from enum import Enum
 
 from models.bess_backtest_params import BessBacktestParams
@@ -27,12 +27,28 @@ class ScenarioConfig(BaseModel):
     fcas_multiplier: float = 1.0
     degradation_multiplier: float = 1.0
 
+    # Optional per-year revenue multipliers (used by Monte Carlo AR(1) draws).
+    # When present, they override the scalar multiplier for each project year,
+    # allowing year-to-year revenue variation instead of a single persistent shock.
+    arbitrage_multipliers_by_year: Optional[List[float]] = None
+    fcas_multipliers_by_year: Optional[List[float]] = None
+
 class MonteCarloConfig(BaseModel):
     enabled: bool = False
     iterations: int = 1000
-    capex_volatility: float = 0.10  # 10% std dev
-    market_volatility: float = 0.20  # 20% std dev for revenue
+    capex_volatility: float = 0.10  # 10% std dev (log-space sigma)
+    market_volatility: float = 0.20  # 20% std dev for revenue (log-space sigma)
     degradation_volatility: float = 0.05
+
+    # Reproducibility: when None a fixed default seed is used so runs are
+    # auditable/repeatable. Callers may pass an explicit seed to vary draws.
+    seed: Optional[int] = None
+    # Correlation between arbitrage and FCAS revenue shocks (0=independent,
+    # 1=perfectly correlated). Default reflects a moderate positive linkage.
+    arb_fcas_correlation: float = 0.6
+    # AR(1) coefficient for year-to-year revenue persistence (0=iid shocks,
+    # 1=fully persistent). Avoids the "permanent shock" assumption.
+    revenue_autocorrelation: float = 0.3
 
 
 class RevenueModel(str, Enum):
@@ -74,6 +90,10 @@ class BatterySpecs(BaseModel):
     base_cycle_degradation_rate: float = 0.00003  # % degradation per full equivalent cycle
     dod_non_linear_factor: float = 1.2 # Exponent for Depth of Discharge impact (Rainflow equivalent)
     augmentation_threshold_soc: float = 0.60 # Augment when capacity drops to 60%
+    # End-of-life "knee": below this SoH, degradation accelerates by knee_acceleration_factor.
+    # Reflects the well-documented non-linear end-of-life capacity fade of Li-ion cells.
+    knee_point_soh: float = 0.70
+    knee_acceleration_factor: float = 1.5
 
     # --- 收入结构（CIS 合约支持）---
     revenue_model: RevenueModel = RevenueModel.PURE_MERCHANT
@@ -99,6 +119,9 @@ class FinancialAssumptions(BaseModel):
     cost_of_debt: float = 0.06
     target_dscr: float = 1.30
     debt_tenor_years: int = 15
+    # S4/M3: "annuity" (default, constant payment) or "sculpting" (principal
+    # repaid proportionally to CFADS to maintain constant DSCR each year).
+    debt_repayment_mode: Literal["annuity", "sculpting"] = "annuity"
 
 class InvestmentParams(BaseModel):
     region: str = "SA1"
@@ -114,13 +137,39 @@ class InvestmentParams(BaseModel):
     revenue_capture_rate: float = 0.65
     fcas_revenue_per_mw_year: float = 15000.0
     fcas_revenue_mode: FcasRevenueMode = FcasRevenueMode.AUTO
+    # Revenue baseline construction (S2/B2). "additive" keeps the historical
+    # arbitrage + FCAS sum (default, zero-regression). "co_optimized" derives a
+    # single energy+FCAS jointly-optimized baseline from CoOptimizationEngine,
+    # eliminating the power-capacity double-count of the additive path.
+    revenue_baseline_mode: Literal["additive", "co_optimized"] = "additive"
     fcas_activation_probability: float = 0.15 # Real-world probability that FCAS is called and drains SoC
     
     dispatch_mode: DispatchMode = DispatchMode.HINDSIGHT_OPTIMIZED
-    forecast_inefficiency: float = 0.15 # Real-world haircut (15%) for lack of perfect foresight in MPC
+    # Realizable arbitrage revenue is decomposed into two independent haircuts:
+    #   1. HORIZON haircut - measured empirically by the receding-horizon (MPC)
+    #      backtest: rolling net vs perfect-foresight net. Captures the value
+    #      lost because a real operator can only see a finite look-ahead window
+    #      (typically ~1% for a 24h commit + 24h look-ahead on NEM data).
+    #   2. FORECAST-ERROR haircut - this knob. Captures the value lost because a
+    #      real operator dispatches against *imperfect* price forecasts (plus
+    #      bid/offer slippage and forced outages), which the MPC backtest cannot
+    #      model because it optimises against realised prices.
+    # The two are multiplicative and NOT double-counted: the MPC rolling net
+    # already embeds only the horizon truncation (~1%), so this knob adds the
+    # forecast-error loss on top. Default 0.11 is anchored to the literature
+    # (Hornek et al. 2025, arXiv:2501.07121: forecast-driven vs perfect-foresight
+    # dispatch loses ~11% of arbitrage value on European day-ahead/intraday).
+    forecast_inefficiency: float = 0.11
     
     backtest_years: List[int] = [2024, 2025]
-    
+
+    # S3/B3: Cannibalization effect —逐年价差衰减因子注入多年现金流。
+    # 幂律模型: decay_factor_t = 1 / (1 + annual_growth_rate * t) ^ alpha
+    # 默认关闭，零回归。
+    apply_cannibalization: bool = False
+    cannibalization_alpha: float = 0.6  # 幂律指数（QLD实证拟合≈0.6）
+    cannibalization_annual_growth_rate: float = 0.10  # 市场BESS容量年增长率
+
     scenarios: List[ScenarioConfig] = [ScenarioConfig()]
     monte_carlo: MonteCarloConfig = Field(default_factory=MonteCarloConfig)
 
@@ -168,13 +217,22 @@ class FinancialMetrics(BaseModel):
     npv: float
     irr: Optional[float]
     roi_pct: float
-    payback_years: Optional[int]
+    payback_years: Optional[float]  # S4/M1: fractional (linear interpolation)
     total_capex: float
-    
+
+    # S4/M2: IRR reliability flag and MIRR fallback
+    irr_reliable: bool = True
+    mirr: Optional[float] = None
+
+    # S4/M5: ROI is undiscounted (sum of future CF / CAPEX)
+    roi_undiscounted: bool = True
+
     # Project Finance Metrics
     debt_capacity: float = 0.0
     levered_irr: Optional[float] = None
     dscr_avg: float = 0.0
+    min_dscr: float = 0.0
+    llcr: Optional[float] = None  # S4/M4: Loan Life Coverage Ratio
 
 class ScenarioResult(BaseModel):
     scenario_name: str
@@ -189,6 +247,10 @@ class MonteCarloResult(BaseModel):
     irr_p10: Optional[float]
     irr_p50: Optional[float]
     irr_p90: Optional[float]
+
+    # Reproducibility metadata (backward-compatible additions).
+    seed: Optional[int] = None
+    iterations: Optional[int] = None
 
 class InvestmentAnalysisResponse(BaseModel):
     region: str

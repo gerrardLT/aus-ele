@@ -2,6 +2,8 @@ import sqlite3
 import unittest
 from unittest import mock
 
+import pytest
+
 from tests.support import ensure_repo_import_paths
 
 ensure_repo_import_paths()

@@ -27,6 +27,16 @@ class BessBacktestParams(BaseModel):
     availability_pct: float = Field(default=100.0, ge=0.0, le=100.0)
     max_cycles_per_day: float = Field(default=1.0, ge=0.0)
 
+    # --- Optional market/physical constraints (merged from the V2 engine) ---
+    # All default to no-op values so an unset params object reproduces the
+    # original single-power-limit LP behaviour exactly (zero regression).
+    max_charge_mw: Optional[float] = Field(default=None, gt=0)
+    max_discharge_mw: Optional[float] = Field(default=None, gt=0)
+    auxiliary_power_mw: float = Field(default=0.0, ge=0.0)
+    registered_capacity_mw: Optional[float] = Field(default=None, gt=0)
+    min_duration_intervals: int = Field(default=1, ge=1)
+    dispatch_alignment_minutes: Optional[int] = Field(default=None, gt=0)
+
     @model_validator(mode="after")
     def normalize_energy_duration_contract(self):
         if self.energy_mwh is None and self.duration_hours is None:

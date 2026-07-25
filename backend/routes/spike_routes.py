@@ -473,4 +473,4 @@ async def get_spike_profit(
         raise
     except Exception as e:
         logger.error(f"Error in spike-profit: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

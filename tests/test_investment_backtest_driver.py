@@ -12,22 +12,15 @@ from models.financial_params import FinancialAssumptions
 import server
 
 
-def make_nem_record(timestamp: str, region: str, price: float):
-    return {
-        "settlement_date": timestamp,
-        "region_id": region,
-        "rrp_aud_mwh": price,
-        "raise1sec_rrp": 0.0,
-        "raise6sec_rrp": 0.0,
-        "raise60sec_rrp": 0.0,
-        "raise5min_rrp": 0.0,
-        "raisereg_rrp": 0.0,
-        "lower1sec_rrp": 0.0,
-        "lower6sec_rrp": 0.0,
-        "lower60sec_rrp": 0.0,
-        "lower5min_rrp": 0.0,
-        "lowerreg_rrp": 0.0,
-    }
+def make_interval(timestamp: str, price: float, interval_hours: float):
+    """Build a backtest interval dict as returned by _fetch_bess_backtest_intervals.
+
+    Tests mock that seam directly rather than seeding a database: DatabaseManager
+    now ignores the sqlite db_path and always connects to the shared PostgreSQL
+    instance, so real market data would leak in (and test rows would pollute the
+    real database). Mocking the fetch keeps these tests hermetic and deterministic.
+    """
+    return {"timestamp": timestamp, "price": float(price), "interval_hours": interval_hours}
 
 
 class InvestmentBacktestDriverTests(unittest.TestCase):
@@ -44,31 +37,31 @@ class InvestmentBacktestDriverTests(unittest.TestCase):
             os.remove(self.db_path)
 
     def test_investment_analysis_prefers_standardized_backtest_engine_when_intervals_exist(self):
-        self.db.batch_insert(
-            [
-                make_nem_record("2025-01-01 00:00:00", "NSW1", 10.0),
-                make_nem_record("2025-01-01 01:00:00", "NSW1", 100.0),
-                make_nem_record("2025-01-01 02:00:00", "NSW1", 10.0),
-                make_nem_record("2025-01-01 03:00:00", "NSW1", 100.0),
-            ]
-        )
-
-        result = server.investment_analysis(
-            server.InvestmentParams(
-                region="NSW1",
-                power_mw=1.0,
-                duration_hours=2.0,
-                backtest_years=[2025],
-                revenue_capture_rate=1.0,
-                forecast_inefficiency=0.0,
-                fcas_revenue_mode="manual",
-                fcas_revenue_per_mw_year=0,
-                financial=FinancialAssumptions(
-                    variable_om_per_mwh=10.0,
-                    project_life_years=5,
-                ),
+        with mock.patch(
+            "server._fetch_bess_backtest_intervals",
+            return_value=[
+                make_interval("2025-01-01 00:00:00", 10.0, 1.0),
+                make_interval("2025-01-01 01:00:00", 100.0, 1.0),
+                make_interval("2025-01-01 02:00:00", 10.0, 1.0),
+                make_interval("2025-01-01 03:00:00", 100.0, 1.0),
+            ],
+        ):
+            result = server.investment_analysis(
+                server.InvestmentParams(
+                    region="NSW1",
+                    power_mw=1.0,
+                    duration_hours=2.0,
+                    backtest_years=[2025],
+                    revenue_capture_rate=1.0,
+                    forecast_inefficiency=0.0,
+                    fcas_revenue_mode="manual",
+                    fcas_revenue_per_mw_year=0,
+                    financial=FinancialAssumptions(
+                        variable_om_per_mwh=10.0,
+                        project_life_years=5,
+                    ),
+                )
             )
-        )
 
         self.assertEqual(result["backtest_reference"]["methodology_version"], "bess_backtest_v1")
         self.assertEqual(result["backtest_reference"]["inputs"][0]["region"], "NSW1")
@@ -88,7 +81,8 @@ class InvestmentBacktestDriverTests(unittest.TestCase):
         self.assertFalse(result["backtest_fallback_used"])
 
     def test_investment_analysis_does_not_fall_back_to_legacy_backtest_when_standardized_path_is_unavailable(self):
-        with mock.patch("bess_backtest.backtest_arbitrage") as mock_legacy_backtest:
+        with mock.patch("server._fetch_bess_backtest_intervals", return_value=[]), \
+                mock.patch("bess_backtest.backtest_arbitrage") as mock_legacy_backtest:
             result = server.investment_analysis(
                 server.InvestmentParams(
                     region="NSW1",

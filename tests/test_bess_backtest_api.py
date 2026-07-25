@@ -18,22 +18,15 @@ from database import DatabaseManager
 import server
 
 
-def make_nem_record(timestamp: str, region: str, price: float):
-    return {
-        "settlement_date": timestamp,
-        "region_id": region,
-        "rrp_aud_mwh": price,
-        "raise1sec_rrp": 0.0,
-        "raise6sec_rrp": 0.0,
-        "raise60sec_rrp": 0.0,
-        "raise5min_rrp": 0.0,
-        "raisereg_rrp": 0.0,
-        "lower1sec_rrp": 0.0,
-        "lower6sec_rrp": 0.0,
-        "lower60sec_rrp": 0.0,
-        "lower5min_rrp": 0.0,
-        "lowerreg_rrp": 0.0,
-    }
+def make_interval(timestamp: str, price: float, interval_hours: float):
+    """Build a backtest interval dict as returned by _fetch_bess_backtest_intervals.
+
+    Tests mock that seam directly rather than seeding a database: DatabaseManager
+    now ignores the sqlite db_path and always connects to the shared PostgreSQL
+    instance, so real market data would leak in (and test rows would pollute the
+    real database). Mocking the fetch keeps these tests hermetic and deterministic.
+    """
+    return {"timestamp": timestamp, "price": float(price), "interval_hours": interval_hours}
 
 
 class BessBacktestApiTests(unittest.TestCase):
@@ -58,16 +51,15 @@ class BessBacktestApiTests(unittest.TestCase):
             os.remove(self.db_path)
 
     def test_backtest_route_returns_structured_payload_for_nem(self):
-        self.db.batch_insert(
-            [
-                make_nem_record("2025-01-01 00:00:00", "NSW1", 10.0),
-                make_nem_record("2025-01-01 01:00:00", "NSW1", 100.0),
-                make_nem_record("2025-01-01 02:00:00", "NSW1", 10.0),
-                make_nem_record("2025-01-01 03:00:00", "NSW1", 100.0),
-            ]
-        )
-
         with mock.patch(
+            "server._fetch_bess_backtest_intervals",
+            return_value=[
+                make_interval("2025-01-01 00:00:00", 10.0, 1.0),
+                make_interval("2025-01-01 01:00:00", 100.0, 1.0),
+                make_interval("2025-01-01 02:00:00", 10.0, 1.0),
+                make_interval("2025-01-01 03:00:00", 100.0, 1.0),
+            ],
+        ), mock.patch(
             "server.run_bess_backtest_v1",
             return_value={
                 "summary": {
@@ -116,34 +108,35 @@ class BessBacktestApiTests(unittest.TestCase):
         self.assertGreater(payload["revenue_breakdown"]["gross_energy_revenue"], 0.0)
 
     def test_backtest_route_returns_404_when_source_data_is_missing(self):
-        response = self.client.post(
-            "/api/bess/backtests",
-            json={
-                "market": "NEM",
-                "region": "NSW1",
-                "year": 2025,
-                "power_mw": 1.0,
-                "energy_mwh": 2.0,
-                "duration_hours": 2.0,
-            },
-        )
+        with mock.patch("server._fetch_bess_backtest_intervals", return_value=[]):
+            response = self.client.post(
+                "/api/bess/backtests",
+                json={
+                    "market": "NEM",
+                    "region": "NSW1",
+                    "year": 2025,
+                    "power_mw": 1.0,
+                    "energy_mwh": 2.0,
+                    "duration_hours": 2.0,
+                },
+            )
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "No backtest source data found")
 
     def test_backtest_coverage_route_returns_structured_payload_for_nem(self):
-        self.db.batch_insert(
-            [
-                make_nem_record("2025-01-01 00:00:00", "NSW1", 10.0),
-                make_nem_record("2025-01-01 00:05:00", "NSW1", 100.0),
-                make_nem_record("2025-01-01 00:10:00", "NSW1", 20.0),
-            ]
-        )
-
-        response = self.client.get(
-            "/api/bess/backtests/coverage",
-            params={"market": "NEM", "region": "NSW1", "year": 2025},
-        )
+        with mock.patch(
+            "server._fetch_bess_backtest_intervals",
+            return_value=[
+                make_interval("2025-01-01 00:00:00", 10.0, 5.0 / 60.0),
+                make_interval("2025-01-01 00:05:00", 100.0, 5.0 / 60.0),
+                make_interval("2025-01-01 00:10:00", 20.0, 5.0 / 60.0),
+            ],
+        ):
+            response = self.client.get(
+                "/api/bess/backtests/coverage",
+                params={"market": "NEM", "region": "NSW1", "year": 2025},
+            )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -158,10 +151,11 @@ class BessBacktestApiTests(unittest.TestCase):
         self.assertEqual(payload["metadata"]["data_grade"], "analytical")
 
     def test_backtest_coverage_route_returns_empty_shape_when_source_data_is_missing(self):
-        response = self.client.get(
-            "/api/bess/backtests/coverage",
-            params={"market": "NEM", "region": "NSW1", "year": 2025},
-        )
+        with mock.patch("server._fetch_bess_backtest_intervals", return_value=[]):
+            response = self.client.get(
+                "/api/bess/backtests/coverage",
+                params={"market": "NEM", "region": "NSW1", "year": 2025},
+            )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()

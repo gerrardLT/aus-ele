@@ -641,7 +641,7 @@ def get_price_trend(
         raise
     except Exception as e:
         logger.error(f"Error in price-trend: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------

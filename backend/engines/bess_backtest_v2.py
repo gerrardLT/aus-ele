@@ -1,6 +1,21 @@
 """
 BESS Backtest Engine V2 — Enhanced constraint modeling.
 
+.. deprecated::
+    The distinctive constraint capabilities of this engine (independent
+    charge/discharge power limits, auxiliary power, registered-capacity cap,
+    minimum-duration and dispatch-alignment coupling) have been **merged into
+    the main-line V1 engine** (``bess_backtest_v1._solve_window``). V1 engages
+    them only when the corresponding optional ``BessBacktestParams`` fields are
+    set beyond their no-op defaults, switching to a scipy-HiGHS MILP path for
+    the integer constraints while keeping the fast LP path for the common case.
+    V1 is the only engine wired into the production request path.
+
+    This module is retained as a self-contained MILP reference and to keep its
+    binding-constraint / infeasibility-diagnosis test coverage intact. It also
+    depends on ``pulp``/CBC, which is not installed in every environment. Do
+    not wire it into new request paths; extend V1 instead.
+
 Extends V1 with:
 - Separate max charge/discharge power limits
 - Auxiliary power consumption

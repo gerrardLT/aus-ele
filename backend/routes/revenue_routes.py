@@ -321,7 +321,7 @@ def get_revenue_analysis(
         raise HTTPException(status_code=422, detail=str(e.message))
     except Exception as e:
         logger.error(f"Error in revenue-analysis: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------

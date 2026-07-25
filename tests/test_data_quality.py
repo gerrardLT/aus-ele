@@ -6,7 +6,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_pg_tables
 
 ensure_repo_import_paths()
 
@@ -20,6 +20,8 @@ class DataQualityStorageTests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        # Shared PG database: clear snapshots/issues leaked from previous runs.
+        reset_pg_tables(self.db, "data_quality_snapshot", "data_quality_issue")
 
     def tearDown(self):
         if os.path.exists(self.db_path):
@@ -1020,6 +1022,8 @@ class DataQualityApiTests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        # Shared PG database: clear snapshots/issues leaked from previous runs.
+        reset_pg_tables(self.db, "data_quality_snapshot", "data_quality_issue")
         self.db.upsert_data_quality_snapshot(
             {
                 "scope": "market",

@@ -8,11 +8,14 @@
  * Requirements: 1.2, 1.3, 11.3
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import PageShell from '../components/PageShell';
 import DynamicStage from '../components/funnel/DynamicStage';
-import { getMarketConfig, buildSectionLinks } from '../lib/marketConfig';
+import { getMarketConfig, buildSectionLinks, DEFAULT_BESS_PARAMS } from '../lib/marketConfig';
 import { useFilters } from '../contexts/FilterContext';
+import { useStageSummaries } from '../hooks/useStageSummaries';
+import AnomalyBadge from '../components/AnomalyBadge';
+import AnalystChat from '../components/AnalystChat';
 import { fetchJson } from '../lib/apiClient';
 import { getApiBase } from '../lib/apiBase';
 
@@ -92,6 +95,44 @@ export default function MarketPage({ market }) {
     setLang(prev => prev === 'zh' ? 'en' : 'zh');
   }, []);
 
+  // S6/F4: track visited tabs for status badges
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set([0]));
+  useEffect(() => {
+    setVisitedTabs(prev => new Set([...prev, activeTabIndex]));
+  }, [activeTabIndex]);
+
+  // S6/F6: prefetch next stage dataDependencies when idle
+  const prefetchDone = useRef(new Set());
+  useEffect(() => {
+    const nextIndex = activeTabIndex + 1;
+    if (nextIndex >= config.stages.length) return;
+    const nextStage = config.stages[nextIndex];
+    const deps = nextStage.modules.flatMap(m => m.dataDependencies || []);
+    if (!deps.length || prefetchDone.current.has(nextStage.id)) return;
+
+    const doPrefetch = () => {
+      prefetchDone.current.add(nextStage.id);
+      deps.forEach(url => {
+        const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
+        fetch(fullUrl, { method: 'HEAD', cache: 'force-cache' }).catch(() => {});
+      });
+    };
+
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(doPrefetch, { timeout: 3000 });
+      return () => cancelIdleCallback(id);
+    } else {
+      const id = setTimeout(doPrefetch, 2000);
+      return () => clearTimeout(id);
+    }
+  }, [activeTabIndex, config.stages]);
+
+  // S6/F2: fetch stage summaries once at page level (not per-tab)
+  const summaryMarket = filters.region === 'WEM' ? 'WEM' : 'NEM';
+  const { summaries, loading: summaryLoading } = useStageSummaries(
+    summaryMarket, filters.region, filters.year, DEFAULT_BESS_PARAMS
+  );
+
   // Current active stage
   const activeStage = config.stages[activeTabIndex];
   const activeSection = activeStage?.id || '';
@@ -106,6 +147,27 @@ export default function MarketPage({ market }) {
       onLangToggle={handleLangToggle}
       years={years}
     >
+      {/* S6/F3: Persistent context bar + U4: Anomaly badge */}
+      <div className="flex items-center gap-3 mb-2 px-1 text-xs text-[var(--color-muted)]">
+        <span className="inline-flex items-center gap-1 rounded bg-[var(--color-border)] px-2 py-0.5 font-medium">
+          📍 {filters.region}
+        </span>
+        <span className="inline-flex items-center gap-1 rounded bg-[var(--color-border)] px-2 py-0.5 font-medium">
+          📅 {filters.year || '—'}
+        </span>
+        {filters.dayType && (
+          <span className="inline-flex items-center gap-1 rounded bg-[var(--color-border)] px-2 py-0.5 font-medium">
+            📊 {filters.dayType}
+          </span>
+        )}
+        <div className="ml-auto">
+          <AnomalyBadge lang={lang} onNavigate={(stageId) => {
+            const idx = config.stages.findIndex(s => s.id === stageId);
+            if (idx >= 0) setActiveTabIndex(idx);
+          }} />
+        </div>
+      </div>
+
       {/* Tab Navigation Bar */}
       <div className="sticky top-0 z-20 -mx-1 mb-3 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 backdrop-blur-sm">
         <div className="flex min-w-max gap-0" role="tablist" aria-label={lang === 'zh' ? '分析阶段' : 'Analysis Stages'}>
@@ -118,7 +180,7 @@ export default function MarketPage({ market }) {
                 type="button"
                 onClick={() => handleTabClick(index)}
                 className={`
-                  relative flex items-center gap-2 px-4 py-3 text-sm font-sans whitespace-nowrap transition-colors
+                  relative flex items-center gap-2 px-4 min-h-[44px] text-sm font-sans whitespace-nowrap transition-colors
                   ${isActive
                     ? 'text-[var(--color-text)] font-bold'
                     : 'text-[var(--color-muted)] hover:text-[var(--color-text)]'
@@ -127,15 +189,17 @@ export default function MarketPage({ market }) {
                 aria-selected={isActive}
                 role="tab"
               >
-                {/* Stage number badge */}
+                {/* Stage number badge with S6/F4 status dot */}
                 <span className={`
                   inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold flex-shrink-0
                   ${isActive
                     ? 'bg-[var(--color-primary)] text-white'
-                    : 'bg-[var(--color-border)] text-[var(--color-muted)]'
+                    : visitedTabs.has(index)
+                      ? 'bg-green-100 text-green-700 border border-green-300'
+                      : 'bg-[var(--color-border)] text-[var(--color-muted)]'
                   }
                 `}>
-                  {index + 1}
+                  {visitedTabs.has(index) && !isActive ? '✓' : index + 1}
                 </span>
                 <span>{title}</span>
                 {/* Active indicator line */}
@@ -157,6 +221,8 @@ export default function MarketPage({ market }) {
           config={config}
           lang={lang}
           onVisible={() => {}}
+          conclusionData={summaries[activeStage.id] || null}
+          isSummaryLoading={summaryLoading[activeStage.id] ?? false}
         />
       )}
 
@@ -184,6 +250,9 @@ export default function MarketPage({ market }) {
           </button>
         )}
       </div>
+
+      {/* U6: AI Analyst Chat FAB */}
+      <AnalystChat lang={lang} />
 
     </PageShell>
   );

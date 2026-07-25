@@ -240,3 +240,86 @@ class TestBackwardCompatibility:
         """When forward_scenario is None, no forward projection is triggered."""
         params = InvestmentParams(region="NSW1")
         assert params.forward_scenario is None
+
+
+# ---------------------------------------------------------------------------
+# Headline metrics-basis annotation (P2-tax)
+# ---------------------------------------------------------------------------
+
+
+class TestHeadlineBasisAnnotation:
+    """The response must always declare whether the headline is pre/after tax."""
+
+    def _fake_base_result(self):
+        from types import SimpleNamespace
+
+        cash_flows = [
+            CashFlowYear(
+                year=i + 1,
+                revenue_arbitrage=1_000_000.0,
+                revenue_fcas=0.0,
+                revenue_capacity=0.0,
+                total_revenue=1_000_000.0,
+                opex=200_000.0,
+                augmentation_capex=0.0,
+                net_cash_flow=800_000.0,
+                cumulative_cash_flow=800_000.0 * (i + 1),
+                state_of_health=1.0,
+                annual_cycles=365.0,
+            )
+            for i in range(20)
+        ]
+        return SimpleNamespace(
+            cost_breakdown=None,
+            cash_flows=cash_flows,
+            metrics=SimpleNamespace(debt_capacity=0.0),
+        )
+
+    def test_after_tax_confirmed_when_tax_config_present(self):
+        from routes.investment_routes import _enrich_with_financial_accuracy_modules
+
+        params = InvestmentParams(
+            region="NSW1",
+            power_mw=10.0,
+            duration_hours=2.0,
+            tax_config=TaxConfig(
+                entity_type=EntityType.STANDARD,
+                depreciation_method=DepreciationMethod.DIMINISHING_VALUE,
+                effective_life_years=20,
+            ),
+        )
+        response = {
+            "metrics_basis": {
+                "base_metrics": "pre_tax",
+                "after_tax_available": True,
+                "recommended_display_basis": "after_tax",
+            }
+        }
+
+        enriched = _enrich_with_financial_accuracy_modules(
+            response, params, self._fake_base_result()
+        )
+
+        assert "after_tax_metrics" in enriched
+        assert enriched["metrics_basis"]["after_tax_available"] is True
+        assert enriched["metrics_basis"]["recommended_display_basis"] == "after_tax"
+
+    def test_pre_tax_headline_when_no_tax_config(self):
+        from routes.investment_routes import _enrich_with_financial_accuracy_modules
+
+        params = InvestmentParams(region="NSW1", power_mw=10.0, duration_hours=2.0)
+        response = {
+            "metrics_basis": {
+                "base_metrics": "pre_tax",
+                "after_tax_available": False,
+                "recommended_display_basis": "pre_tax",
+            }
+        }
+
+        enriched = _enrich_with_financial_accuracy_modules(
+            response, params, self._fake_base_result()
+        )
+
+        assert "after_tax_metrics" not in enriched
+        assert enriched["metrics_basis"]["after_tax_available"] is False
+        assert enriched["metrics_basis"]["recommended_display_basis"] == "pre_tax"

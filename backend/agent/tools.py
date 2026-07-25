@@ -124,7 +124,7 @@ class ToolRegistry:
                     timeout=timeout_seconds,
                 )
             else:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 data = await asyncio.wait_for(
                     loop.run_in_executor(None, executor, arguments, context),
                     timeout=timeout_seconds,
@@ -552,6 +552,40 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
             "simple_payback_years": round(simple_payback, 1) if simple_payback != float("inf") else None,
             "avg_spread_aud_mwh": round(spread, 2),
         },
+    }
+
+
+def _exec_compare_regions(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """U6: Compare investment metrics across multiple regions."""
+    regions = params.get("regions", ["SA1", "QLD1", "NSW1"])
+    power_mw = params.get("power_mw", 100.0)
+    duration_hours = params.get("duration_hours", 4.0)
+
+    results = []
+    for region in regions:
+        region_params = {
+            "region": region,
+            "power_mw": power_mw,
+            "duration_hours": duration_hours,
+        }
+        try:
+            result = _exec_investment_analysis(region_params, ctx)
+            results.append(result)
+        except Exception as e:
+            results.append({"region": region, "status": "error", "error": str(e)})
+
+    # Rank by NPV
+    ranked = sorted(
+        [r for r in results if r.get("results", {}).get("npv_aud") is not None],
+        key=lambda r: r["results"]["npv_aud"],
+        reverse=True,
+    )
+
+    return {
+        "comparison": ranked,
+        "best_region": ranked[0]["region"] if ranked else None,
+        "regions_analyzed": len(regions),
+        "params": {"power_mw": power_mw, "duration_hours": duration_hours},
     }
 
 
@@ -997,6 +1031,29 @@ def build_tool_registry() -> ToolRegistry:
             stage="Global",
         ),
         _exec_data_quality,
+    )
+
+    # U6: compare_regions — convenience tool for multi-region investment comparison
+    registry.register(
+        ToolDefinition(
+            name="compare_regions",
+            description="Compare investment metrics across multiple NEM regions. Runs investment_analysis for each region and returns a ranked comparison table.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "regions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of regions to compare (e.g. ['SA1', 'QLD1', 'NSW1'])",
+                    },
+                    "power_mw": {"type": "number", "description": "Battery power in MW", "default": 100},
+                    "duration_hours": {"type": "number", "description": "Battery duration in hours", "default": 4},
+                },
+                "required": ["regions"],
+            },
+            stage="Investment Decision",
+        ),
+        _exec_compare_regions,
     )
 
     return registry
