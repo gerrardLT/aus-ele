@@ -173,18 +173,113 @@ class AgentOrchestrator:
         start_time = time.perf_counter()
         yield {"type": "start", "execution_id": execution_id}
 
-        # Forced template or LLM unavailable -> degrade to non-streaming run.
+        # Forced template or LLM unavailable -> stream template execution
+        # with per-tool events (keeps SSE connection alive).
         template = self._resolve_template(workflow_template_id, query)
         if template is not None or not self.llm.is_available():
             reason = "指定模板模式" if template is not None else "LLM 未配置，降级为模板模式"
-            yield {"type": "status", "message": f"{reason}（无逐字流式）"}
-            report = await self.run(
-                query, context, workflow_template_id=workflow_template_id
+            yield {"type": "status", "message": reason}
+
+            # Resolve template for fallback keyword matching
+            if template is None:
+                fallback_id = match_workflow_from_query(query)
+                template = get_workflow_template(fallback_id or "quick_market_overview")
+
+            effective_params = {**template.default_params, **context.params_override}
+            tool_results: List[ToolResult] = []
+            stage_results: List[StageResult] = []
+            step_num = 0
+
+            groups = template.parallel_groups or [[i] for i in range(len(template.steps))]
+            for group in groups:
+                group_tasks = []
+                group_names = []
+                for idx in group:
+                    if idx < len(template.steps):
+                        tool_name = template.steps[idx]
+                        group_names.append(tool_name)
+                        # Emit tool_call event
+                        step_num += 1
+                        yield {
+                            "type": "tool_call",
+                            "step": step_num,
+                            "name": tool_name,
+                            "call_id": f"tmpl_{step_num}",
+                            "arguments": effective_params,
+                        }
+                        group_tasks.append(
+                            self._execute_tool(tool_name, effective_params, context, step_num)
+                        )
+
+                if not group_tasks:
+                    continue
+
+                results = await asyncio.gather(*group_tasks, return_exceptions=True)
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        result = ToolResult(
+                            tool_name=group_names[i],
+                            status=ToolStatus.ERROR,
+                            error_message=str(result),
+                        )
+                    tool_results.append(result)
+                    sr = self._to_stage_result(result)
+                    stage_results.append(sr)
+                    yield {
+                        "type": "tool_result",
+                        "step": step_num - len(group_tasks) + 1 + i,
+                        "name": result.tool_name,
+                        "call_id": f"tmpl_{step_num - len(group_tasks) + 1 + i}",
+                        "status": result.status.value,
+                        "duration_ms": result.duration_ms,
+                        "summary": sr.summary,
+                        "key_metrics": sr.key_metrics,
+                        "error": result.error_message,
+                    }
+
+            # Determine status
+            success_count = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
+            if not tool_results:
+                status = WorkflowStatus.FAILED
+            elif success_count == len(tool_results):
+                status = WorkflowStatus.COMPLETED
+            elif success_count > 0:
+                status = WorkflowStatus.PARTIAL
+            else:
+                status = WorkflowStatus.FAILED
+
+            # Synthesize
+            yield {"type": "status", "message": "正在生成结构化报告..."}
+            try:
+                executive_summary, recommendation, confidence = await self._synthesize(
+                    query, tool_results, context
+                )
+            except Exception:  # noqa: BLE001
+                executive_summary, recommendation, confidence = ("", "", ConfidenceLevel.LOW)
+
+            report = AgentReport(
+                id=execution_id,
+                query=query,
+                workflow_type=template.id,
+                region=context.effective_region,
+                market=context.market.value,
+                executive_summary=executive_summary,
+                stage_results=stage_results,
+                recommendation=recommendation,
+                confidence_level=confidence,
+                risk_flags=self._extract_risk_flags(tool_results),
+                data_quality_notes=self._extract_quality_notes(tool_results),
+                tool_trace=tool_results,
+                steps=[],
+                status=status,
+                metadata={"mode": "template_stream", "template_id": template.id},
             )
+            report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
+
             yield {
                 "type": "report",
                 "report": report.model_dump(mode="json"),
-                "answer": report.executive_summary or report.recommendation,
+                "answer": executive_summary or recommendation,
             }
             yield {"type": "done"}
             return
