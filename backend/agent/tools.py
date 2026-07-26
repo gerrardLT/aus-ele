@@ -607,8 +607,8 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     # Window size scales with duration: longer battery captures wider spread
     sorted_p = sorted(prices)
     n = len(sorted_p)
-    # Intervals per day = 288 (NEM 5-min) or 48 (WEM 30-min)
-    intervals_per_day = 288 if n > 10000 else 48
+    # Intervals per day: WEM uses 30-min (48/day), NEM uses 5-min (288/day)
+    intervals_per_day = 48 if region == "WEM" else 288
     # Charge/discharge window = duration_hours worth of intervals per day
     window_per_day = max(1, int(duration_hours * (intervals_per_day / 24)))
     # Annual window = daily window * 365
