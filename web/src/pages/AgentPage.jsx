@@ -66,7 +66,11 @@ export default function AgentPage() {
   });
   const [compareList, setCompareList] = useState([]);
   const sessionIdRef = useRef(null);
-  if (!sessionIdRef.current) sessionIdRef.current = crypto.randomUUID();
+  if (!sessionIdRef.current) {
+    sessionIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `s_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
 
   // Abort controller for the in-flight SSE stream (stop button / unmount).
   const abortRef = useRef(null);
