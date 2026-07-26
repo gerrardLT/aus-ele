@@ -272,6 +272,7 @@ class AgentOrchestrator:
                         "summary": sr.summary,
                         "key_metrics": sr.key_metrics,
                         "error": result.error_message,
+                        "retry_count": result.retry_count,
                     }
 
             # Determine status
