@@ -85,6 +85,8 @@ class AgentOrchestrator:
         self.tool_timeout = tool_timeout
         self.total_timeout = total_timeout
         self._tool_cache: Dict[str, tuple] = {}  # key -> (timestamp, ToolResult)
+        from agent.session import SessionMemory  # Harness Agent
+        self.session_memory = SessionMemory()  # Harness Agent
 
     async def run(
         self,
@@ -182,6 +184,14 @@ class AgentOrchestrator:
         execution_id = str(uuid.uuid4())[:8]
         start_time = time.perf_counter()
         yield {"type": "start", "execution_id": execution_id}
+
+        # Harness Agent: inject session memory context
+        session_id = context.session_id
+        if session_id:
+            session_ctx = self.session_memory.get_context_block(session_id)
+            if session_ctx:
+                # Will be injected into messages after they're built
+                pass  # stored for later injection
 
         # Forced template or LLM unavailable -> stream template execution
         # with per-tool events (keeps SSE connection alive).
@@ -323,12 +333,28 @@ class AgentOrchestrator:
             "content": f"{build_context_message(context)}\n\n用户请求: {query}",
         })
 
+        # Harness Agent: inject session memory into system message
+        if session_id:
+            session_ctx = self.session_memory.get_context_block(session_id)
+            if session_ctx:
+                messages[0]["content"] += f"\n\n{session_ctx}"
+
         steps: List[AgentStep] = []
         tool_results: List[ToolResult] = []
         stage_results: List[StageResult] = []
         openai_tools = self.tools.to_openai_tools()
         final_answer_given = False
         final_content = ""
+
+        # --- Harness Agent: Planning phase ---
+        if context.enable_planning and self.llm.is_available():
+            # Skip planning if query matches a known template
+            if not match_workflow_from_query(query):
+                yield {"type": "status", "message": "正在制定分析计划..."}
+                plan = await self._generate_plan(query, context, openai_tools)
+                if plan:
+                    messages[0]["content"] += f"\n\n当前分析计划:\n{plan.model_dump_json()}"
+                    yield {"type": "plan", "plan": plan.model_dump()}
 
         for step_num in range(1, self.max_steps + 1):
             if time.perf_counter() - start_time > self.total_timeout:
@@ -349,6 +375,17 @@ class AgentOrchestrator:
                 logger.error("Stream LLM call failed at step %d: %s", step_num, exc)
                 yield {"type": "error", "message": f"LLM 调用失败: {exc}"}
                 break
+
+            # --- Harness Agent: Reflection parsing ---
+            if context.enable_reflection and content_buf:
+                reflection = self._parse_reflection(content_buf)
+                if reflection:
+                    yield {
+                        "type": "reflection",
+                        "step": step_num,
+                        "verdict": reflection["verdict"],
+                        "reason": reflection["reason"],
+                    }
 
             # No tool calls -> the streamed content is the final answer.
             if not tool_calls:
@@ -375,9 +412,9 @@ class AgentOrchestrator:
                 ],
             })
 
+            # Emit all tool_call events first (frontend shows them as running)
+            merged_args_list = []
             for tc in tool_calls:
-                tool_name = tc["name"]
-                call_id = tc["id"]
                 merged_args = dict(tc["arguments"])
                 if "region" not in merged_args and context.effective_region:
                     merged_args["region"] = context.effective_region
@@ -386,44 +423,70 @@ class AgentOrchestrator:
                 for k, v in context.params_override.items():
                     if k not in merged_args:
                         merged_args[k] = v
-
+                merged_args_list.append(merged_args)
                 yield {
                     "type": "tool_call",
                     "step": step_num,
-                    "name": tool_name,
-                    "call_id": call_id,
+                    "name": tc["name"],
+                    "call_id": tc["id"],
                     "arguments": merged_args,
                 }
 
-                result = await self.tools.execute(
-                    tool_name=tool_name,
-                    arguments=merged_args,
+            # Execute tools in parallel (with retry)
+            async def _exec_one(idx: int) -> ToolResult:
+                return await self._execute_tool_with_retry(
+                    tool_name=tool_calls[idx]["name"],
+                    call_id=tool_calls[idx]["id"],
+                    merged_args=merged_args_list[idx],
                     context=context,
-                    call_id=call_id,
-                    timeout_seconds=self.tool_timeout,
                 )
+
+            raw_results = await asyncio.gather(
+                *[_exec_one(i) for i in range(len(tool_calls))],
+                return_exceptions=True,
+            )
+
+            # Process results and emit events
+            for i, raw in enumerate(raw_results):
+                if isinstance(raw, Exception):
+                    result = ToolResult(
+                        tool_name=tool_calls[i]["name"],
+                        call_id=tool_calls[i]["id"],
+                        status=ToolStatus.ERROR,
+                        error_message=str(raw),
+                    )
+                else:
+                    result = raw
                 tool_results.append(result)
                 sr = self._to_stage_result(result)
                 stage_results.append(sr)
                 steps.append(AgentStep(
                     step_number=step_num,
-                    thought=content_buf,
-                    action=ToolCall(id=call_id, tool_name=tool_name, arguments=merged_args),
+                    thought=content_buf if i == 0 else "",
+                    action=ToolCall(id=tool_calls[i]["id"], tool_name=tool_calls[i]["name"], arguments=merged_args_list[i]),
                     observation=result,
                 ))
                 yield {
                     "type": "tool_result",
                     "step": step_num,
-                    "name": tool_name,
-                    "call_id": call_id,
+                    "name": tool_calls[i]["name"],
+                    "call_id": tool_calls[i]["id"],
                     "status": result.status.value,
                     "duration_ms": result.duration_ms,
                     "summary": sr.summary,
                     "key_metrics": sr.key_metrics,
                     "error": result.error_message,
+                    "retry_count": result.retry_count,
                 }
                 messages.append(result.to_llm_message())
-                content_buf = ""  # avoid attributing prior reasoning to next tool
+            content_buf = ""  # avoid attributing prior reasoning to next tool
+
+            # Harness Agent: store successful results in session memory
+            if session_id:
+                for r in raw_results:
+                    if not isinstance(r, Exception) and r.status == ToolStatus.SUCCESS:
+                        summary = self._to_stage_result(r).summary or r.tool_name
+                        self.session_memory.put(session_id, r.tool_name, {}, summary)
 
         # Determine status
         success_count = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
@@ -663,46 +726,55 @@ class AgentOrchestrator:
             ]
             messages.append(assistant_msg)
 
-            # Execute each tool call
+            # Execute tool calls in parallel
+            merged_args_list = []
             for tc in response.tool_calls:
-                tool_name = tc["name"]
-                arguments = tc["arguments"]
-                call_id = tc["id"]
-
-                if progress_callback:
-                    progress_callback(f"正在执行: {get_tool_progress_label(tool_name)}")
-
-                # Merge context defaults into the tool arguments without
-                # mutating the dict returned by the LLM (which is also kept in
-                # the assistant message sent back to the model).
-                merged_args = dict(arguments)
+                merged_args = dict(tc["arguments"])
                 if "region" not in merged_args and context.effective_region:
                     merged_args["region"] = context.effective_region
                 if "year" not in merged_args:
                     merged_args["year"] = context.effective_year
-                # Apply user param overrides
                 for k, v in context.params_override.items():
                     if k not in merged_args:
                         merged_args[k] = v
+                merged_args_list.append(merged_args)
 
-                result = await self.tools.execute(
-                    tool_name=tool_name,
-                    arguments=merged_args,
+            if progress_callback:
+                labels = [get_tool_progress_label(tc["name"]) for tc in response.tool_calls]
+                progress_callback("正在执行: " + " + ".join(labels))
+
+            async def _exec_react(idx: int) -> ToolResult:
+                return await self.tools.execute(
+                    tool_name=response.tool_calls[idx]["name"],
+                    arguments=merged_args_list[idx],
                     context=context,
-                    call_id=call_id,
+                    call_id=response.tool_calls[idx]["id"],
                     timeout_seconds=self.tool_timeout,
                 )
 
+            raw_results = await asyncio.gather(
+                *[_exec_react(i) for i in range(len(response.tool_calls))],
+                return_exceptions=True,
+            )
+
+            for i, raw in enumerate(raw_results):
+                if isinstance(raw, Exception):
+                    result = ToolResult(
+                        tool_name=response.tool_calls[i]["name"],
+                        call_id=response.tool_calls[i]["id"],
+                        status=ToolStatus.ERROR,
+                        error_message=str(raw),
+                    )
+                else:
+                    result = raw
                 tool_results.append(result)
                 steps.append(AgentStep(
                     step_number=step_num,
-                    thought=response.content or "",
-                    action=ToolCall(id=call_id, tool_name=tool_name, arguments=merged_args),
+                    thought=response.content or "" if i == 0 else "",
+                    action=ToolCall(id=response.tool_calls[i]["id"], tool_name=response.tool_calls[i]["name"], arguments=merged_args_list[i]),
                     observation=result,
                 ))
                 stage_results.append(self._to_stage_result(result))
-
-                # Add tool result to conversation
                 messages.append(result.to_llm_message())
 
         # Determine status
@@ -810,6 +882,100 @@ class AgentOrchestrator:
             context=context,
             llm=self.llm,
         )
+
+    # =========================================================================
+    # Harness Agent: Planning, Reflection, Retry
+    # =========================================================================
+
+    async def _generate_plan(
+        self, query: str, context: AgentContext, tools: List[Dict[str, Any]]
+    ) -> Optional["AnalysisPlan"]:
+        """Call LLM to generate an analysis plan (does not execute)."""
+        from agent.prompts import PLANNING_PROMPT
+        from agent.schemas import AnalysisPlan
+
+        tool_names = [t["function"]["name"] for t in tools]
+        prompt = PLANNING_PROMPT.format(
+            query=query,
+            context=build_context_message(context),
+            tools=", ".join(tool_names),
+        )
+        try:
+            response = await self.llm.chat([
+                {"role": "system", "content": "你是分析规划器。只输出 JSON。"},
+                {"role": "user", "content": prompt},
+            ])
+            # Try to parse JSON from response
+            content = response.content.strip()
+            # Strip markdown code fences if present
+            if content.startswith("```"):
+                content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            data = json.loads(content)
+            return AnalysisPlan(**data)
+        except Exception as exc:
+            logger.debug("Planning failed (non-critical): %s", exc)
+            return None
+
+    def _parse_reflection(self, content: str) -> Optional[Dict[str, str]]:
+        """Parse inline [REFLECT] tag from LLM content."""
+        import re
+        match = re.search(
+            r'\[REFLECT\]\s*step=(\d+)\s*verdict=(\w+)\s*reason="([^"]*)"',
+            content,
+        )
+        if match:
+            return {
+                "step": match.group(1),
+                "verdict": match.group(2),
+                "reason": match.group(3),
+            }
+        return None
+
+    def _adapt_args_on_failure(
+        self, tool_name: str, args: Dict[str, Any], error: Optional[str]
+    ) -> Dict[str, Any]:
+        """Rule-based parameter adaptation on tool failure (no LLM needed)."""
+        adapted = dict(args)
+        err_lower = (error or "").lower()
+
+        if "timeout" in err_lower or "timed out" in err_lower:
+            # Reduce computation-heavy params
+            if "n_simulations" in adapted:
+                adapted["n_simulations"] = max(50, adapted["n_simulations"] // 2)
+            if "projection_years" in adapted:
+                adapted["projection_years"] = max(5, adapted["projection_years"] // 2)
+        elif "no_data" in err_lower or "no data" in err_lower or "not found" in err_lower:
+            # Try previous year
+            if "year" in adapted and isinstance(adapted["year"], int):
+                adapted["year"] = adapted["year"] - 1
+
+        return adapted
+
+    async def _execute_tool_with_retry(
+        self, tool_name: str, call_id: str, merged_args: Dict[str, Any], context: AgentContext
+    ) -> ToolResult:
+        """Execute a tool with adaptive retry on failure."""
+        max_attempts = (context.max_retries + 1) if context.enable_retry else 1
+        result: Optional[ToolResult] = None
+
+        for attempt in range(max_attempts):
+            result = await self.tools.execute(
+                tool_name=tool_name,
+                arguments=merged_args,
+                context=context,
+                call_id=call_id,
+                timeout_seconds=self.tool_timeout,
+            )
+            result.retry_count = attempt
+
+            if result.status == ToolStatus.SUCCESS:
+                return result
+
+            # Adapt args for next attempt
+            if attempt < max_attempts - 1:
+                merged_args = self._adapt_args_on_failure(tool_name, merged_args, result.error_message)
+
+        return result  # type: ignore[return-value]
 
     # =========================================================================
     # Reasoning Narrative (rule-based, always available)

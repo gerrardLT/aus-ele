@@ -61,6 +61,13 @@ class AgentContext(BaseModel):
     params_override: Dict[str, Any] = Field(default_factory=dict)
     max_steps: int = Field(default=15, ge=1, le=30)
 
+    # Harness agent feature flags
+    enable_planning: bool = False
+    enable_reflection: bool = True
+    enable_retry: bool = True
+    max_retries: int = Field(default=2, ge=0, le=5)
+    session_id: Optional[str] = None
+
     # Derived defaults
     @property
     def effective_region(self) -> str:
@@ -132,18 +139,25 @@ class ToolResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     duration_ms: float = 0.0
     error_message: Optional[str] = None
+    retry_count: int = 0
 
-    def to_llm_message(self) -> Dict[str, Any]:
-        """Format as a tool response message for the LLM conversation."""
+    def to_llm_message(self, max_chars: int = 3000) -> Dict[str, Any]:
+        """Format as a tool response message for the LLM conversation.
+
+        Truncates large payloads to prevent context window overflow.
+        """
         content = self.data if self.status == ToolStatus.SUCCESS else {
             "error": self.error_message or "Unknown error",
             "status": self.status.value,
         }
         import json
+        content_str = json.dumps(content, ensure_ascii=False, default=str)
+        if len(content_str) > max_chars:
+            content_str = content_str[:max_chars] + f"...(truncated, {len(content_str)} chars total)"
         return {
             "role": "tool",
             "tool_call_id": self.call_id,
-            "content": json.dumps(content, ensure_ascii=False, default=str),
+            "content": content_str,
         }
 
 
@@ -159,6 +173,7 @@ class AgentStep(BaseModel):
     thought: str = ""  # LLM reasoning
     action: Optional[ToolCall] = None  # Tool invoked
     observation: Optional[ToolResult] = None  # Tool result
+    reflection: Optional[str] = None  # LLM self-evaluation
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -255,6 +270,7 @@ class AgentChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     history: List[ChatMessage] = Field(default_factory=list)
     market: MarketType = MarketType.NEM
+    session_id: Optional[str] = None
     region: Optional[str] = None
     year: Optional[int] = None
     workflow_template: Optional[str] = None
@@ -305,3 +321,26 @@ class AgentHistoryResponse(BaseModel):
 
     executions: List[Dict[str, Any]]
     total: int
+
+
+# =============================================================================
+# Harness Agent Models
+# =============================================================================
+
+
+class AnalysisPlan(BaseModel):
+    """LLM-generated analysis plan before execution."""
+
+    goal: str = ""
+    steps: List[str] = Field(default_factory=list)
+    expected_tools: List[str] = Field(default_factory=list)
+    reasoning: str = ""
+
+
+class SessionMemoryEntry(BaseModel):
+    """Cached tool result within a conversation session."""
+
+    tool_name: str
+    arguments_hash: str
+    result_summary: str
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

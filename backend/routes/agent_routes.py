@@ -294,6 +294,7 @@ async def chat_stream(request: AgentChatRequest) -> StreamingResponse:
         year=request.year,
         params_override=request.params_override,
         max_steps=request.max_steps,
+        session_id=request.session_id,
     )
     history = [m.model_dump() for m in request.history]
 

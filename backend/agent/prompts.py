@@ -49,6 +49,22 @@ SYSTEM_PROMPT = """你是 AEMO Intelligence 平台的 AI 分析编排器（Workf
 3. 综合建议（明确标注置信度 high/medium/low）
 4. 风险标记（列出主要风险因素）
 5. 数据质量说明（标注任何数据局限性）
+
+## 工作流程（必须遵循）
+1. **规划阶段**: 收到用户请求后，先输出一个 JSON 分析计划（用 ```plan 代码块包裹），再开始调用工具
+2. **执行阶段**: 按计划逐步调用工具。如果多个步骤无依赖关系，在同一轮返回多个 tool_calls
+3. **反思阶段**: 每次收到工具结果后，在思考中包含: [REFLECT] step=N verdict=sufficient|needs_more reason="..."
+4. **综合阶段**: 所有计划步骤完成后输出最终分析
+
+## 规划输出格式
+在第一次回复中，输出如下 JSON（用 ```plan 代码块包裹）：
+```plan
+{"goal": "...", "steps": ["...", "..."], "expected_tools": ["...", "..."], "reasoning": "..."}
+```
+
+## 反思输出格式
+每次工具结果后，在思考中包含：
+[REFLECT] step=1 verdict=sufficient reason="数据充分，可继续下一步"
 """
 
 
@@ -163,3 +179,28 @@ TOOL_STAGE_LABELS = {
 def get_tool_progress_label(tool_name: str) -> str:
     """Get a human-readable progress label for a tool."""
     return TOOL_STAGE_LABELS.get(tool_name, f"执行 {tool_name}")
+
+
+# =============================================================================
+# Planning Prompt (fallback for explicit plan generation)
+# =============================================================================
+
+PLANNING_PROMPT = """基于用户请求和当前上下文，生成一个分析计划。不要执行，只输出计划。
+
+## 用户请求
+{query}
+
+## 当前上下文
+{context}
+
+## 可用工具
+{tools}
+
+## 输出格式（仅输出 JSON，不要其他内容）
+{{"goal": "分析目标", "steps": ["步骤1", "步骤2"], "expected_tools": ["tool1", "tool2"], "reasoning": "选择理由"}}
+
+## 规则
+1. 始终包含 data_quality_check 作为第一步
+2. 遵循 Truth → Forecast → Decision 框架
+3. 最多选择 8 个工具
+"""

@@ -65,6 +65,8 @@ export default function AgentPage() {
     discount_rate: 0.08,
   });
   const [compareList, setCompareList] = useState([]);
+  const sessionIdRef = useRef(null);
+  if (!sessionIdRef.current) sessionIdRef.current = crypto.randomUUID();
 
   // Abort controller for the in-flight SSE stream (stop button / unmount).
   const abortRef = useRef(null);
@@ -124,6 +126,14 @@ export default function AgentPage() {
           break;
         case 'token':
           patchActive((m) => ({ answer: (m.answer || '') + event.delta }));
+          break;
+        case 'plan':
+          patchActive({ plan: event.plan });
+          break;
+        case 'reflection':
+          patchActive((m) => ({
+            reflections: [...(m.reflections || []), { step: event.step, verdict: event.verdict, reason: event.reason }],
+          }));
           break;
         case 'tool_call':
           patchActive((m) => ({
@@ -225,6 +235,7 @@ export default function AgentPage() {
         workflow_template: workflowId || undefined,
         max_steps: 15,
         params_override: bessParams,
+        session_id: sessionIdRef.current,
       };
 
       try {
@@ -356,6 +367,7 @@ function resultPatch(event) {
     summary: event.summary,
     keyMetrics: event.key_metrics,
     error: event.error,
+    retryCount: event.retry_count || 0,
   };
 }
 
@@ -681,7 +693,7 @@ function UserBubble({ text }) {
 }
 
 function AssistantMessage({ message, onCompare, onSuggest }) {
-  const { answer, trace, status_line, error, report, streaming, answerDone } = message;
+  const { answer, trace, status_line, error, report, streaming, answerDone, plan, reflections } = message;
   const hasTrace = trace && trace.length > 0;
   const isDone = !streaming;
 
@@ -694,6 +706,9 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
           {status_line}
         </div>
       )}
+
+      {/* Plan view */}
+      {plan && <PlanView plan={plan} />}
 
       {/* ① Structured report (conclusion) — always visible, top priority */}
       {report && (
@@ -884,6 +899,7 @@ function ToolTrace({ trace, totalSteps }) {
             {typeof t.durationMs === 'number' && t.durationMs > 0 && (
               <span className="ml-auto text-[10px] tabular-nums text-[var(--color-muted)]">
                 {t.durationMs.toFixed(0)}ms
+                {t.retryCount > 0 && <span className="ml-1 text-[var(--color-primary)]">重试×{t.retryCount}</span>}
               </span>
             )}
           </div>
@@ -1071,6 +1087,28 @@ function ReportFooter({ report, onCompare, onSuggest }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// ─── Plan View ────────────────────────────────────────────────────────────────
+
+function PlanView({ plan }) {
+  return (
+    <div className="rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-surface)] px-4 py-3">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--color-primary)]">
+          分析计划
+        </span>
+        {plan.goal && <span className="text-[11px] text-[var(--color-muted)]">{plan.goal}</span>}
+      </div>
+      {plan.steps && plan.steps.length > 0 && (
+        <ol className="space-y-0.5 pl-4">
+          {plan.steps.map((s, i) => (
+            <li key={i} className="list-decimal text-[11px] leading-5 text-[var(--color-muted)]">{s}</li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 
