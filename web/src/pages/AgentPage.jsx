@@ -339,6 +339,7 @@ export default function AgentPage() {
       compareList={compareList}
       setCompareList={setCompareList}
       onCompare={handleCompare}
+      onSuggest={(text) => setInput(text)}
       onWorkflow={(wf) =>
         sendMessage({ text: input.trim() || `运行 ${wf.name} 工作流`, workflowId: wf.id })
       }
@@ -387,6 +388,7 @@ function AgentLayout({
   compareList,
   setCompareList,
   onCompare,
+  onSuggest,
 }) {
   return (
     <div className="flex min-h-screen">
@@ -594,7 +596,7 @@ function AgentLayout({
                 m.role === 'user' ? (
                   <UserBubble key={m.id} text={m.content} />
                 ) : (
-                  <AssistantMessage key={m.id} message={m} onCompare={onCompare} />
+                  <AssistantMessage key={m.id} message={m} onCompare={onCompare} onSuggest={onSuggest} />
                 ),
               )}
             </div>
@@ -678,7 +680,7 @@ function UserBubble({ text }) {
   );
 }
 
-function AssistantMessage({ message, onCompare }) {
+function AssistantMessage({ message, onCompare, onSuggest }) {
   const { answer, trace, status_line, error, report, streaming, answerDone } = message;
   const hasTrace = trace && trace.length > 0;
   const isDone = !streaming;
@@ -696,7 +698,7 @@ function AssistantMessage({ message, onCompare }) {
       {/* ① Structured report (conclusion) — always visible, top priority */}
       {report && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <ReportView report={report} onCompare={onCompare} />
+          <ReportView report={report} onCompare={onCompare} onSuggest={onSuggest} />
         </div>
       )}
 
@@ -707,10 +709,7 @@ function AssistantMessage({ message, onCompare }) {
           defaultOpen={!isDone}
           badge={streaming && !answerDone ? '生成中' : undefined}
         >
-          <div className="whitespace-pre-wrap text-sm leading-6 text-[var(--color-text)]">
-            {answer}
-            {streaming && !answerDone && <span className="ml-0.5 animate-pulse">▍</span>}
-          </div>
+          <MarkdownText text={answer} streaming={streaming && !answerDone} />
         </Collapsible>
       )}
 
@@ -733,6 +732,49 @@ function AssistantMessage({ message, onCompare }) {
       )}
     </div>
   );
+}
+
+// ─── Lightweight markdown renderer (no dependency) ─────────────────────────────
+
+function MarkdownText({ text, streaming }) {
+  const lines = (text || '').split('\n');
+  const els = [];
+  let key = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      els.push(<div key={key++} className="h-2" />);
+    } else if (trimmed.startsWith('### ')) {
+      els.push(<h4 key={key++} className="mb-1 mt-3 text-[12px] font-semibold text-[var(--color-text)]">{trimmed.slice(4)}</h4>);
+    } else if (trimmed.startsWith('## ')) {
+      els.push(<h3 key={key++} className="mb-1 mt-3 text-[13px] font-semibold text-[var(--color-text)]">{trimmed.slice(3)}</h3>);
+    } else if (trimmed.startsWith('# ')) {
+      els.push(<h3 key={key++} className="mb-1.5 mt-3 text-sm font-semibold text-[var(--color-text)]">{trimmed.slice(2)}</h3>);
+    } else if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+      els.push(<div key={key++} className="pl-3 text-[13px] leading-6 text-[var(--color-muted)] before:mr-1.5 before:content-['•']">{renderInline(trimmed.slice(2))}</div>);
+    } else {
+      els.push(<p key={key++} className="text-[13px] leading-6 text-[var(--color-muted)]">{renderInline(trimmed)}</p>);
+    }
+  }
+
+  return (
+    <div>
+      {els}
+      {streaming && <span className="ml-0.5 animate-pulse text-[var(--color-text)]">▍</span>}
+    </div>
+  );
+}
+
+function renderInline(text) {
+  // Handle **bold** markers
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i} className="font-medium text-[var(--color-text)]">{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
 }
 
 // ─── Collapsible section (progressive disclosure) ─────────────────────────────
@@ -868,7 +910,7 @@ function ToolTrace({ trace, totalSteps }) {
 
 // ─── Report View ──────────────────────────────────────────────────────────────
 
-function ReportView({ report, onCompare }) {
+function ReportView({ report, onCompare, onSuggest }) {
   const status = STATUS_MAP[report.status] || STATUS_MAP.running;
 
   const handleExportPDF = () => {
@@ -927,39 +969,6 @@ function ReportView({ report, onCompare }) {
         </section>
       )}
 
-      {/* Stage Results */}
-      {report.stage_results && report.stage_results.length > 0 && (
-        <section>
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-muted)]">
-            分析阶段 ({report.stage_results.length})
-          </h3>
-          <div className="space-y-1">
-            {report.stage_results.map((stage, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] px-4 py-2.5"
-              >
-                <span
-                  className={`h-2 w-2 rounded-full flex-shrink-0 ${
-                    stage.status === 'success'
-                      ? 'bg-green-500'
-                      : stage.status === 'error'
-                        ? 'bg-red-500'
-                        : 'bg-yellow-500'
-                  }`}
-                />
-                <span className="flex-1 text-[13px] text-[var(--color-text)]">{stage.tool_name}</span>
-                {stage.duration_ms > 0 && (
-                  <span className="text-[11px] tabular-nums text-[var(--color-muted)]">
-                    {stage.duration_ms.toFixed(0)}ms
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* Risk Flags */}
       {report.risk_flags && report.risk_flags.length > 0 && (
         <section>
@@ -997,12 +1006,12 @@ function ReportView({ report, onCompare }) {
       )}
 
       {/* Footer: base params + suggested follow-ups */}
-      <ReportFooter report={report} onCompare={onCompare} />
+      <ReportFooter report={report} onCompare={onCompare} onSuggest={onSuggest} />
     </div>
   );
 }
 
-function ReportFooter({ report, onCompare }) {
+function ReportFooter({ report, onCompare, onSuggest }) {
   const params = report.metadata?.params;
   const hasParams = params && (params.power_mw || params.duration_hours);
 
@@ -1051,12 +1060,13 @@ function ReportFooter({ report, onCompare }) {
         </span>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {suggestions.map((s, i) => (
-            <span
+            <button
               key={i}
-              className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)]"
+              onClick={() => onSuggest && onSuggest(s)}
+              className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
             >
               {s}
-            </span>
+            </button>
           ))}
         </div>
       </div>
