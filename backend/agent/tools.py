@@ -307,14 +307,18 @@ def _exec_peak_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
 
 
 def _exec_fcas_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
-    """Execute FCAS opportunity analysis."""
+    """Execute FCAS opportunity analysis (NEM) or ESS analysis (WEM)."""
     from deps import get_db
-    from fcas_opportunity import summarize_nem_fcas_opportunity
 
     db = get_db()
     region = params.get("region", ctx.effective_region)
     year = params.get("year", ctx.effective_year)
     capacity_mw = params.get("capacity_mw", 100.0)
+
+    # WEM uses ESS (Essential System Services) instead of NEM FCAS
+    if region == "WEM" or ctx.market.value == "WEM":
+        return _exec_wem_ess_analysis(db, region, capacity_mw)
+
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
@@ -333,8 +337,51 @@ def _exec_fcas_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     if not rows:
         return {"region": region, "year": year, "has_fcas_data": False, "summary": {}}
 
+    from fcas_opportunity import summarize_nem_fcas_opportunity
     result = summarize_nem_fcas_opportunity(rows, capacity_mw=capacity_mw, duration_hours=2.0)
     return {"region": region, "year": year, "has_fcas_data": True, **result}
+
+
+def _exec_wem_ess_analysis(db, region: str, capacity_mw: float) -> Dict[str, Any]:
+    """WEM Essential System Services analysis (frequency control equivalent)."""
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        # Check if WEM ESS price data exists
+        cursor.execute("SELECT COUNT(*) FROM wem_ess_market_price")
+        count = cursor.fetchone()[0]
+
+    if count == 0:
+        return {
+            "region": region,
+            "market": "WEM",
+            "has_fcas_data": False,
+            "service_type": "ESS (Essential System Services)",
+            "summary": {
+                "note": "WEM ESS 价格数据尚未导入，无法量化辅助服务收入",
+                "total_net_incremental_revenue_k": 0,
+                "viable_service_count": 0,
+            },
+        }
+
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM wem_ess_market_price ORDER BY 1 DESC LIMIT 100")
+        columns = [desc[0] for desc in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    return {
+        "region": region,
+        "market": "WEM",
+        "has_fcas_data": True,
+        "service_type": "ESS (Essential System Services)",
+        "data_points": len(rows),
+        "summary": {
+            "note": "WEM ESS 数据量有限，结果仅供参考",
+            "total_net_incremental_revenue_k": 0,
+            "viable_service_count": 0,
+        },
+        "raw_sample": rows[:5],
+    }
 
 
 def _exec_saturation_check(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
@@ -556,23 +603,47 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     if not prices:
         return {"region": region, "status": "no_data"}
 
-    # Estimate annual arbitrage revenue (simplified)
+    # Estimate annual arbitrage revenue (duration-aware model)
+    # Window size scales with duration: longer battery captures wider spread
     sorted_p = sorted(prices)
     n = len(sorted_p)
-    window = max(1, n // 12)
+    # Intervals per day = 288 (NEM 5-min) or 48 (WEM 30-min)
+    intervals_per_day = 288 if n > 10000 else 48
+    # Charge/discharge window = duration_hours worth of intervals per day
+    window_per_day = max(1, int(duration_hours * (intervals_per_day / 24)))
+    # Annual window = daily window * 365
+    window = max(1, min(window_per_day * 365, n // 4))
+
     charge_cost = sum(sorted_p[:window]) / window
     discharge_rev = sum(sorted_p[-window:]) / window
     spread = discharge_rev - charge_cost
-    intervals_per_year = 17520  # NEM 5-min intervals
-    rte = 0.87
-    annual_energy_revenue = spread * power_mw * (intervals_per_year / 12) * rte
 
-    # Simple NPV
+    rte = 0.87  # Round-trip efficiency
+    # Annual cycles: assume ~350 profitable cycles/year
+    annual_cycles = 350
+    # Energy per cycle constrained by duration
+    energy_per_cycle_mwh = power_mw * duration_hours
+    annual_energy_revenue = spread * energy_per_cycle_mwh * annual_cycles * rte
+
+    # NPV calculation
     project_life = 20
     annual_om = power_mw * 15000  # $15k/MW/year
     net_annual = annual_energy_revenue - annual_om
     npv = sum(net_annual / (1 + discount_rate) ** t for t in range(1, project_life + 1)) - total_capex
     simple_payback = total_capex / net_annual if net_annual > 0 else float("inf")
+
+    # IRR calculation (bisection method)
+    irr = None
+    if net_annual > 0:
+        lo, hi = -0.5, 1.0
+        for _ in range(100):
+            mid = (lo + hi) / 2
+            irr_npv = sum(net_annual / (1 + mid) ** t for t in range(1, project_life + 1)) - total_capex
+            if irr_npv > 0:
+                lo = mid
+            else:
+                hi = mid
+        irr = round((lo + hi) / 2, 4)
 
     return {
         "region": region,
@@ -588,8 +659,11 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
             "annual_energy_revenue_aud": round(annual_energy_revenue, 0),
             "annual_net_revenue_aud": round(net_annual, 0),
             "npv_aud": round(npv, 0),
+            "irr_pct": round(irr * 100, 2) if irr is not None else None,
             "simple_payback_years": round(simple_payback, 1) if simple_payback != float("inf") else None,
             "avg_spread_aud_mwh": round(spread, 2),
+            "energy_per_cycle_mwh": round(energy_per_cycle_mwh, 1),
+            "annual_cycles": annual_cycles,
         },
     }
 
@@ -626,6 +700,66 @@ def _exec_compare_regions(params: Dict[str, Any], ctx: AgentContext) -> Dict[str
         "regions_analyzed": len(regions),
         "params": {"power_mw": power_mw, "duration_hours": duration_hours},
     }
+
+
+def _exec_multi_market_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Run investment analysis across NEM + WEM and compare."""
+    power_mw = params.get("power_mw", 100.0)
+    duration_hours = params.get("duration_hours", 4.0)
+    year = params.get("year", ctx.effective_year)
+
+    # Analyze NEM regions + WEM
+    all_regions = ["NSW1", "QLD1", "SA1", "VIC1", "WEM"]
+    results = []
+    for region in all_regions:
+        region_params = {
+            "region": region,
+            "year": year,
+            "power_mw": power_mw,
+            "duration_hours": duration_hours,
+        }
+        try:
+            result = _exec_investment_analysis(region_params, ctx)
+            if result.get("results"):
+                results.append(result)
+            else:
+                results.append({"region": region, "status": result.get("status", "no_data")})
+        except Exception as e:
+            results.append({"region": region, "status": "error", "error": str(e)})
+
+    # Separate NEM and WEM
+    nem_results = [r for r in results if r.get("region") != "WEM" and r.get("results")]
+    wem_result = next((r for r in results if r.get("region") == "WEM" and r.get("results")), None)
+
+    # Best NEM region
+    best_nem = max(nem_results, key=lambda r: r["results"]["npv_aud"]) if nem_results else None
+
+    comparison = {
+        "markets_analyzed": ["NEM", "WEM"],
+        "year": year,
+        "params": {"power_mw": power_mw, "duration_hours": duration_hours},
+        "nem_best": {
+            "region": best_nem["region"],
+            **best_nem["results"],
+        } if best_nem else None,
+        "wem": wem_result.get("results") if wem_result else {"status": "no_data"},
+        "all_regions": [
+            {"region": r.get("region"), "npv": r.get("results", {}).get("npv_aud"), "irr": r.get("results", {}).get("irr_pct")}
+            for r in results
+        ],
+        "recommendation": "",
+    }
+
+    # Generate recommendation
+    if best_nem and wem_result and wem_result.get("results"):
+        nem_npv = best_nem["results"]["npv_aud"]
+        wem_npv = wem_result["results"]["npv_aud"]
+        if nem_npv > wem_npv:
+            comparison["recommendation"] = f"NEM {best_nem['region']} NPV ({nem_npv:,.0f}) 优于 WEM ({wem_npv:,.0f})"
+        else:
+            comparison["recommendation"] = f"WEM NPV ({wem_npv:,.0f}) 优于 NEM 最优区域 {best_nem['region']} ({nem_npv:,.0f})"
+
+    return comparison
 
 
 def _exec_risk_stratification(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
@@ -1100,6 +1234,24 @@ def build_tool_registry() -> ToolRegistry:
             stage="Investment Decision",
         ),
         _exec_compare_regions,
+    )
+
+    # Multi-market analysis: NEM + WEM joint comparison
+    registry.register(
+        ToolDefinition(
+            name="multi_market_analysis",
+            description="Run investment analysis across ALL markets (NEM 4 regions + WEM) simultaneously and compare NPV/IRR. Returns best NEM region vs WEM side-by-side.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "power_mw": {"type": "number", "description": "Battery power in MW", "default": 100},
+                    "duration_hours": {"type": "number", "description": "Battery duration in hours", "default": 4},
+                    "year": {"type": "integer", "description": "Analysis year"},
+                },
+            },
+            stage="Investment Decision",
+        ),
+        _exec_multi_market_analysis,
     )
 
     return registry
