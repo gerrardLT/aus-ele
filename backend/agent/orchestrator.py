@@ -306,7 +306,7 @@ class AgentOrchestrator:
             yield {
                 "type": "report",
                 "report": report.model_dump(mode="json"),
-                "answer": full_analysis or executive_summary or recommendation,
+                "answer": full_analysis or self._build_reasoning_narrative(tool_results, context),
             }
             yield {"type": "done"}
             return
@@ -810,6 +810,97 @@ class AgentOrchestrator:
             context=context,
             llm=self.llm,
         )
+
+    # =========================================================================
+    # Reasoning Narrative (rule-based, always available)
+    # =========================================================================
+
+    def _build_reasoning_narrative(
+        self, tool_results: List[ToolResult], context: AgentContext
+    ) -> str:
+        """Generate a step-by-step reasoning narrative from tool results.
+
+        Produces a readable analysis walkthrough regardless of LLM availability.
+        """
+        from agent.prompts import get_tool_progress_label
+
+        parts: List[str] = []
+        parts.append(f"## 分析推理过程\n")
+        parts.append(f"市场: **{context.market.value}** / 区域: **{context.effective_region}** / 年份: **{context.effective_year}**\n")
+
+        for i, r in enumerate(tool_results, 1):
+            label = get_tool_progress_label(r.tool_name)
+            if r.status != ToolStatus.SUCCESS:
+                parts.append(f"### {i}. {label}\n")
+                parts.append(f"- 状态: **失败** — {r.error_message or '未知错误'}\n")
+                continue
+
+            parts.append(f"### {i}. {label}\n")
+            data = r.data or {}
+
+            # Extract key findings per tool type
+            if r.tool_name == "data_quality_check":
+                markets = data.get("markets", [])
+                for m in (markets if isinstance(markets, list) else []):
+                    if isinstance(m, dict):
+                        parts.append(f"- {m.get('market', '?')}: quality_score={m.get('quality_score', '?')}, grade={m.get('data_grade', '?')}\n")
+            elif r.tool_name == "price_trend_analysis":
+                stats = data.get("stats", {})
+                if stats:
+                    parts.append(f"- 均价: **{stats.get('avg_price', '?')} AUD/MWh**\n")
+                    parts.append(f"- 价格范围: {stats.get('min_price', '?')} ~ {stats.get('max_price', '?')}\n")
+                    parts.append(f"- 波动率(标准差): {stats.get('std_dev', '?')}\n")
+                    parts.append(f"- 负价比例: **{stats.get('negative_ratio_pct', '?')}%**\n")
+            elif r.tool_name == "peak_analysis":
+                summary = data.get("summary", {})
+                if summary:
+                    parts.append(f"- 最优充电均价: {summary.get('charge_avg_price', '?')} AUD/MWh\n")
+                    parts.append(f"- 最优放电均价: {summary.get('discharge_avg_price', '?')} AUD/MWh\n")
+                    parts.append(f"- 毛价差: **{summary.get('gross_spread', '?')} AUD/MWh**\n")
+            elif r.tool_name == "investment_analysis":
+                res = data.get("results", {})
+                if res:
+                    parts.append(f"- NPV: **{res.get('npv_aud', 0):,.0f} AUD**\n")
+                    parts.append(f"- 简单回收期: {res.get('simple_payback_years', '?')} 年\n")
+                    parts.append(f"- 年均净收入: {res.get('annual_net_revenue_aud', 0):,.0f} AUD\n")
+            elif r.tool_name == "fcas_analysis":
+                summary = data.get("summary", {})
+                if summary:
+                    parts.append(f"- FCAS 净增量收入: {summary.get('total_net_incremental_revenue_k', 0):.0f}k AUD/年\n")
+                    parts.append(f"- 可行服务数: {summary.get('viable_service_count', '?')}\n")
+            elif r.tool_name == "merchant_risk_simulate":
+                dist = data.get("distribution", {})
+                if dist:
+                    parts.append(f"- P10: {dist.get('p10', 0):,.0f} AUD/MW/年\n")
+                    parts.append(f"- P50: **{dist.get('p50', 0):,.0f} AUD/MW/年**\n")
+                    parts.append(f"- P90: {dist.get('p90', 0):,.0f} AUD/MW/年\n")
+            elif r.tool_name == "grid_forecast":
+                summary = data.get("summary", {})
+                if summary:
+                    parts.append(f"- 电网压力: {summary.get('grid_stress_score', '?')}\n")
+                    parts.append(f"- 价格尖峰风险: {summary.get('price_spike_risk_score', '?')}\n")
+            elif r.tool_name == "co_optimized_backtest":
+                parts.append(f"- 能量收入: {data.get('energy_revenue', 0):,.0f} AUD\n")
+                parts.append(f"- FCAS 收入: {data.get('fcas_revenue', 0):,.0f} AUD\n")
+                parts.append(f"- 联合优化提升: {data.get('co_optimization_uplift', 0):,.0f} AUD\n")
+            elif r.tool_name == "risk_stratification":
+                parts.append(f"- Layer 1 (基础套利): {data.get('layer1', {}).get('revenue', 0):,.0f} AUD\n")
+                parts.append(f"- Layer 3 (极端事件): {data.get('layer3', {}).get('revenue', 0):,.0f} AUD\n")
+            else:
+                # Generic: show first few keys
+                keys = list(data.keys())[:4]
+                if keys:
+                    parts.append(f"- 返回字段: {', '.join(keys)}\n")
+
+        # Closing judgment
+        success_count = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
+        parts.append(f"\n## 综合判断\n")
+        parts.append(f"共执行 {len(tool_results)} 个分析工具，{success_count} 个成功返回。")
+        if success_count < len(tool_results):
+            failed = [r.tool_name for r in tool_results if r.status != ToolStatus.SUCCESS]
+            parts.append(f"以下分析未能完成: {', '.join(failed)}，结论置信度相应降低。")
+
+        return "\n".join(parts)
 
     # =========================================================================
     # Result Helpers
