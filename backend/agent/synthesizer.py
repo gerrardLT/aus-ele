@@ -29,7 +29,7 @@ async def synthesize_report(
     tool_results: List[ToolResult],
     context: AgentContext,
     llm: LLMAdapter,
-) -> Tuple[str, str, ConfidenceLevel]:
+) -> Tuple[str, str, ConfidenceLevel, str]:
     """Synthesize tool results into executive summary and recommendation.
 
     Args:
@@ -39,7 +39,8 @@ async def synthesize_report(
         llm: LLM adapter instance.
 
     Returns:
-        Tuple of (executive_summary, recommendation, confidence_level)
+        Tuple of (executive_summary, recommendation, confidence_level, full_analysis)
+        where full_analysis is the complete LLM reasoning text (empty for rule-based).
     """
     if llm.is_available():
         try:
@@ -47,7 +48,8 @@ async def synthesize_report(
         except (LLMRequestError, LLMUnavailableError) as exc:
             logger.warning("LLM synthesis failed, falling back to rules: %s", exc)
 
-    return _rule_based_synthesize(query, tool_results, context)
+    summary, rec, conf = _rule_based_synthesize(query, tool_results, context)
+    return summary, rec, conf, ""
 
 
 # =============================================================================
@@ -60,7 +62,7 @@ async def _llm_synthesize(
     tool_results: List[ToolResult],
     context: AgentContext,
     llm: LLMAdapter,
-) -> Tuple[str, str, ConfidenceLevel]:
+) -> Tuple[str, str, ConfidenceLevel, str]:
     """Use LLM to generate synthesis from tool results."""
     # Build compact tool results summary for LLM context
     results_text = _format_tool_results_for_llm(tool_results)
@@ -83,7 +85,8 @@ async def _llm_synthesize(
     recommendation = _extract_section(content, "综合建议") or ""
     confidence = _infer_confidence(tool_results, content)
 
-    return executive_summary, recommendation, confidence
+    # Return full LLM analysis as the 4th value for "reasoning process" display
+    return executive_summary, recommendation, confidence, content
 
 
 def _format_tool_results_for_llm(tool_results: List[ToolResult]) -> str:

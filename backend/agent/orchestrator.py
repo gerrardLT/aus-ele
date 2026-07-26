@@ -278,11 +278,11 @@ class AgentOrchestrator:
             # Synthesize
             yield {"type": "status", "message": "正在生成结构化报告..."}
             try:
-                executive_summary, recommendation, confidence = await self._synthesize(
+                executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
                     query, tool_results, context
                 )
             except Exception:  # noqa: BLE001
-                executive_summary, recommendation, confidence = ("", "", ConfidenceLevel.LOW)
+                executive_summary, recommendation, confidence, full_analysis = ("", "", ConfidenceLevel.LOW, "")
 
             report = AgentReport(
                 id=execution_id,
@@ -306,7 +306,7 @@ class AgentOrchestrator:
             yield {
                 "type": "report",
                 "report": report.model_dump(mode="json"),
-                "answer": executive_summary or recommendation,
+                "answer": full_analysis or executive_summary or recommendation,
             }
             yield {"type": "done"}
             return
@@ -439,13 +439,13 @@ class AgentOrchestrator:
         # Build the structured report card (synthesizer may call the LLM).
         yield {"type": "status", "message": "正在生成结构化报告..."}
         try:
-            executive_summary, recommendation, confidence = await self._synthesize(
+            executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
                 query, tool_results, context
             )
         except Exception as exc:  # noqa: BLE001 - synthesis is best-effort
             logger.warning("Synthesis failed in stream: %s", exc)
-            executive_summary, recommendation, confidence = (
-                final_content, "", ConfidenceLevel.LOW,
+            executive_summary, recommendation, confidence, full_analysis = (
+                final_content, "", ConfidenceLevel.LOW, "",
             )
 
         report = AgentReport(
@@ -570,7 +570,7 @@ class AgentOrchestrator:
             status = WorkflowStatus.FAILED
 
         # Generate synthesis (LLM or fallback)
-        executive_summary, recommendation, confidence = await self._synthesize(
+        executive_summary, recommendation, confidence, _ = await self._synthesize(
             query, tool_results, context
         )
 
@@ -720,7 +720,7 @@ class AgentOrchestrator:
             status = WorkflowStatus.FAILED
 
         # Synthesize final report
-        executive_summary, recommendation, confidence = await self._synthesize(
+        executive_summary, recommendation, confidence, _ = await self._synthesize(
             query, tool_results, context
         )
 
@@ -796,11 +796,11 @@ class AgentOrchestrator:
         query: str,
         tool_results: List[ToolResult],
         context: AgentContext,
-    ) -> tuple[str, str, ConfidenceLevel]:
+    ) -> tuple[str, str, ConfidenceLevel, str]:
         """Synthesize tool results into executive summary and recommendation.
 
         Returns:
-            Tuple of (executive_summary, recommendation, confidence_level)
+            Tuple of (executive_summary, recommendation, confidence_level, full_analysis)
         """
         from agent.synthesizer import synthesize_report
 
