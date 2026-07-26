@@ -306,7 +306,7 @@ class AgentOrchestrator:
             yield {
                 "type": "report",
                 "report": report.model_dump(mode="json"),
-                "answer": full_analysis or self._build_reasoning_narrative(tool_results, context),
+                "answer": full_analysis or self._safe_reasoning_narrative(tool_results, context),
             }
             yield {"type": "done"}
             return
@@ -815,6 +815,26 @@ class AgentOrchestrator:
     # Reasoning Narrative (rule-based, always available)
     # =========================================================================
 
+    def _safe_reasoning_narrative(
+        self, tool_results: List[ToolResult], context: AgentContext
+    ) -> str:
+        """Wrapper that never crashes — returns empty string on any error."""
+        try:
+            return self._build_reasoning_narrative(tool_results, context)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Reasoning narrative generation failed: %s", exc)
+            return ""
+
+    @staticmethod
+    def _fmt(value, fmt_str: str = "{:,.0f}") -> str:
+        """Safe formatter: returns '?' for None/non-numeric values."""
+        if value is None:
+            return "?"
+        try:
+            return fmt_str.format(value)
+        except (TypeError, ValueError):
+            return str(value)
+
     def _build_reasoning_narrative(
         self, tool_results: List[ToolResult], context: AgentContext
     ) -> str:
@@ -860,32 +880,36 @@ class AgentOrchestrator:
             elif r.tool_name == "investment_analysis":
                 res = data.get("results", {})
                 if res:
-                    parts.append(f"- NPV: **{res.get('npv_aud', 0):,.0f} AUD**\n")
+                    parts.append(f"- NPV: **{self._fmt(res.get('npv_aud'))} AUD**\n")
+                    parts.append(f"- IRR: {self._fmt(res.get('irr_pct'), '{:.1f}')}%\n")
                     parts.append(f"- 简单回收期: {res.get('simple_payback_years', '?')} 年\n")
-                    parts.append(f"- 年均净收入: {res.get('annual_net_revenue_aud', 0):,.0f} AUD\n")
+                    parts.append(f"- 年均净收入: {self._fmt(res.get('annual_net_revenue_aud'))} AUD\n")
             elif r.tool_name == "fcas_analysis":
                 summary = data.get("summary", {})
                 if summary:
-                    parts.append(f"- FCAS 净增量收入: {summary.get('total_net_incremental_revenue_k', 0):.0f}k AUD/年\n")
+                    rev = summary.get("total_net_incremental_revenue_k")
+                    parts.append(f"- FCAS 净增量收入: {self._fmt(rev, '{:.0f}')}k AUD/年\n")
                     parts.append(f"- 可行服务数: {summary.get('viable_service_count', '?')}\n")
             elif r.tool_name == "merchant_risk_simulate":
                 dist = data.get("distribution", {})
                 if dist:
-                    parts.append(f"- P10: {dist.get('p10', 0):,.0f} AUD/MW/年\n")
-                    parts.append(f"- P50: **{dist.get('p50', 0):,.0f} AUD/MW/年**\n")
-                    parts.append(f"- P90: {dist.get('p90', 0):,.0f} AUD/MW/年\n")
+                    parts.append(f"- P10: {self._fmt(dist.get('p10'))} AUD/MW/年\n")
+                    parts.append(f"- P50: **{self._fmt(dist.get('p50'))} AUD/MW/年**\n")
+                    parts.append(f"- P90: {self._fmt(dist.get('p90'))} AUD/MW/年\n")
             elif r.tool_name == "grid_forecast":
                 summary = data.get("summary", {})
                 if summary:
                     parts.append(f"- 电网压力: {summary.get('grid_stress_score', '?')}\n")
                     parts.append(f"- 价格尖峰风险: {summary.get('price_spike_risk_score', '?')}\n")
             elif r.tool_name == "co_optimized_backtest":
-                parts.append(f"- 能量收入: {data.get('energy_revenue', 0):,.0f} AUD\n")
-                parts.append(f"- FCAS 收入: {data.get('fcas_revenue', 0):,.0f} AUD\n")
-                parts.append(f"- 联合优化提升: {data.get('co_optimization_uplift', 0):,.0f} AUD\n")
+                parts.append(f"- 能量收入: {self._fmt(data.get('energy_revenue'))} AUD\n")
+                parts.append(f"- FCAS 收入: {self._fmt(data.get('fcas_revenue'))} AUD\n")
+                parts.append(f"- 联合优化提升: {self._fmt(data.get('co_optimization_uplift'))} AUD\n")
             elif r.tool_name == "risk_stratification":
-                parts.append(f"- Layer 1 (基础套利): {data.get('layer1', {}).get('revenue', 0):,.0f} AUD\n")
-                parts.append(f"- Layer 3 (极端事件): {data.get('layer3', {}).get('revenue', 0):,.0f} AUD\n")
+                l1 = data.get("layer1", {})
+                l3 = data.get("layer3", {})
+                parts.append(f"- Layer 1 (基础套利): {self._fmt(l1.get('revenue') if isinstance(l1, dict) else None)} AUD\n")
+                parts.append(f"- Layer 3 (极端事件): {self._fmt(l3.get('revenue') if isinstance(l3, dict) else None)} AUD\n")
             else:
                 # Generic: show first few keys
                 keys = list(data.keys())[:4]
