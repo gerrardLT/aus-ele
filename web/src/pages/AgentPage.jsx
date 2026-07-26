@@ -18,6 +18,7 @@ import {
   listWorkflows,
   getAgentHistory,
   getExecutionDetail,
+  deleteExecution,
 } from '../lib/agentApi.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -287,6 +288,10 @@ export default function AgentPage() {
     });
   }, []);
 
+  const handleDeleteHistory = useCallback((id) => {
+    deleteExecution(id).then(() => refreshHistory()).catch(() => {});
+  }, [refreshHistory]);
+
   const handleLoadHistory = useCallback(
     async (item) => {
       if (streaming) return;
@@ -355,6 +360,7 @@ export default function AgentPage() {
       setCompareList={setCompareList}
       onCompare={handleCompare}
       onSuggest={(text) => setInput(text)}
+      onDeleteHistory={handleDeleteHistory}
       onWorkflow={(wf) =>
         sendMessage({ text: input.trim() || `运行 ${wf.name} 工作流`, workflowId: wf.id })
       }
@@ -405,6 +411,7 @@ function AgentLayout({
   setCompareList,
   onCompare,
   onSuggest,
+  onDeleteHistory,
 }) {
   return (
     <div className="flex min-h-screen">
@@ -451,7 +458,7 @@ function AgentLayout({
               <button
                 key={item.id}
                 onClick={() => onLoadHistory(item)}
-                className="w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
+                className="group relative w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
               >
                 <div className="flex items-center gap-1.5">
                   <span
@@ -466,6 +473,13 @@ function AgentLayout({
                     ? `${(item.total_duration_ms / 1000).toFixed(1)}s`
                     : '—'}
                 </div>
+                <span
+                  role="button"
+                  onClick={(e) => { e.stopPropagation(); onDeleteHistory(item.id); }}
+                  className="absolute right-1 top-1 hidden h-4 w-4 items-center justify-center rounded text-[10px] text-white/30 hover:bg-white/10 hover:text-white/70 group-hover:flex"
+                >
+                  ×
+                </span>
               </button>
             ))}
           </div>

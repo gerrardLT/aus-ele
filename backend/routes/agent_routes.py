@@ -391,6 +391,23 @@ async def get_execution_detail(execution_id: str) -> Dict:
         raise HTTPException(status_code=500, detail="Failed to fetch execution")
 
 
+@router.delete("/history/{execution_id}")
+async def delete_execution(execution_id: str) -> Dict:
+    """Delete a specific execution record."""
+    try:
+        deleted = await asyncio.get_running_loop().run_in_executor(
+            None, _delete_execution, execution_id
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Execution not found")
+        return {"deleted": True, "id": execution_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to delete execution %s: %s", execution_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to delete execution")
+
+
 def _fetch_history(limit: int) -> list:
     """Synchronous history query (runs in a thread pool executor)."""
     from deps import get_db
@@ -435,6 +452,19 @@ def _fetch_execution_detail(execution_id: str) -> Optional[Dict]:
                 record["report"] = None
         del record["report_json"]
         return record
+
+
+def _delete_execution(execution_id: str) -> bool:
+    """Delete an execution record from the database."""
+    from deps import get_db
+
+    db = get_db()
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_agent_log_table(cursor)
+        cursor.execute("DELETE FROM agent_execution_log WHERE id = ?", (execution_id,))
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 # ---------------------------------------------------------------------------

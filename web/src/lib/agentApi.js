@@ -105,6 +105,17 @@ export async function getExecutionDetail(executionId) {
 }
 
 /**
+ * Delete an execution record by ID.
+ * @param {string} executionId
+ * @returns {Promise<{deleted: boolean}>}
+ */
+export async function deleteExecution(executionId) {
+  const response = await fetch(`${AGENT_BASE}/history/${executionId}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(`Failed to delete execution: ${response.status}`);
+  return response.json();
+}
+
+/**
  * Poll an async task until completion.
  * @param {string} taskId
  * @param {Object} [options]
