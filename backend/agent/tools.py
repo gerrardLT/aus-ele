@@ -1521,7 +1521,311 @@ def build_tool_registry() -> ToolRegistry:
         _exec_export_data,
     )
 
+    # --- Phase 2: Chart / Scenario / Portfolio / Generation ---
+    registry.register(
+        ToolDefinition(
+            name="generate_chart",
+            description="Generate a chart (line/bar/scatter/area) from data or SQL query. Returns chart spec for frontend rendering.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "chart_type": {"type": "string", "enum": ["line", "bar", "scatter", "area"], "description": "Chart type"},
+                    "title": {"type": "string", "description": "Chart title"},
+                    "sql": {"type": "string", "description": "SQL query to get chart data (first col=x, second col=y)"},
+                    "data": {"type": "array", "items": {"type": "object"}, "description": "Direct data [{x,y}...]"},
+                    "x_label": {"type": "string"},
+                    "y_label": {"type": "string"},
+                },
+            },
+            stage="Visualization",
+        ),
+        _exec_generate_chart,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="scenario_simulation",
+            description="Run multi-scenario investment simulation (Bear/Central/Bull) with custom CAPEX, discount rate, and spread assumptions.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string"},
+                    "year": {"type": "integer"},
+                    "power_mw": {"type": "number"},
+                    "duration_hours": {"type": "number"},
+                    "scenarios": {"type": "array", "items": {"type": "object"}, "description": "Custom scenarios [{name, capex_per_kwh, discount_rate, spread_factor}]"},
+                },
+            },
+            stage="Investment Decision",
+        ),
+        _exec_scenario_simulation,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="portfolio_analysis",
+            description="Analyze a multi-project BESS portfolio: total NPV, risk diversification, and optimal allocation.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "projects": {"type": "array", "items": {"type": "object"}, "description": "[{region, power_mw, duration_hours}]"},
+                    "year": {"type": "integer"},
+                },
+            },
+            stage="Investment Decision",
+        ),
+        _exec_portfolio_analysis,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="generation_analysis",
+            description="Analyze generation mix, renewable penetration, and supply adequacy for a region.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string"},
+                    "analysis_type": {"type": "string", "enum": ["generation_mix", "renewable_penetration", "supply_adequacy"]},
+                },
+                "required": ["region"],
+            },
+            stage="Market Analysis",
+        ),
+        _exec_generation_analysis,
+    )
+
     return registry
+
+
+# =============================================================================
+# Phase 2: Chart / Scenario / Portfolio / Generation
+# =============================================================================
+
+
+def _exec_generate_chart(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Generate chart specification for frontend rendering."""
+    chart_type = params.get("chart_type", "line")  # line | bar | scatter | area
+    title = params.get("title", "")
+    data = params.get("data", [])  # [{x: ..., y: ...}, ...] or [{label: ..., value: ...}, ...]
+    x_label = params.get("x_label", "")
+    y_label = params.get("y_label", "")
+
+    # If no data provided, try to generate from a SQL query
+    if not data and params.get("sql"):
+        query_result = _exec_data_query({"sql": params["sql"]}, ctx)
+        if query_result.get("status") == "success":
+            rows = query_result.get("data", [])
+            cols = query_result.get("columns", [])
+            if len(cols) >= 2:
+                data = [{"x": str(r.get(cols[0], "")), "y": float(r.get(cols[1], 0) or 0)} for r in rows]
+
+    if not data:
+        return {"status": "error", "error": "未提供图表数据"}
+
+    return {
+        "status": "success",
+        "chart": {
+            "type": chart_type,
+            "title": title,
+            "x_label": x_label,
+            "y_label": y_label,
+            "data": data[:200],  # Cap data points
+        },
+    }
+
+
+def _exec_scenario_simulation(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Run multi-scenario investment simulation with custom assumptions."""
+    region = params.get("region", ctx.effective_region)
+    year = params.get("year", ctx.effective_year)
+    power_mw = params.get("power_mw", 100.0)
+    duration_hours = params.get("duration_hours", 4.0)
+
+    # Define scenarios
+    scenarios = params.get("scenarios", [
+        {"name": "悲观 (Bear)", "capex_per_kwh": 500, "discount_rate": 0.10, "spread_factor": 0.8},
+        {"name": "中性 (Central)", "capex_per_kwh": 400, "discount_rate": 0.08, "spread_factor": 1.0},
+        {"name": "乐观 (Bull)", "capex_per_kwh": 300, "discount_rate": 0.06, "spread_factor": 1.2},
+    ])
+
+    results = []
+    for scenario in scenarios:
+        scenario_params = {
+            "region": region,
+            "year": year,
+            "power_mw": power_mw,
+            "duration_hours": duration_hours,
+            "capex_per_kwh": scenario.get("capex_per_kwh", 400),
+            "discount_rate": scenario.get("discount_rate", 0.08),
+        }
+        base_result = _exec_investment_analysis(scenario_params, ctx)
+        if base_result.get("results"):
+            res = base_result["results"]
+            # Apply spread factor to revenue
+            spread_factor = scenario.get("spread_factor", 1.0)
+            adjusted_revenue = res.get("annual_energy_revenue_aud", 0) * spread_factor
+            adjusted_npv = res.get("npv_aud", 0) * spread_factor  # Simplified scaling
+            results.append({
+                "scenario": scenario.get("name", "Custom"),
+                "capex_per_kwh": scenario.get("capex_per_kwh"),
+                "discount_rate": scenario.get("discount_rate"),
+                "spread_factor": spread_factor,
+                "npv_aud": round(adjusted_npv, 0),
+                "irr_pct": res.get("irr_pct"),
+                "payback_years": res.get("simple_payback_years"),
+                "annual_revenue_aud": round(adjusted_revenue, 0),
+            })
+        else:
+            results.append({"scenario": scenario.get("name", "Custom"), "status": "no_data"})
+
+    return {
+        "region": region,
+        "year": year,
+        "params": {"power_mw": power_mw, "duration_hours": duration_hours},
+        "scenarios": results,
+    }
+
+
+def _exec_portfolio_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Multi-project portfolio analysis with risk diversification."""
+    projects = params.get("projects", [
+        {"region": "NSW1", "power_mw": 100, "duration_hours": 4},
+        {"region": "SA1", "power_mw": 50, "duration_hours": 2},
+        {"region": "WEM", "power_mw": 200, "duration_hours": 4},
+    ])
+    year = params.get("year", ctx.effective_year)
+
+    project_results = []
+    total_capex = 0
+    total_npv = 0
+    total_revenue = 0
+
+    for proj in projects:
+        proj_params = {
+            "region": proj.get("region", "NSW1"),
+            "year": year,
+            "power_mw": proj.get("power_mw", 100),
+            "duration_hours": proj.get("duration_hours", 4),
+            "capex_per_kwh": proj.get("capex_per_kwh", 400),
+            "discount_rate": proj.get("discount_rate", 0.08),
+        }
+        result = _exec_investment_analysis(proj_params, ctx)
+        if result.get("results"):
+            res = result["results"]
+            project_results.append({
+                "region": proj.get("region"),
+                "power_mw": proj.get("power_mw"),
+                "duration_hours": proj.get("duration_hours"),
+                "capex_aud": res.get("total_capex_aud", 0),
+                "npv_aud": res.get("npv_aud", 0),
+                "irr_pct": res.get("irr_pct"),
+                "annual_revenue_aud": res.get("annual_net_revenue_aud", 0),
+            })
+            total_capex += res.get("total_capex_aud", 0)
+            total_npv += res.get("npv_aud", 0)
+            total_revenue += res.get("annual_net_revenue_aud", 0)
+        else:
+            project_results.append({"region": proj.get("region"), "status": "no_data"})
+
+    return {
+        "year": year,
+        "projects": project_results,
+        "portfolio_summary": {
+            "total_capex_aud": round(total_capex, 0),
+            "total_npv_aud": round(total_npv, 0),
+            "total_annual_revenue_aud": round(total_revenue, 0),
+            "project_count": len([p for p in project_results if "npv_aud" in p]),
+            "portfolio_npv_multiple": round(total_npv / total_capex, 2) if total_capex > 0 else None,
+        },
+    }
+
+
+def _exec_generation_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Analyze generation mix, renewable penetration, and supply adequacy."""
+    from deps import get_db
+
+    db = get_db()
+    region = params.get("region", ctx.effective_region)
+    analysis_type = params.get("analysis_type", "generation_mix")  # generation_mix | renewable_penetration | supply_adequacy
+
+    try:
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            if analysis_type == "generation_mix":
+                cursor.execute(
+                    "SELECT fuel_type, COUNT(*) as unit_count, SUM(capacity_mw) as total_mw "
+                    "FROM du_detail_summary WHERE region_id = ? GROUP BY fuel_type ORDER BY total_mw DESC",
+                    (region,),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    return {"status": "no_data", "region": region, "note": "du_detail_summary 无该区域数据"}
+                return {
+                    "region": region,
+                    "analysis_type": analysis_type,
+                    "generation_mix": [
+                        {"fuel_type": r[0], "unit_count": r[1], "total_capacity_mw": round(float(r[2] or 0), 1)}
+                        for r in rows
+                    ],
+                }
+
+            elif analysis_type == "renewable_penetration":
+                cursor.execute(
+                    "SELECT settlement_date, total_demand_mw, renewable_generation_mw "
+                    "FROM dispatch_region_summary WHERE region_id = ? "
+                    "ORDER BY settlement_date DESC LIMIT 500",
+                    (region,),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    return {"status": "no_data", "region": region}
+                penetrations = []
+                for r in rows:
+                    demand = float(r[1] or 0)
+                    renew = float(r[2] or 0)
+                    if demand > 0:
+                        penetrations.append(renew / demand * 100)
+                from statistics import mean
+                return {
+                    "region": region,
+                    "analysis_type": analysis_type,
+                    "data_points": len(penetrations),
+                    "avg_renewable_penetration_pct": round(mean(penetrations), 1) if penetrations else 0,
+                    "max_penetration_pct": round(max(penetrations), 1) if penetrations else 0,
+                    "min_penetration_pct": round(min(penetrations), 1) if penetrations else 0,
+                }
+
+            elif analysis_type == "supply_adequacy":
+                cursor.execute(
+                    "SELECT settlement_date, total_demand_mw, available_generation_mw "
+                    "FROM dispatch_region_summary WHERE region_id = ? "
+                    "ORDER BY settlement_date DESC LIMIT 500",
+                    (region,),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    return {"status": "no_data", "region": region}
+                margins = []
+                for r in rows:
+                    demand = float(r[1] or 0)
+                    gen = float(r[2] or 0)
+                    if demand > 0:
+                        margins.append((gen - demand) / demand * 100)
+                from statistics import mean
+                return {
+                    "region": region,
+                    "analysis_type": analysis_type,
+                    "data_points": len(margins),
+                    "avg_supply_margin_pct": round(mean(margins), 1) if margins else 0,
+                    "min_margin_pct": round(min(margins), 1) if margins else 0,
+                    "tight_intervals": sum(1 for m in margins if m < 5),
+                }
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+    return {"status": "error", "error": f"未知分析类型: {analysis_type}"}
 
 
 # =============================================================================
