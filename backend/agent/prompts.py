@@ -204,3 +204,65 @@ PLANNING_PROMPT = """基于用户请求和当前上下文，生成一个分析�
 2. 遵循 Truth → Forecast → Decision 框架
 3. 最多选择 8 个工具
 """
+
+
+# =============================================================================
+# Database Schema Context (injected for data_query tool)
+# =============================================================================
+
+DATABASE_SCHEMA_CONTEXT = """
+## 可查询数据库表（PostgreSQL，只允许 SELECT）
+
+### 价格数据
+- trading_price_2020 ~ trading_price_2026: 市场交易价格
+  列: settlement_date, region_id(NSW1/QLD1/SA1/VIC1/TAS1/WEM), rrp_aud_mwh,
+      raise1sec_rrp, raise6sec_rrp, raise60sec_rrp, raise5min_rrp, raisereg_rrp,
+      lower1sec_rrp, lower6sec_rrp, lower60sec_rrp, lower5min_rrp, lowerreg_rrp
+
+### 运营需求
+- operational_demand_actual_hh: 实际运营需求（半小时）
+  列: interval_date, region_id, operational_demand_mw
+- operational_demand_forecast_hh: 需求预测
+  列: interval_date, region_id, forecast_demand_mw
+
+### 屋顶光伏
+- rooftop_pv_actual_measurement: 实际屋顶光伏出力
+  列: interval_date, region_id, power_mw
+- rooftop_pv_forecast: 光伏预测
+  列: interval_date, region_id, forecast_power_mw
+
+### 调度/发电
+- dispatch_region_summary: 区域调度摘要
+  列: settlement_date, region_id, total_demand_mw, available_generation_mw,
+      renewable_generation_mw, interconnector_import_mw, interconnector_export_mw
+- dispatch_interconnector_flow: 互联线潮流
+  列: settlement_date, interconnector_id, flow_mw, direction
+
+### 机组明细
+- du_detail_summary: 发电机组明细
+  列: duid, station, region_id, fuel_type, capacity_mw, status
+
+### 电网事件
+- grid_event_raw: 电网事件原始记录
+  列: event_id, event_type, region_id, start_time, end_time, description
+
+### WEM ESS
+- wem_ess_market_price: WEM 辅助服务价格
+- wem_ess_capability: WEM ESS 能力
+- wem_ess_constraint_summary: WEM ESS 约束
+- wem_reserve_shortfall_snapshot: WEM 储备缺口
+
+### 气象
+- bom_weather_observation: BOM 气象观测
+  列: station, observation_date, max_temp_c, min_temp_c, rainfall_mm
+
+### 数据质量
+- data_quality_snapshot: 数据质量快照
+- data_quality_issue: 数据质量问题
+
+### 规则
+- 只允许 SELECT 查询
+- 必须加 LIMIT（最大 500）
+- 价格表按年分表：trading_price_2024, trading_price_2025 等
+- region_id 取值: NSW1, QLD1, SA1, VIC1, TAS1, WEM
+"""

@@ -357,6 +357,30 @@ async def list_workflows() -> AgentWorkflowsResponse:
 
 
 # ---------------------------------------------------------------------------
+# Data export download
+# ---------------------------------------------------------------------------
+
+
+@router.get("/download/{filename}")
+async def download_export(filename: str):
+    """Download an exported data file (CSV/JSON)."""
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+
+    # Prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    output_dir = Path(__file__).resolve().parent.parent.parent / "output"
+    filepath = output_dir / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = "text/csv" if filename.endswith(".csv") else "application/json"
+    return FileResponse(filepath, media_type=media_type, filename=filename)
+
+
+# ---------------------------------------------------------------------------
 # Execution history
 # ---------------------------------------------------------------------------
 

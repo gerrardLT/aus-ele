@@ -21,6 +21,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 from agent.llm_adapter import LLMAdapter, LLMRequestError, LLMUnavailableError
 from agent.prompts import (
     SYSTEM_PROMPT,
+    DATABASE_SCHEMA_CONTEXT,
     build_context_message,
     get_tool_progress_label,
 )
@@ -322,7 +323,7 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT + "\n" + DATABASE_SCHEMA_CONTEXT}]
         if history:
             for m in history:
                 role = m.get("role")
@@ -676,7 +677,7 @@ class AgentOrchestrator:
 
         # Build initial messages
         messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + "\n" + DATABASE_SCHEMA_CONTEXT},
             {"role": "user", "content": f"{build_context_message(context)}\n\n用户请求: {query}"},
         ]
 
