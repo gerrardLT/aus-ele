@@ -20,6 +20,7 @@ import {
   getExecutionDetail,
   deleteExecution,
 } from '../lib/agentApi.js';
+import ChartRenderer from '../components/ChartRenderer.jsx';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -168,6 +169,10 @@ export default function AgentPage() {
                   ? { ...t, ...resultPatch(event) }
                   : t,
             ),
+            // Capture chart data from tool results
+            charts: event.chart ? [...(m.charts || []), event.chart] : m.charts,
+            // Capture download link from export_data
+            downloadLink: event.download_path ? event.download_path : m.downloadLink,
           }));
           break;
         case 'answer_end':
@@ -711,7 +716,7 @@ function UserBubble({ text }) {
 }
 
 function AssistantMessage({ message, onCompare, onSuggest }) {
-  const { answer, trace, status_line, error, report, streaming, answerDone, plan, reflections } = message;
+  const { answer, trace, status_line, error, report, streaming, answerDone, plan, reflections, charts, downloadLink } = message;
   const hasTrace = trace && trace.length > 0;
   const isDone = !streaming;
 
@@ -733,6 +738,23 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <ReportView report={report} onCompare={onCompare} onSuggest={onSuggest} />
         </div>
+      )}
+
+      {/* Charts from tool results */}
+      {charts && charts.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {charts.map((c, i) => <ChartRenderer key={i} chart={c} />)}
+        </div>
+      )}
+
+      {/* Download link */}
+      {downloadLink && (
+        <a
+          href={downloadLink}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+        >
+          ↓ 下载数据文件
+        </a>
       )}
 
       {/* ② Streamed answer / thinking — collapsible after done */}

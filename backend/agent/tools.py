@@ -620,26 +620,61 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     spread = discharge_rev - charge_cost
 
     rte = 0.87  # Round-trip efficiency
+    availability = 0.97  # 3% downtime for maintenance
+    degradation_rate = 0.02  # 2% annual capacity fade
     # Annual cycles: assume ~350 profitable cycles/year
     annual_cycles = 350
     # Energy per cycle constrained by duration
     energy_per_cycle_mwh = power_mw * duration_hours
-    annual_energy_revenue = spread * energy_per_cycle_mwh * annual_cycles * rte
+    annual_energy_revenue = spread * energy_per_cycle_mwh * annual_cycles * rte * availability
 
-    # NPV calculation
+    # FCAS revenue estimate (from FCAS price columns if available)
+    fcas_annual_revenue = 0.0
+    try:
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT AVG(raisereg_rrp), AVG(lowerreg_rrp) FROM {table_name} "
+                f"WHERE region_id = ? AND raisereg_rrp IS NOT NULL AND raisereg_rrp > 0",
+                (region,),
+            )
+            fcas_row = cursor.fetchone()
+            if fcas_row and fcas_row[0]:
+                # Estimate: 30% of capacity in FCAS, 6h/day enabled, $/MW per interval
+                avg_fcas_price = (float(fcas_row[0] or 0) + float(fcas_row[1] or 0)) / 2
+                fcas_capacity_mw = power_mw * 0.3
+                fcas_hours_per_year = 6 * 365
+                fcas_annual_revenue = avg_fcas_price * fcas_capacity_mw * fcas_hours_per_year * 0.5
+    except Exception:
+        pass  # FCAS columns may not exist for WEM
+
+    # NPV calculation with degradation (year-by-year)
     project_life = 20
     annual_om = power_mw * 15000  # $15k/MW/year
-    net_annual = annual_energy_revenue - annual_om
-    npv = sum(net_annual / (1 + discount_rate) ** t for t in range(1, project_life + 1)) - total_capex
+    total_revenue_y1 = annual_energy_revenue + fcas_annual_revenue
+    npv = -total_capex
+    yearly_cashflows = []
+    for t in range(1, project_life + 1):
+        # Apply degradation: capacity fades 2% per year
+        degradation_factor = (1 - degradation_rate) ** (t - 1)
+        year_revenue = total_revenue_y1 * degradation_factor
+        year_net = year_revenue - annual_om
+        npv += year_net / (1 + discount_rate) ** t
+        yearly_cashflows.append(round(year_net, 0))
+
+    net_annual = total_revenue_y1 - annual_om  # Year 1 net
     simple_payback = total_capex / net_annual if net_annual > 0 else float("inf")
 
-    # IRR calculation (bisection method)
+    # IRR calculation (bisection method with degradation)
     irr = None
     if net_annual > 0:
         lo, hi = -0.5, 1.0
         for _ in range(100):
             mid = (lo + hi) / 2
-            irr_npv = sum(net_annual / (1 + mid) ** t for t in range(1, project_life + 1)) - total_capex
+            irr_npv = -total_capex
+            for t in range(1, project_life + 1):
+                deg = (1 - degradation_rate) ** (t - 1)
+                irr_npv += (total_revenue_y1 * deg - annual_om) / (1 + mid) ** t
             if irr_npv > 0:
                 lo = mid
             else:
@@ -658,6 +693,8 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
         "results": {
             "total_capex_aud": round(total_capex, 0),
             "annual_energy_revenue_aud": round(annual_energy_revenue, 0),
+            "annual_fcas_revenue_aud": round(fcas_annual_revenue, 0),
+            "annual_total_revenue_aud": round(total_revenue_y1, 0),
             "annual_net_revenue_aud": round(net_annual, 0),
             "npv_aud": round(npv, 0),
             "irr_pct": round(irr * 100, 2) if irr is not None else None,
@@ -665,6 +702,13 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
             "avg_spread_aud_mwh": round(spread, 2),
             "energy_per_cycle_mwh": round(energy_per_cycle_mwh, 1),
             "annual_cycles": annual_cycles,
+            "model_assumptions": {
+                "round_trip_efficiency": rte,
+                "availability": availability,
+                "degradation_rate_annual": degradation_rate,
+                "fcas_capacity_pct": 0.3,
+                "project_life_years": project_life,
+            },
         },
     }
 

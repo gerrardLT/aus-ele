@@ -274,6 +274,8 @@ class AgentOrchestrator:
                         "key_metrics": sr.key_metrics,
                         "error": result.error_message,
                         "retry_count": result.retry_count,
+                        "chart": result.data.get("chart") if result.data else None,
+                        "download_path": result.data.get("download_path") if result.data else None,
                     }
 
             # Determine status
@@ -479,6 +481,8 @@ class AgentOrchestrator:
                     "key_metrics": sr.key_metrics,
                     "error": result.error_message,
                     "retry_count": result.retry_count,
+                    "chart": result.data.get("chart") if result.data else None,
+                    "download_path": result.data.get("download_path") if result.data else None,
                 }
                 messages.append(result.to_llm_message())
             content_buf = ""  # avoid attributing prior reasoning to next tool
