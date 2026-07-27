@@ -372,7 +372,10 @@ async def download_export(filename: str):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     output_dir = Path(__file__).resolve().parent.parent.parent / "output"
-    filepath = output_dir / filename
+    filepath = (output_dir / filename).resolve()
+    # Verify resolved path is still within output_dir
+    if not str(filepath).startswith(str(output_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File not found")
 

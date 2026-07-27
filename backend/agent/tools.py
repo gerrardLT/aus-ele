@@ -813,7 +813,7 @@ def _exec_multi_market_analysis(params: Dict[str, Any], ctx: AgentContext) -> Di
 
 # SQL keywords that are NEVER allowed in user-generated queries
 _SQL_FORBIDDEN = re.compile(
-    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|EXECUTE)\b",
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|EXECUTE|INTO|SET|LOAD|CALL)\b",
     re.IGNORECASE,
 )
 
@@ -831,7 +831,10 @@ def _exec_data_query(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any
     if not sql.upper().startswith("SELECT"):
         return {"status": "error", "error": "只允许 SELECT 查询"}
     if _SQL_FORBIDDEN.search(sql):
-        return {"status": "error", "error": "SQL 包含禁止关键词（INSERT/UPDATE/DELETE/DROP等）"}
+        return {"status": "error", "error": "SQL 包含禁止关键词（INSERT/UPDATE/DELETE/DROP/SET/INTO等）"}
+    # Block multi-statement injection
+    if ";" in sql.rstrip(";").rstrip():
+        return {"status": "error", "error": "不允许多条 SQL 语句（禁止分号）"}
 
     # Force LIMIT if not present
     if "LIMIT" not in sql.upper():
@@ -1760,7 +1763,11 @@ def _exec_scenario_simulation(params: Dict[str, Any], ctx: AgentContext) -> Dict
             # Apply spread factor to revenue
             spread_factor = scenario.get("spread_factor", 1.0)
             adjusted_revenue = res.get("annual_energy_revenue_aud", 0) * spread_factor
-            adjusted_npv = res.get("npv_aud", 0) * spread_factor  # Simplified scaling
+            # Only scale revenue, not CAPEX: adjusted_npv = base_npv + (factor-1) * PV(revenue)
+            base_npv = res.get("npv_aud", 0)
+            annual_rev = res.get("annual_total_revenue_aud", 0) or res.get("annual_energy_revenue_aud", 0)
+            pv_revenue_approx = annual_rev * 10  # Rough annuity approximation
+            adjusted_npv = base_npv + (spread_factor - 1) * pv_revenue_approx
             results.append({
                 "scenario": scenario.get("name", "Custom"),
                 "capex_per_kwh": scenario.get("capex_per_kwh"),
@@ -2123,9 +2130,10 @@ def _exec_generate_report(params: Dict[str, Any], ctx: AgentContext) -> Dict[str
 
 ## 风险标记
 - 数据等级: preview（仅供早期筛选）
-- FCAS 收入: 未纳入（需单独验证）
-- 退化/可用率: 未建模
+- FCAS 收入: 已纳入（简化估算，30%容量×6h/天，需单独验证）
+- 退化/可用率: 已建模（2%/年退化，97%可用率）
 - 网络费用: 未纳入
+- 税务/补贴: 未建模（无加速折旧、ARENA 补贴）
 
 ## 建议
 基于当前分析，项目 NPV 为{'positive' if inv_results.get('npv_aud', 0) > 0 else 'negative'}，
