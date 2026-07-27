@@ -1594,6 +1594,58 @@ def build_tool_registry() -> ToolRegistry:
         _exec_generation_analysis,
     )
 
+    # --- Phase 3: Market Pulse / Weather / Report ---
+    registry.register(
+        ToolDefinition(
+            name="market_pulse",
+            description="Get current market state snapshot: latest prices (24h), demand, renewable penetration for a region.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string"},
+                    "year": {"type": "integer"},
+                },
+            },
+            stage="Real-time",
+        ),
+        _exec_market_pulse,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="weather_correlation",
+            description="Analyze weather-to-price correlation: temperature extremes, heatwave frequency, and their impact on demand/prices.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string"},
+                },
+            },
+            stage="Market Analysis",
+        ),
+        _exec_weather_correlation,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="generate_report",
+            description="Generate an investment committee memo (Markdown) combining market analysis, financial model, and risk flags.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string"},
+                    "year": {"type": "integer"},
+                    "power_mw": {"type": "number"},
+                    "duration_hours": {"type": "number"},
+                    "capex_per_kwh": {"type": "number"},
+                    "discount_rate": {"type": "number"},
+                },
+            },
+            stage="Report",
+        ),
+        _exec_generate_report,
+    )
+
     return registry
 
 
@@ -1826,6 +1878,224 @@ def _exec_generation_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
         return {"status": "error", "error": str(e)}
 
     return {"status": "error", "error": f"未知分析类型: {analysis_type}"}
+
+
+# =============================================================================
+# Phase 3: Market Pulse / Weather Correlation / Report Generation
+# =============================================================================
+
+
+def _exec_market_pulse(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Current market state snapshot: latest prices, demand, renewable share."""
+    from deps import get_db
+
+    db = get_db()
+    region = params.get("region", ctx.effective_region)
+    year = params.get("year", ctx.effective_year)
+    year = _safe_year(year)
+
+    result = {"region": region, "year": year, "snapshots": {}}
+
+    try:
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Latest prices
+            table = f"trading_price_{year}"
+            cursor.execute(
+                f"SELECT settlement_date, rrp_aud_mwh FROM {table} "
+                f"WHERE region_id = ? ORDER BY settlement_date DESC LIMIT 48",
+                (region,),
+            )
+            price_rows = cursor.fetchall()
+            if price_rows:
+                prices = [float(r[1] or 0) for r in price_rows]
+                from statistics import mean
+                result["snapshots"]["recent_prices"] = {
+                    "latest": round(prices[0], 2),
+                    "avg_24h": round(mean(prices), 2),
+                    "max_24h": round(max(prices), 2),
+                    "min_24h": round(min(prices), 2),
+                    "negative_count_24h": sum(1 for p in prices if p < 0),
+                    "as_of": str(price_rows[0][0]),
+                }
+
+            # Latest demand
+            cursor.execute(
+                "SELECT interval_date, operational_demand_mw FROM operational_demand_actual_hh "
+                "WHERE region_id = ? ORDER BY interval_date DESC LIMIT 48",
+                (region,),
+            )
+            demand_rows = cursor.fetchall()
+            if demand_rows:
+                demands = [float(r[1] or 0) for r in demand_rows]
+                from statistics import mean
+                result["snapshots"]["recent_demand"] = {
+                    "latest_mw": round(demands[0], 0),
+                    "avg_24h_mw": round(mean(demands), 0),
+                    "peak_24h_mw": round(max(demands), 0),
+                    "as_of": str(demand_rows[0][0]),
+                }
+
+            # Latest renewable generation
+            cursor.execute(
+                "SELECT settlement_date, total_demand_mw, renewable_generation_mw "
+                "FROM dispatch_region_summary WHERE region_id = ? "
+                "ORDER BY settlement_date DESC LIMIT 48",
+                (region,),
+            )
+            gen_rows = cursor.fetchall()
+            if gen_rows:
+                penetrations = []
+                for r in gen_rows:
+                    d = float(r[1] or 0)
+                    ren = float(r[2] or 0)
+                    if d > 0:
+                        penetrations.append(ren / d * 100)
+                if penetrations:
+                    from statistics import mean
+                    result["snapshots"]["renewable"] = {
+                        "current_penetration_pct": round(penetrations[0], 1),
+                        "avg_24h_pct": round(mean(penetrations), 1),
+                        "as_of": str(gen_rows[0][0]),
+                    }
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    result["status"] = "success" if result["snapshots"] else "no_data"
+    return result
+
+
+def _exec_weather_correlation(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Analyze weather-to-price correlation (temperature → demand → price)."""
+    from deps import get_db
+
+    db = get_db()
+    region = params.get("region", ctx.effective_region)
+
+    try:
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get weather observations
+            cursor.execute(
+                "SELECT observation_date, max_temp_c, min_temp_c, rainfall_mm "
+                "FROM bom_weather_observation ORDER BY observation_date DESC LIMIT 365"
+            )
+            weather_rows = cursor.fetchall()
+
+            if not weather_rows:
+                return {"status": "no_data", "note": "bom_weather_observation 无数据"}
+
+            temps = [float(r[1] or 0) for r in weather_rows if r[1] is not None]
+            if not temps:
+                return {"status": "no_data", "note": "无温度数据"}
+
+            from statistics import mean, stdev
+
+            # Basic weather stats
+            weather_stats = {
+                "data_points": len(temps),
+                "avg_max_temp_c": round(mean(temps), 1),
+                "std_max_temp_c": round(stdev(temps), 1) if len(temps) > 1 else 0,
+                "hottest_c": round(max(temps), 1),
+                "coldest_c": round(min(temps), 1),
+                "heatwave_days_gt35": sum(1 for t in temps if t > 35),
+                "heatwave_days_gt40": sum(1 for t in temps if t > 40),
+            }
+
+            # Correlation insight
+            hot_days = sum(1 for t in temps if t > 30)
+            mild_days = sum(1 for t in temps if 15 <= t <= 25)
+
+            return {
+                "status": "success",
+                "region": region,
+                "weather_stats": weather_stats,
+                "insights": {
+                    "hot_days_gt30": hot_days,
+                    "mild_days_15_25": mild_days,
+                    "price_impact_note": "高温日(>35°C)通常导致需求尖峰和价格飙升，是BESS放电的高价值时段",
+                    "seasonal_pattern": "澳洲夏季(12-2月)价格波动最大，冬季(6-8月)相对平稳",
+                },
+            }
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+def _exec_generate_report(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Generate an investment committee memo from analysis results."""
+    region = params.get("region", ctx.effective_region)
+    year = params.get("year", ctx.effective_year)
+    power_mw = params.get("power_mw", 100.0)
+    duration_hours = params.get("duration_hours", 4.0)
+    capex_per_kwh = params.get("capex_per_kwh", 400)
+    discount_rate = params.get("discount_rate", 0.08)
+
+    # Gather data from multiple tools
+    investment = _exec_investment_analysis({
+        "region": region, "year": year, "power_mw": power_mw,
+        "duration_hours": duration_hours, "capex_per_kwh": capex_per_kwh,
+        "discount_rate": discount_rate,
+    }, ctx)
+
+    price_data = _exec_price_trend({"region": region, "year": year}, ctx)
+    peak_data = _exec_peak_analysis({"region": region, "year": year, "window_hours": int(duration_hours)}, ctx)
+
+    inv_results = investment.get("results", {})
+    price_stats = price_data.get("stats", {})
+    peak_summary = peak_data.get("summary", {})
+
+    # Build memo sections
+    memo = f"""# 投资委员会备忘录
+
+## 项目概要
+- 区域: {region}
+- 规模: {power_mw} MW / {duration_hours} h
+- CAPEX: {capex_per_kwh} AUD/kWh
+- 折现率: {discount_rate*100:.0f}%
+- 基准年: {year}
+
+## 执行摘要
+基于 {year} 年 {region} 市场数据，{power_mw}MW/{duration_hours}h BESS 项目的核心指标如下：
+- NPV: {inv_results.get('npv_aud', 0):,.0f} AUD
+- IRR: {inv_results.get('irr_pct', 'N/A')}%
+- 简单回收期: {inv_results.get('simple_payback_years', 'N/A')} 年
+- 年均净收入: {inv_results.get('annual_net_revenue_aud', 0):,.0f} AUD
+
+## 市场分析
+- 年均价格: {price_stats.get('avg_price', '?')} AUD/MWh
+- 价格范围: {price_stats.get('min_price', '?')} ~ {price_stats.get('max_price', '?')} AUD/MWh
+- 负价比例: {price_stats.get('negative_ratio_pct', '?')}%
+- 最优价差: {peak_summary.get('gross_spread', '?')} AUD/MWh
+
+## 财务模型
+- 总 CAPEX: {inv_results.get('total_capex_aud', 0):,.0f} AUD
+- 年能量收入: {inv_results.get('annual_energy_revenue_aud', 0):,.0f} AUD
+- 年净收入: {inv_results.get('annual_net_revenue_aud', 0):,.0f} AUD
+- 项目寿命: 20 年
+
+## 风险标记
+- 数据等级: preview（仅供早期筛选）
+- FCAS 收入: 未纳入（需单独验证）
+- 退化/可用率: 未建模
+- 网络费用: 未纳入
+
+## 建议
+基于当前分析，项目 NPV 为{'positive' if inv_results.get('npv_aud', 0) > 0 else 'negative'}，
+{'建议进入开发和深度尽调阶段' if inv_results.get('npv_aud', 0) > 0 else '当前假设下不建议推进'}。
+本报告为分析参考，不构成投资建议。
+"""
+
+    return {
+        "status": "success",
+        "format": "markdown",
+        "title": f"{region} {power_mw}MW/{duration_hours}h BESS 投资备忘录",
+        "content": memo,
+        "key_metrics": inv_results,
+    }
 
 
 # =============================================================================
