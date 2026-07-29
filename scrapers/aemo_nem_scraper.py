@@ -513,7 +513,8 @@ def main():
     print("=" * 60)
     print(f"时间范围: {args.start} -> {args.end} ({len(months)} 个月)")
     print(f"目标区域: {', '.join(regions)}")
-    print(f"数据存储库: {args.db_path}")
+    # 数据库连接由 DatabaseManager 根据环境配置决定（PostgreSQL）；
+    # 历史上这里引用过不存在的 args.db_path 导致 CLI 直接崩溃。
     if output_path:
         print(f"同时输出 CSV: {output_path}")
     print(f"请求延迟: {REQUEST_DELAY}s")

@@ -786,9 +786,12 @@ class MLCalibrationEngine:
                 self.model_p90 = None
                 return
         else:
-            # 没有足够验证集，仅记录训练信息
+            # 验证集不足：拒绝使用未经样本外检验的模型，回退默认参数。
+            # 历史 bug：这里曾标记 "calibrated" 并保留模型，导致一组从未
+            # 验证过的参数进入生产计算（validation_mae=None 还会让上游
+            # 日志格式化崩溃）。验证不了就不校准。
             self.calibration_metadata = {
-                "status": "calibrated",
+                "status": "insufficient_validation",
                 "train_period": f"{train_data[0]['trade_date']} to {train_data[-1]['trade_date']}",
                 "validation_period": "N/A (insufficient validation data)",
                 "validation_mae": None,
@@ -796,10 +799,17 @@ class MLCalibrationEngine:
                 "direction_accuracy": None,
                 "confidence_interval_coverage": None,
                 "train_samples": len(train_data),
-                "val_samples": 0,
+                "val_samples": len(val_data),
                 "calibrated_at": datetime.now().isoformat(),
                 "sample_count": len(features),
             }
+            logger.warning(
+                f"ML 校准: 验证样本不足 ({len(val_data)} 条 < 30)，拒绝校准，使用默认参数"
+            )
+            self.model = None
+            self.model_p10 = None
+            self.model_p90 = None
+            return
 
         logger.info(
             f"ML 校准完成: MAE={self.calibration_metadata.get('validation_mae')}, "

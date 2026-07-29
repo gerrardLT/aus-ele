@@ -102,7 +102,14 @@ class PriceDistribution(BaseModel):
     mean_spread: float = Field(ge=0, le=10000, description="日均价差 $/MWh")
     std_dev: float = Field(ge=0, le=5000, description="标准差 $/MWh")
     spike_frequency: float = Field(ge=0.0, le=1.0, description="价格尖峰频率")
-    compression_factor: float = Field(ge=0.0, le=1.0, description="BESS 饱和压缩因子")
+    compression_factor: float = Field(ge=0.0, le=1.0, description="BESS 饱和压缩因子（目标年绝对饱和度）")
+    # 实际施加到 mean_spread 上的压缩：ML 校准锚点年后的前瞻方向为增量压缩
+    # compression(target)/compression(anchor)，否则等于 compression_factor。
+    # capture_rate 衍生计算必须用本字段而非绝对因子，避免重放历史压缩。
+    applied_compression: float = Field(
+        default=1.0, ge=0.0, le=1.0,
+        description="实际施加于 mean_spread 的压缩（前瞻=增量，历史/未校准=绝对）",
+    )
     capture_rate: float = Field(ge=0.0, le=1.0, description="BESS 价差捕获率")
 
 

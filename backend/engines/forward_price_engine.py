@@ -94,8 +94,16 @@ REGIONAL_VOLATILITY_FACTOR: Dict[str, float] = {
 }
 
 # 压缩公式参数
-COMPRESSION_STEEPNESS: float = 1.5       # 指数衰减陡度 (k)
-PSF_WEIGHT: float = 1.5                  # 价格设定频率权重 (w)
+# === 斜率标定记录（2026-07-28，spec: 压缩斜率修正）===
+# holdout TREND 层实测：旧 k=1.5 下模型隐含年压缩仅 -4%~-26%，而市场
+# 真实同比（Q2'25→Q2'26）达 -38%~-63%，gap 均值 +42pp。
+# 标定方法：用 Q1'25→Q1'26 实际同比（拟合窗口 ≤2026Q1，Q2 留作验证，
+# 拟合/验证分离）反推 k = -ln(actual_yoy)·rvf / (Δratio + w·Δpsf)：
+#   NSW1=2.66, QLD1=2.70, VIC1=2.60, TAS1=1.77, SA1=0.77(离群，由 rvf=2.30 吸收)
+# 三个主区域高度一致，取中位数 2.6。副作用：绝对 compression 变小会同时
+# 降低 capture_rate（=BASE×comp^0.5），收入路径另行评估。
+COMPRESSION_STEEPNESS: float = 2.6       # 指数衰减陡度 (k)，Q1 同比标定
+PSF_WEIGHT: float = 1.5                  # 价格设定频率权重 (w)，未重标（与 k 耦合，只动单参数）
 
 # 价格设定频率已知数据点（NEM 全市场）
 PSF_DATA_POINTS: List[tuple] = [
@@ -107,7 +115,13 @@ PSF_DATA_POINTS: List[tuple] = [
 # 价格设定频率逻辑斯蒂增长参数
 PSF_MAX: float = 0.70          # 最大上限 70%
 PSF_GROWTH_RATE: float = 0.8   # 逻辑斯蒂增长速率
-PSF_MIDPOINT: float = 2027.0   # 增长曲线中点年份
+# 平台期 artifact 修正（2026-07-28）：旧 midpoint=2027 使 logistic 在 2026.25
+# 处仅 0.31，低于最后数据点 0.41，外推被 max(last_v, logistic) 钉在 0.41
+# 直到 2028 才恢复增长（Δpsf 2026→2027 几乎为零，是 TREND 斜率不足的
+# 主因之一）。现由连续性条件反解：logistic(2026.25)=0.41
+# → t0 = 2026.25 + ln((PSF_MAX-0.41)/0.41)/PSF_GROWTH_RATE ≈ 2025.82，
+# 曲线在最后数据点处无缝衔接并继续增长（纯结构修正，非数据拟合）。
+PSF_MIDPOINT: float = 2025.82  # 增长曲线中点年份（连续性反解，原 2027.0）
 
 # Base capture rate for BESS arbitrage
 BASE_CAPTURE_RATE: float = 0.55
@@ -379,6 +393,11 @@ class ForwardPriceEngine:
         self.event_registry: EventRegistry = self._load_event_registry()
         # ML 校准（如果可用）- 存储在实例级别，不修改全局常量
         self._calibrated_spreads: Dict[str, Dict[str, float]] = {}
+        # 校准锚点年：ML base 所处的年份。ML 校准的 base 是“当前已实现”
+        # 价差（已含截至锚点年的全部饱和压缩），前瞻预测时只应施加
+        # 锚点年 → 目标年的增量压缩；未校准（硬编码 2024 base）时为 None，
+        # 保持绝对压缩的旧语义。见 calculate_price_distribution。
+        self._calibration_anchor_year: Optional[int] = None
         self._calibration = self._try_ml_calibration()
 
     def _try_ml_calibration(self) -> dict:
@@ -392,26 +411,32 @@ class ForwardPriceEngine:
             result = engine.calibrate()
 
             if result and engine.calibration_metadata.get("status") == "calibrated":
-                # 校准质量可接受，存储校准值到实例（不修改全局常量）
+                # 校准质量可接受，先在临时容器构建校准值，全部成功后才原子性
+                # 地赋给实例，避免中途异常留下“状态 failed 但校准值已生效”
+                # 的僵尸状态（历史 bug：日志格式化 None MAE 崩溃就触发过）。
                 # ML 模型预测的是 rolling_30d_spread（30 天滚动平均价差，$80-200 量级）
                 # 与 ForwardPriceEngine 的 mean_spread 是同一个指标，无需缩放
 
+                pending_spreads: Dict[str, Dict[str, float]] = {}
                 for region, params in result.items():
                     if region in BASE_SPREAD_PARAMS and isinstance(params, dict):
-                        self._calibrated_spreads[region] = {}
+                        pending_spreads[region] = {}
                         if "base_spread" in params:
                             calibrated_spread = params["base_spread"]
                             # 限制在合理范围 [40, 300]
                             calibrated_spread = max(40.0, min(300.0, calibrated_spread))
-                            self._calibrated_spreads[region]["mean_spread"] = calibrated_spread
+                            pending_spreads[region]["mean_spread"] = calibrated_spread
                         if "spike_frequency" in params:
-                            self._calibrated_spreads[region]["spike_frequency"] = params[
+                            pending_spreads[region]["spike_frequency"] = params[
                                 "spike_frequency"
                             ]
 
-                logger.info(
-                    f"ML calibration applied: MAE={engine.calibration_metadata['validation_mae']:.1f}"
-                )
+                mae = engine.calibration_metadata.get("validation_mae")
+                mae_text = f"{mae:.1f}" if isinstance(mae, (int, float)) else "n/a"
+                logger.info(f"ML calibration applied: MAE={mae_text}")
+                self._calibrated_spreads = pending_spreads
+                # ML base 取自最近 30 天特征 → 锚点年即当前年
+                self._calibration_anchor_year = date.today().year
                 return engine.get_calibration_status()
             elif result:
                 logger.warning("ML calibration quality too low, using defaults")
@@ -421,6 +446,9 @@ class ForwardPriceEngine:
                 return engine.get_calibration_status()
         except Exception as e:
             logger.warning(f"ML calibration failed: {e}, using defaults")
+            # 确保失败时不残留任何部分校准值
+            self._calibrated_spreads = {}
+            self._calibration_anchor_year = None
             return {"status": "failed", "error": str(e)}
 
     def _get_spread_params(self, region: str) -> Dict[str, float]:
@@ -1095,17 +1123,51 @@ class ForwardPriceEngine:
             bess_capacity_ratio, sensitivity, psf, rvf
         )
 
-        # Apply compression to mean spread
-        mean_spread *= compression_factor
+        # Apply compression to mean spread.
+        #
+        # 双重计数修正（2026-07-28）：绝对压缩因子的语义是“把无压缩基准
+        # 压到目标年”，适用于硬编码的 2024 历史 base。但 ML 校准的 base 是
+        # “当前已实现”价差，已含截至锚点年的全部压缩，再乘绝对因子会把
+        # 历史压缩重放一遍（holdout 样本外实测：五区系统性低估 ~40%）。
+        # 修正：前瞻方向（target >= anchor）改用增量压缩
+        # compression(target)/compression(anchor)，只施加锚点年之后新增的
+        # 饱和压缩；历史对照方向（target < anchor）与未校准路径保持旧语义。
+        # 注：PriceDistribution.compression_factor 仍报告目标年的绝对饱和度
+        # （供 capture_rate 与下游解读），仅 mean_spread 的施加方式改变。
+        anchor_year = getattr(self, "_calibration_anchor_year", None)
+        if anchor_year is not None and year >= anchor_year:
+            anchor_capacity = self._get_cumulative_bess_capacity(
+                region, scenario, anchor_year
+            )
+            anchor_peak = self._get_dynamic_peak_demand(region, anchor_year)
+            anchor_ratio = anchor_capacity / anchor_peak if anchor_peak else 0.0
+            anchor_psf = self._get_price_setting_frequency(anchor_year)
+            compression_anchor = self._compute_compression_factor(
+                anchor_ratio, sensitivity, anchor_psf, rvf
+            )
+            incremental = (
+                compression_factor / compression_anchor
+                if compression_anchor > 0
+                else compression_factor
+            )
+            # 未来饱和只增不减 → 增量压缩限在 (0.05, 1.0]
+            applied_compression = max(0.05, min(1.0, incremental))
+        else:
+            applied_compression = compression_factor
+        mean_spread *= applied_compression
 
-        # Capture rate decreases with BESS penetration
-        capture_rate = BASE_CAPTURE_RATE * (compression_factor ** 0.5)
+        # Capture rate decreases with BESS penetration.
+        # 与 mean_spread 同口径使用 applied_compression：capture 的衰减同样
+        # 只应反映锚点年之后新增的竞争压力。绝对因子会重放历史压缩（k 标定
+        # 后尤其严重：绝对路径下 2026 capture 仅 0.20-0.26，市场实际 ~0.65）。
+        capture_rate = BASE_CAPTURE_RATE * (applied_compression ** 0.5)
 
         # Clamp outputs to valid ranges (Property 17)
         mean_spread = max(0.0, min(10000.0, mean_spread))
         std_dev = max(0.0, min(5000.0, std_dev))
         spike_frequency = max(0.0, min(1.0, spike_frequency))
         compression_factor = max(0.0, min(1.0, compression_factor))
+        applied_compression = max(0.0, min(1.0, applied_compression))
         capture_rate = max(0.0, min(1.0, capture_rate))
 
         return PriceDistribution(
@@ -1116,6 +1178,7 @@ class ForwardPriceEngine:
             std_dev=std_dev,
             spike_frequency=spike_frequency,
             compression_factor=compression_factor,
+            applied_compression=applied_compression,
             capture_rate=capture_rate,
         )
 
@@ -1330,8 +1393,10 @@ class ForwardPriceEngine:
                 fleet_size += 1
 
         # Compute updated capture_rate using new formula (Req 2.2)
+        # 用 applied_compression（前瞻=增量）而非绝对 compression_factor，
+        # 与 mean_spread 口径一致，避免 capture 重放历史压缩。
         capture_rate = self._compute_capture_rate(
-            compression_factor=dist.compression_factor,
+            compression_factor=dist.applied_compression,
             year=year,
             bess_capacity_ratio=bess_capacity_ratio,
             fleet_size=fleet_size,
@@ -1574,12 +1639,18 @@ class ForwardPriceEngine:
     def validate_against_benchmarks(self) -> Dict:
         """对比模型输出与 Modo Energy 基准数据。
 
+        .. deprecated:: 2026-07-28 语义失效，仅供参考，不应作为验收闸门。
+            两个无法在现架构下自洽的缺陷：
+            1) 循环验证：季节乘子/RVF 曾在本基准上网格搜索调参，再用同一
+               基准打分无证据价值；
+            2) 锚点语义错位：ML 校准后 base 是“当前（锚点年）已实现”价差，
+               对 2024/2025 等历史期间拿当前 base 配绝对压缩回放历史，数字
+               无法解读（实测历史期间 -30%~-63%、锚点年窗口 +45%~+224%）。
+            现行有效验证 = scripts/validate_holdout_spread.py（LEVEL+TREND 双层，
+            真实市场价格、拟合/验证分离）。收入口径的重建待后续任务。
+
         使用 Modo Energy 一致的假设（capture_rate=0.65, duration=4h 线性, RTE=0.87）
         计算模型收入。mean_spread 来自引擎的 calculate_price_distribution（含 ML 校准）。
-
-        注意：此方法验证的是 mean_spread 预测的准确性，而非前瞻收入公式。
-        前瞻收入公式（新 capture_rate、duration_efficiency）是为未来预测设计的，
-        不适用于与历史基准对比。
 
         Returns:
             {
@@ -1587,6 +1658,7 @@ class ForwardPriceEngine:
                              "benchmark_revenue": float, "deviation_pct": float}],
                 "all_within_threshold": bool,
                 "max_deviation_pct": float,
+                "deprecated": True,
             }
         """
         evidence_path = DATA_DIR / "financial_evidence.json"
@@ -1794,6 +1866,8 @@ class ForwardPriceEngine:
             "results": results,
             "all_within_threshold": all_within,
             "max_deviation_pct": round(max_deviation, 1),
+            # 语义已失效（循环验证 + 锚点错位），见 docstring deprecated 说明
+            "deprecated": True,
         }
 
     # -------------------------------------------------------------------------
