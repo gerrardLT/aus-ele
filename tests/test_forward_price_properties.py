@@ -171,21 +171,24 @@ class TestEventImpactMultiplicativeComposition:
     def test_spread_equals_base_times_product_of_impacts(
         self, region: str, impact_factors: list
     ):
-        """Final spread = base_spread × Π(impact_factors) for applicable events."""
-        base_spread = BASE_SPREAD_PARAMS[region]["mean_spread"]
+        """Event impacts compose multiplicatively relative to no-event baseline.
 
-        # Create events all in the same region, all with future dates that
-        # will be effective by target year
+        修正（2026-07-28）：旧断言假设 ratio=0 时 compression=1，但 PSF 项
+        不依赖 ratio，导致 compression<1。改用比值法（有事件/无事件）隔离
+        事件乘性效应，与压缩无关。同时改用 NETWORK_AUGMENTATION 事件类型
+        （无煤退衰减/情景调整/交互效应）以纯粹测试乘性组合性质。
+        """
         today = date.today()
         target_year = today.year + 10
+
+        # 使用 NETWORK_AUGMENTATION：无衰减、无情景调整、无交互效应
         events = []
         for i, factor in enumerate(impact_factors):
-            # Events dated 1-5 years from now (all before target_year)
             event_date = today + timedelta(days=365 * (i + 1))
             events.append(
                 SupplyDemandEvent(
-                    event_type=EventType.COAL_CLOSURE,
-                    name=f"Test Coal {i}",
+                    event_type=EventType.NETWORK_AUGMENTATION,
+                    name=f"Test Event {i}",
                     region=region,
                     expected_date=event_date,
                     capacity_mw=500.0,
@@ -194,25 +197,29 @@ class TestEventImpactMultiplicativeComposition:
                 )
             )
 
-        # Create engine with custom event registry
-        engine = ForwardPriceEngine.__new__(ForwardPriceEngine)
-        engine.event_registry = EventRegistry(events=events, last_updated=today)
-
-        # Calculate with zero BESS ratio to isolate event impact
-        dist = engine.calculate_price_distribution(
-            region=region,
-            scenario=ScenarioType.CENTRAL,
-            year=target_year,
-            bess_capacity_ratio=0.0,
+        # 基线：无事件
+        engine_base = ForwardPriceEngine.__new__(ForwardPriceEngine)
+        engine_base.event_registry = EventRegistry(events=[], last_updated=today)
+        dist_base = engine_base.calculate_price_distribution(
+            region=region, scenario=ScenarioType.CENTRAL,
+            year=target_year, bess_capacity_ratio=0.0,
         )
 
-        # Expected: base × product of all impact factors
-        # With bess_capacity_ratio=0, compression_factor=1.0
-        expected_spread = base_spread * math.prod(impact_factors)
-        # Clamp to valid range
-        expected_spread = max(0.0, min(10000.0, expected_spread))
+        # 有事件
+        engine = ForwardPriceEngine.__new__(ForwardPriceEngine)
+        engine.event_registry = EventRegistry(events=events, last_updated=today)
+        dist = engine.calculate_price_distribution(
+            region=region, scenario=ScenarioType.CENTRAL,
+            year=target_year, bess_capacity_ratio=0.0,
+        )
 
-        assert math.isclose(dist.mean_spread, expected_spread, rel_tol=1e-6)
+        # 性质：比值 == 因子乘积（乘性组合，与压缩无关）
+        expected_ratio = math.prod(impact_factors)
+        actual_ratio = (
+            dist.mean_spread / dist_base.mean_spread
+            if dist_base.mean_spread > 0 else 1.0
+        )
+        assert math.isclose(actual_ratio, expected_ratio, rel_tol=1e-6)
 
     @given(
         region=valid_region(),
@@ -220,13 +227,16 @@ class TestEventImpactMultiplicativeComposition:
     )
     @settings(max_examples=100)
     def test_single_event_impact_is_multiplicative(self, region: str, factor: float):
-        """A single event multiplies the base spread by its impact factor."""
-        base_spread = BASE_SPREAD_PARAMS[region]["mean_spread"]
+        """A single event multiplies the spread by its factor (ratio method).
+
+        修正（2026-07-28）：同 test_spread_equals_base_times_product_of_impacts，
+        改用比值法 + NETWORK_AUGMENTATION 事件类型。
+        """
         today = date.today()
         target_year = today.year + 5
 
         event = SupplyDemandEvent(
-            event_type=EventType.COAL_CLOSURE,
+            event_type=EventType.NETWORK_AUGMENTATION,
             name="Single Test Event",
             region=region,
             expected_date=today + timedelta(days=365),
@@ -235,19 +245,28 @@ class TestEventImpactMultiplicativeComposition:
             spread_impact_factor=factor,
         )
 
-        engine = ForwardPriceEngine.__new__(ForwardPriceEngine)
-        engine.event_registry = EventRegistry(events=[event], last_updated=today)
-
-        dist = engine.calculate_price_distribution(
-            region=region,
-            scenario=ScenarioType.CENTRAL,
-            year=target_year,
-            bess_capacity_ratio=0.0,
+        # 基线：无事件
+        engine_base = ForwardPriceEngine.__new__(ForwardPriceEngine)
+        engine_base.event_registry = EventRegistry(events=[], last_updated=today)
+        dist_base = engine_base.calculate_price_distribution(
+            region=region, scenario=ScenarioType.CENTRAL,
+            year=target_year, bess_capacity_ratio=0.0,
         )
 
-        expected = base_spread * factor
-        expected = max(0.0, min(10000.0, expected))
-        assert math.isclose(dist.mean_spread, expected, rel_tol=1e-6)
+        # 有事件
+        engine = ForwardPriceEngine.__new__(ForwardPriceEngine)
+        engine.event_registry = EventRegistry(events=[event], last_updated=today)
+        dist = engine.calculate_price_distribution(
+            region=region, scenario=ScenarioType.CENTRAL,
+            year=target_year, bess_capacity_ratio=0.0,
+        )
+
+        # 性质：比值 == factor
+        actual_ratio = (
+            dist.mean_spread / dist_base.mean_spread
+            if dist_base.mean_spread > 0 else 1.0
+        )
+        assert math.isclose(actual_ratio, factor, rel_tol=1e-6)
 
 
 # ---------------------------------------------------------------------------
