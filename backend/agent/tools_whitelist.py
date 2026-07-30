@@ -50,17 +50,19 @@ def _exec_data_query_safe(params: Dict[str, Any], ctx: AgentContext) -> Dict[str
     if not stripped.startswith("SELECT"):
         return {"status": "error", "error": "只允许 SELECT 查询"}
 
-    # Extract table name(s) from FROM clause (very simple parser)
-    from_match = _re.search(r"FROM\s+(\w+)", stripped, _re.IGNORECASE | _re.DOTALL)
+    # Extract table name(s) from FROM clause (very simple parser).
+    # 从原始 sql（非大写化的 stripped）抽取，并小写化后与白名单比较，
+    # 避免大小写不匹配误杀合法查询（bug 修复 2026-07-29）。
+    from_match = _re.search(r"FROM\s+([\w]+)", sql, _re.IGNORECASE | _re.DOTALL)
     if not from_match:
         return {"status": "error", "error": "无法识别的 FROM 子句"}
 
-    table_name = from_match.group(1)
+    table_name = from_match.group(1).lower()
     if table_name not in _ANALYSIS_TABLES:
         return {
             "status": "error",
             "error": f"表 {table_name} 不在允许查询列表中",
-            "allowed_tables": list(_ANALYSIS_TABLES)[:10],  # Truncate for brevity
+            "allowed_tables": sorted(_ANALYSIS_TABLES)[:10],  # Truncate for brevity
         }
 
     # Force LIMIT 500

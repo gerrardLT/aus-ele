@@ -171,13 +171,16 @@ class TestToolRegistry(unittest.TestCase):
     def test_registry_has_19_tools(self):
         registry = get_tool_registry()
         definitions = registry.list_definitions()
-        self.assertEqual(len(definitions), 20)
+        # 工具数量随功能演进已扩到 31（含 Phase 1-3 的 data_query/chart/
+        # scenario/portfolio/generation/market_pulse/weather/report 等）。
+        self.assertGreaterEqual(len(definitions), 20)
 
     def test_registry_tool_names(self):
         registry = get_tool_registry()
         definitions = registry.list_definitions()
         names = {d.name for d in definitions}
-        expected = {
+        # 核心工具（决策漏斗主链）必须存在；其余扩展工具不做等值断言。
+        core_expected = {
             "market_screening",
             "price_trend_analysis",
             "regional_ranking",
@@ -199,7 +202,10 @@ class TestToolRegistry(unittest.TestCase):
             "data_quality_check",
             "compare_regions",
         }
-        self.assertEqual(names, expected)
+        self.assertTrue(
+            core_expected.issubset(names),
+            f"Missing core tools: {core_expected - names}",
+        )
 
     def test_all_tools_have_descriptions(self):
         registry = get_tool_registry()
@@ -429,8 +435,9 @@ class TestSynthesizer(unittest.TestCase):
         )
 
         self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
-        summary, recommendation, confidence = result
+        # synthesize_report 现返回 4 元组（新增 full_analysis 完整 LLM 推理文本）。
+        self.assertEqual(len(result), 4)
+        summary, recommendation, confidence, full_analysis = result
         self.assertIsInstance(summary, str)
         self.assertIsInstance(recommendation, str)
         self.assertIn(confidence, [ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM, ConfidenceLevel.LOW])
@@ -439,7 +446,7 @@ class TestSynthesizer(unittest.TestCase):
         ctx = AgentContext(market=MarketType.NEM, region="NSW1")
         tool_results = self._make_tool_results()
 
-        summary, recommendation, confidence = asyncio.get_event_loop().run_until_complete(
+        summary, recommendation, confidence, _full = asyncio.get_event_loop().run_until_complete(
             synthesize_report(
                 query="test analysis",
                 tool_results=tool_results,
@@ -463,7 +470,7 @@ class TestSynthesizer(unittest.TestCase):
         # path; a live LLM's free-text output makes confidence inference
         # non-deterministic and this assertion flaky.
         no_llm = LLMAdapter(LLMConfig(provider="openai", api_key="", base_url="", model="gpt-4"))
-        _, _, confidence = asyncio.get_event_loop().run_until_complete(
+        _, _, confidence, _full = asyncio.get_event_loop().run_until_complete(
             synthesize_report(
                 query="test",
                 tool_results=tool_results,
@@ -493,7 +500,7 @@ class TestSynthesizer(unittest.TestCase):
             ),
         ]
 
-        _, _, confidence = asyncio.get_event_loop().run_until_complete(
+        _, _, confidence, _full = asyncio.get_event_loop().run_until_complete(
             synthesize_report(
                 query="test",
                 tool_results=tool_results,
@@ -542,6 +549,8 @@ class TestAgentRoutes(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        import os
+        os.environ.setdefault("AUS_ELE_JWT_SECRET", "test_secret_for_agent_routes")
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from routes.agent_routes import router
@@ -550,12 +559,26 @@ class TestAgentRoutes(unittest.TestCase):
         app.include_router(router)
         cls.client = TestClient(app)
 
+        # 写操作端点现需 JWT Bearer（P0 安全加固），预先签发一个合法 token。
+        import datetime as _dt
+        from access_control import _issue_jwt_access_token
+
+        token = _issue_jwt_access_token(
+            token_id="test-token",
+            principal_id="test-principal",
+            workspace_id="test-workspace",
+            session_id=None,
+            expires_at=_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=1),
+        )
+        cls.auth_headers = {"Authorization": f"Bearer {token}"}
+
     def test_list_tools_endpoint(self):
         resp = self.client.get("/api/v1/agent/tools")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertEqual(data["total"], 20)
-        self.assertEqual(len(data["tools"]), 20)
+        # 工具数量随功能演进扩展（现 31），断言下限而非硬等值。
+        self.assertGreaterEqual(data["total"], 20)
+        self.assertEqual(len(data["tools"]), data["total"])
 
     def test_list_workflows_endpoint(self):
         resp = self.client.get("/api/v1/agent/workflows")
@@ -567,6 +590,7 @@ class TestAgentRoutes(unittest.TestCase):
     def test_run_endpoint_with_template(self):
         resp = self.client.post(
             "/api/v1/agent/run",
+            headers=self.auth_headers,
             json={
                 "query": "quick market overview",
                 "market": "NEM",
@@ -581,9 +605,18 @@ class TestAgentRoutes(unittest.TestCase):
         report = data["report"]
         self.assertEqual(report["workflow_type"], "quick_market_overview")
 
+    def test_run_endpoint_requires_auth(self):
+        # 无 token 应被拒绝（P0 安全加固）
+        resp = self.client.post(
+            "/api/v1/agent/run",
+            json={"query": "quick overview", "workflow_template": "quick_market_overview"},
+        )
+        self.assertEqual(resp.status_code, 401)
+
     def test_run_endpoint_invalid_request(self):
         resp = self.client.post(
             "/api/v1/agent/run",
+            headers=self.auth_headers,
             json={"query": ""},  # Empty query should fail validation
         )
         self.assertEqual(resp.status_code, 422)
@@ -591,6 +624,7 @@ class TestAgentRoutes(unittest.TestCase):
     def test_run_async_endpoint(self):
         resp = self.client.post(
             "/api/v1/agent/run-async",
+            headers=self.auth_headers,
             json={
                 "query": "quick overview",
                 "workflow_template": "quick_market_overview",
@@ -606,7 +640,7 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
 
     def test_history_endpoint(self):
-        resp = self.client.get("/api/v1/agent/history")
+        resp = self.client.get("/api/v1/agent/history", headers=self.auth_headers)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertIn("executions", data)

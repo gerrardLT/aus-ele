@@ -11,6 +11,7 @@ Defines the core data structures for the AI Agent workflow orchestration system:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
@@ -173,12 +174,13 @@ class ToolResult(BaseModel):
                 "content": content_str,
             }
 
-        # Structured summary for dict results
-        summary = self._summarize_dict(content, max_chars=max_chars)
+        # Structured summary for dict results（_summarize_dict 已返回 JSON 字符串，
+        # 直接作为 content，不可再 dumps 一次造成双重序列化/转义）
+        summary_str = self._summarize_dict(content, max_chars=max_chars)
         return {
             "role": "tool",
             "tool_call_id": self.call_id,
-            "content": json.dumps(summary, ensure_ascii=False, indent=2),
+            "content": summary_str,
         }
 
     def _summarize_dict(self, data: dict, max_chars: int = 3000) -> str:

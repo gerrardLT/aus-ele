@@ -470,11 +470,14 @@ def _exec_wem_ess_analysis(db, region: str, capacity_mw: float) -> Dict[str, Any
         gross_revenue = avg_price * capacity_mw * total_duration
         total_gross_revenue += gross_revenue
         
-        # Opportunity cost: opportunity_price = max(median_energy_price - market_price, 0) for each interval
-        # Simplified: assume ~20% of arbitrage value lost (similar to NEM estimate)
-        avg_energy_for_pos = sum([float(row.get('energy_price') or 0.0) 
-                                  for row, _ in zip(rows, positive_prices)], 0)[:len(positive_prices)]
-        avg_energy = median(avg_energy_for_pos) if avg_energy_for_pos else 0.0
+        # Opportunity cost：粗略估计——用该服务有价区间的能量价与全窗口中位价的
+        # 偏离度 × 20% 保守因子，近似预留容量损失的套利价值
+        pos_energy_prices = [
+            float(row.get('energy_price') or 0.0)
+            for row, p in zip(rows, prices)
+            if p > 0
+        ]
+        avg_energy = median(pos_energy_prices) if pos_energy_prices else 0.0
         opportunity_price = max(abs(median_energy_price - avg_energy), 0.0) * 0.2  # Conservative 20% factor
         opportunity_cost = opportunity_price * capacity_mw * total_duration
         net_revenue = gross_revenue - opportunity_cost
@@ -736,14 +739,56 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
         revenue_baseline_mode="co_optimized",
     )
 
-    # Get baseline arbitrage + FCAS revenues (simplified: use current year avg spread)
-    # In production, this would call the real investment service to get backtest baseline
-    # For now, estimate rough baseline:
-    baseline_arbitrage = power_mw * 30000  # Rough: $30k/MW/yr arbitrage (placeholder)
-    baseline_fcas = power_mw * 10000  # Rough: $10k/MW/yr FCAS (placeholder)
+    # 收入底座：用目标年真实价格估算套利/FCAS 基线（非占位拍脑袋），
+    # 财务计算（退化/增强/NPV/IRR/回收期）则全部交给主管线 FinancialModel。
+    from deps import get_db
 
-    annual_cycles_history = [350] * 20  # 350 cycles/yr for 20 years
-    dod_severity_history = [1.0] * 20  # Full-depth cycles
+    db = get_db()
+    safe_yr = _safe_year(year)
+    table_name = f"trading_price_{safe_yr}"
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT rrp_aud_mwh FROM {table_name} "
+            f"WHERE region_id = ? ORDER BY settlement_date ASC",
+            (region,),
+        )
+        prices = [float(r[0] or 0.0) for r in cursor.fetchall()]
+
+    if not prices:
+        return {"region": region, "year": year, "status": "no_data"}
+
+    # 日内窗口价差估算（与主管线 peak-analysis 同思路的简化版）
+    sorted_p = sorted(prices)
+    n = len(sorted_p)
+    intervals_per_day = 48 if region == "WEM" else 288
+    window_per_day = max(1, int(duration_hours * (intervals_per_day / 24)))
+    window = max(1, min(window_per_day * 365, n // 4))
+    spread = sum(sorted_p[-window:]) / window - sum(sorted_p[:window]) / window
+
+    annual_cycles = 350.0
+    rte = 0.87
+    baseline_arbitrage = spread * power_mw * duration_hours * annual_cycles * rte
+
+    # FCAS 基线：用目标年真实 reg FCAS 均价估算（WEM 无此列时为 0）
+    baseline_fcas = 0.0
+    try:
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT AVG(raisereg_rrp), AVG(lowerreg_rrp) FROM {table_name} "
+                f"WHERE region_id = ? AND raisereg_rrp IS NOT NULL AND raisereg_rrp > 0",
+                (region,),
+            )
+            fcas_row = cursor.fetchone()
+            if fcas_row and fcas_row[0]:
+                avg_fcas_price = (float(fcas_row[0] or 0) + float(fcas_row[1] or 0)) / 2
+                baseline_fcas = avg_fcas_price * (power_mw * 0.3) * (6 * 365) * 0.5
+    except Exception:
+        pass
+
+    annual_cycles_history = [annual_cycles] * 20
+    dod_severity_history = [1.0] * 20
 
     scenario = ScenarioConfig(
         name="base",
@@ -773,8 +818,14 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
                 "irr_pct": round(float(result.metrics.irr) * 100, 2) if result.metrics.irr else None,
                 "roi_pct": round(result.metrics.roi_pct, 2),
                 "payback_years": round(result.metrics.payback_years, 1) if result.metrics.payback_years else None,
+                "baseline_arbitrage_aud_yr": round(baseline_arbitrage, 0),
+                "baseline_fcas_aud_yr": round(baseline_fcas, 0),
+                "avg_spread_aud_mwh": round(spread, 2),
                 "model_type": "financial_model_pipeline",
-                "note": "Now uses main backend financial_model pipeline with full degradation/cost modeling",
+                "note": (
+                    "财务计算由主管线 FinancialModel.run_scenario 完成（含退化/增强/费用）；"
+                    "收入底座为目标年真实价格的简化窗口估算，非完整回测，方向参考级"
+                ),
             },
         }
 
