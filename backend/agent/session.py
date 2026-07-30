@@ -29,16 +29,26 @@ class SessionMemory:
         # session_id -> (last_access_time, entries list)
         self._store: Dict[str, tuple] = {}
 
-    def put(self, session_id: str, tool_name: str, args: Dict[str, Any], summary: str) -> None:
-        """Store a compacted tool result for the session."""
+    def put(self, session_id: str, tool_name: str, args: Dict[str, Any], summary: str,
+            data_version: str = "unknown") -> None:
+        """Store a compacted tool result for the session.
+
+        Args:
+            session_id: Conversation session ID.
+            tool_name: Name of the tool.
+            args: Tool arguments (will be hashed).
+            summary: Result summary (truncated to 500 chars).
+            data_version: Current data version (e.g. '2026'). Cache entries with different
+                versions are treated as separate entries (prevents stale cache after data sync).
+        """
         if not session_id:
             return
 
         self._evict_expired()
 
-        args_hash = hashlib.md5(
-            json.dumps(args, sort_keys=True, default=str).encode()
-        ).hexdigest()[:12]
+        # Hash includes both args AND data_version to invalidate on data sync
+        hash_input = json.dumps({"args": args, "data_version": data_version}, sort_keys=True, default=str)
+        args_hash = hashlib.md5(hash_input.encode()).hexdigest()[:12]
 
         entry = SessionMemoryEntry(
             tool_name=tool_name,
@@ -78,14 +88,14 @@ class SessionMemory:
             lines.append(f"- {e.tool_name}: {e.result_summary}")
         return "\n".join(lines)
 
-    def has_result(self, session_id: str, tool_name: str, args: Dict[str, Any]) -> bool:
-        """Check if a tool result already exists in the session."""
+    def has_result(self, session_id: str, tool_name: str, args: Dict[str, Any],
+                   data_version: str = "unknown") -> bool:
+        """Check if a tool result already exists in the session (version-aware)."""
         if not session_id or session_id not in self._store:
             return False
 
-        args_hash = hashlib.md5(
-            json.dumps(args, sort_keys=True, default=str).encode()
-        ).hexdigest()[:12]
+        hash_input = json.dumps({"args": args, "data_version": data_version}, sort_keys=True, default=str)
+        args_hash = hashlib.md5(hash_input.encode()).hexdigest()[:12]
 
         _, entries = self._store[session_id]
         return any(e.tool_name == tool_name and e.arguments_hash == args_hash for e in entries)

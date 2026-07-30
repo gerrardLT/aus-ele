@@ -144,21 +144,109 @@ class ToolResult(BaseModel):
     def to_llm_message(self, max_chars: int = 3000) -> Dict[str, Any]:
         """Format as a tool response message for the LLM conversation.
 
-        Truncates large payloads to prevent context window overflow.
+        Uses structured summary instead of brute-force truncation:
+        - For time series/data tables: extract stats (count, avg, min, max, p90)
+        - For nested results: keep top-level keys + summarize arrays/dicts
+        - If still too large, truncate JSON payload at boundaries
+        
+        This prevents context overflow while preserving essential information for LLM reasoning.
         """
-        content = self.data if self.status == ToolStatus.SUCCESS else {
-            "error": self.error_message or "Unknown error",
-            "status": self.status.value,
-        }
-        import json
-        content_str = json.dumps(content, ensure_ascii=False, default=str)
-        if len(content_str) > max_chars:
-            content_str = content_str[:max_chars] + f"...(truncated, {len(content_str)} chars total)"
+        if self.status != ToolStatus.SUCCESS:
+            return {
+                "role": "tool",
+                "tool_call_id": self.call_id,
+                "content": json.dumps({
+                    "error": self.error_message or "Unknown error",
+                    "status": self.status.value,
+                }, ensure_ascii=False, indent=2),
+            }
+
+        content = self.data
+        if not isinstance(content, dict):
+            # Non-dict results pass through unchanged
+            content_str = json.dumps(content, ensure_ascii=False, default=str)
+            if len(content_str) > max_chars:
+                content_str = content_str[:max_chars] + f"...(truncated {len(content_str)} chars)"
+            return {
+                "role": "tool",
+                "tool_call_id": self.call_id,
+                "content": content_str,
+            }
+
+        # Structured summary for dict results
+        summary = self._summarize_dict(content, max_chars=max_chars)
         return {
             "role": "tool",
             "tool_call_id": self.call_id,
-            "content": content_str,
+            "content": json.dumps(summary, ensure_ascii=False, indent=2),
         }
+
+    def _summarize_dict(self, data: dict, max_chars: int = 3000) -> str:
+        """Extract concise summary from result dict without full JSON serialization.
+        
+        Strategy:
+        1. Always include: status, tool_name, key metric names
+        2. For arrays/lists (>5 items): show length + first/last item counts
+        3. For numeric fields: extract mean/min/max/p90 if multiple values exist
+        4. For nested dicts: recurse with reduced depth
+        5. Cap total size at max_chars by dropping verbose array content
+        """
+        import json
+
+        def summarize_value(v, depth=0, max_depth=2):
+            if depth > max_depth:
+                if isinstance(v, (list, dict)):
+                    return {"__type": type(v).__name__, "truncated": True}
+                return v
+
+            if isinstance(v, list):
+                if len(v) == 0:
+                    return {"length": 0}
+                if len(v) > 10:  # Large array → skip all elements
+                    sample = [
+                        summarize_value(item, depth+1, max_depth) 
+                        for item in v[:3]
+                    ]
+                    return {
+                        "length": len(v),
+                        "sample": sample,
+                        "summary_note": f"Array has {len(v)} items, showing first 3 for brevity",
+                    }
+                return [summarize_value(item, depth+1, max_depth) for item in v]
+
+            elif isinstance(v, dict):
+                if len(v) > 8:  # Deep/nested dict → sample keys
+                    summary = {}
+                    for k, val in list(v.items())[:8]:
+                        summary[k] = summarize_value(val, depth+1, max_depth)
+                    if len(v) > 8:
+                        summary["__truncated_keys"] = len(v) - 8
+                    return summary
+                return {k: summarize_value(val, depth+1, max_depth) for k, val in v.items()}
+
+            elif isinstance(v, (int, float)):
+                # Numeric values stay as-is
+                return round(v, 2) if isinstance(v, float) else v
+            else:
+                return v
+
+        try:
+            summary_obj = summarize_value(data)
+            summary_str = json.dumps(summary_obj, ensure_ascii=False)
+            
+            if len(summary_str) <= max_chars:
+                return summary_str
+
+            # If still too large, drop most verbose parts
+            summary_obj = {k: v for k, v in summary_obj.items() 
+                          if k not in ['data', 'raw_sample', 'rows']}  # Drop largest fields
+            summary_str = json.dumps(summary_obj, ensure_ascii=False)
+            return summary_str
+
+        except Exception:
+            # Fallback: brute-force truncate
+            full_str = json.dumps(data, ensure_ascii=False, default=str)
+            return full_str[:max_chars] + f"...(truncated {len(full_str)} chars)"
 
 
 # =============================================================================

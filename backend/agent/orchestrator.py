@@ -487,12 +487,18 @@ class AgentOrchestrator:
                 messages.append(result.to_llm_message())
             content_buf = ""  # avoid attributing prior reasoning to next tool
 
-            # Harness Agent: store successful results in session memory
+            # Harness Agent: store successful results in session memory (version-aware cache)
             if session_id:
-                for r in raw_results:
+                # Get current data version from context.params_override['data_version'] or compute default
+                data_version = context.params_override.get("data_version")
+                if not data_version:
+                    # Default: effective_year as string (e.g. '2026')
+                    data_version = str(context.effective_year)
+                
+                for r, merged_args in zip(raw_results, merged_args_list):
                     if not isinstance(r, Exception) and r.status == ToolStatus.SUCCESS:
                         summary = self._to_stage_result(r).summary or r.tool_name
-                        self.session_memory.put(session_id, r.tool_name, {}, summary)
+                        self.session_memory.put(session_id, r.tool_name, merged_args, summary, data_version)
 
         # Determine status
         success_count = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
