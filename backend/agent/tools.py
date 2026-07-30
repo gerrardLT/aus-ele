@@ -252,10 +252,12 @@ def _exec_regional_ranking(params: Dict[str, Any], ctx: AgentContext) -> Dict[st
     db = get_db()
     year = params.get("year", ctx.effective_year)
     payload = build_market_screening_payload(db, year=year)
-    # Filter to NEM regions only for ranking
-    candidates = payload.get("candidates", [])
+    # Filter to NEM regions only for ranking.
+    # bug 修复 2026-07-29：build_market_screening_payload 返回的键是 "items"，
+    # 之前误取 "candidates" 导致永远返回空列表（candidates=0）。
+    candidates = payload.get("items", [])
     nem_ranked = [c for c in candidates if c.get("market") == "NEM"]
-    return {"year": year, "ranking": nem_ranked}
+    return {"year": year, "ranking": nem_ranked, "total_candidates": len(candidates)}
 
 
 def _exec_spike_profit(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:

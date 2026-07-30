@@ -72,6 +72,21 @@ class AgentOrchestrator:
     }
     _CACHE_TTL_SECONDS = 300  # 5 minutes
 
+    # Per-tool timeout overrides (seconds). Heavy tools scan large tables or run
+    # MILP/backtests and legitimately exceed the default 30s under real data.
+    # market_screening/regional_ranking share the market-screening engine which
+    # aggregates a full year of 5-minute prices (~540k rows) across regions.
+    _HEAVY_TOOL_TIMEOUTS = {
+        "market_screening": 90.0,
+        "regional_ranking": 90.0,
+        "co_optimized_backtest": 90.0,
+        "investment_analysis": 60.0,
+    }
+
+    def _timeout_for(self, tool_name: str) -> float:
+        """Resolve the effective per-tool timeout (heavy tools get a longer budget)."""
+        return self._HEAVY_TOOL_TIMEOUTS.get(tool_name, self.tool_timeout)
+
     def __init__(
         self,
         llm: LLMAdapter,
@@ -761,7 +776,7 @@ class AgentOrchestrator:
                     arguments=merged_args_list[idx],
                     context=context,
                     call_id=response.tool_calls[idx]["id"],
-                    timeout_seconds=self.tool_timeout,
+                    timeout_seconds=self._timeout_for(response.tool_calls[idx]["name"]),
                 )
 
             raw_results = await asyncio.gather(
@@ -861,7 +876,7 @@ class AgentOrchestrator:
             arguments=arguments,
             context=context,
             call_id=call_id,
-            timeout_seconds=self.tool_timeout,
+            timeout_seconds=self._timeout_for(tool_name),
         )
 
         # Store in cache if successful
@@ -976,7 +991,7 @@ class AgentOrchestrator:
                 arguments=merged_args,
                 context=context,
                 call_id=call_id,
-                timeout_seconds=self.tool_timeout,
+                timeout_seconds=self._timeout_for(tool_name),
             )
             result.retry_count = attempt
 
