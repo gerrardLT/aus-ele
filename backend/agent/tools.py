@@ -23,6 +23,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from agent.schemas import AgentContext, ToolDefinition, ToolResult, ToolStatus
+from agent.tools_whitelist import _exec_data_query_safe
 
 logger = logging.getLogger(__name__)
 
@@ -359,28 +360,119 @@ def _exec_wem_ess_analysis(db, region: str, capacity_mw: float) -> Dict[str, Any
             "service_type": "ESS (Essential System Services)",
             "summary": {
                 "note": "WEM ESS 价格数据尚未导入，无法量化辅助服务收入",
-                "total_net_incremental_revenue_k": 0,
+                "total_net_incremental_revenue_k": 0.0,
                 "viable_service_count": 0,
             },
         }
 
+    # Calculate ESS service revenues similar to fcas_opportunity logic
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM wem_ess_market_price ORDER BY 1 DESC LIMIT 100")
+        cursor.execute("""
+            SELECT dispatch_interval, energy_price,
+                   regulation_raise_price, regulation_lower_price,
+                   contingency_raise_price, contingency_lower_price,
+                   rocof_price
+            FROM wem_ess_market_price 
+            ORDER BY dispatch_interval DESC 
+            LIMIT 1000  -- Use 1000 intervals for revenue estimation
+        """)
         columns = [desc[0] for desc in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
+    if not rows:
+        return {
+            "region": region,
+            "market": "WEM",
+            "has_fcas_data": True,
+            "service_type": "ESS (Essential System Services)",
+            "data_points": 0,
+            "summary": {"total_net_incremental_revenue_k": 0.0, "viable_service_count": 0},
+            "raw_sample": [],
+        }
+
+    from statistics import median
+    energy_prices = [float(row.get('energy_price') or 0.0) for row in rows]
+    median_energy_price = median(energy_prices) if energy_prices else 0.0
+    
+    # Calculate interval durations from timestamps
+    from datetime import datetime
+    def parse_ts(ts):
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except:
+            return None
+    
+    timestamps = [parse_ts(str(row.get('dispatch_interval', ''))) for row in rows]
+    intervals = []
+    valid_ts = [t for t in timestamps if t is not None]
+    for i in range(len(valid_ts) - 1):
+        delta_hrs = (valid_ts[i+1] - valid_ts[i]).total_seconds() / 3600.0
+        intervals.append(delta_hrs if delta_hrs > 0 else 0.5)  # Default 30min
+    intervals.append(0.5)  # Last interval default
+    
+    # ESS services mapping
+    ess_services = [
+        ('regulation_raise_price', 'Regulation Raise'),
+        ('regulation_lower_price', 'Regulation Lower'),
+        ('contingency_raise_price', 'Contingency Raise'),
+        ('contingency_lower_price', 'Contingency Lower'),
+        ('rocof_price', 'RoCoF'),
+    ]
+    
+    total_gross_revenue = 0.0
+    total_net_revenue = 0.0
+    viable_services = []
+    service_breakdown = []
+    
+    for price_col, service_name in ess_services:
+        prices = [float(row.get(price_col) or 0.0) for row in rows]
+        positive_prices = [(p, h) for p, h in zip(prices, intervals) if p > 0]
+        
+        if not positive_prices:
+            continue
+            
+        avg_price = sum(p for p, _ in positive_prices) / len(positive_prices)
+        total_duration = sum(h for _, h in positive_prices)
+        
+        # Gross revenue = avg_price * capacity_mw * total_duration
+        gross_revenue = avg_price * capacity_mw * total_duration
+        total_gross_revenue += gross_revenue
+        
+        # Opportunity cost: opportunity_price = max(median_energy_price - market_price, 0) for each interval
+        # Simplified: assume ~20% of arbitrage value lost (similar to NEM estimate)
+        avg_energy_for_pos = sum([float(row.get('energy_price') or 0.0) 
+                                  for row, _ in zip(rows, positive_prices)], 0)[:len(positive_prices)]
+        avg_energy = median(avg_energy_for_pos) if avg_energy_for_pos else 0.0
+        opportunity_price = max(abs(median_energy_price - avg_energy), 0.0) * 0.2  # Conservative 20% factor
+        opportunity_cost = opportunity_price * capacity_mw * total_duration
+        net_revenue = gross_revenue - opportunity_cost
+        total_net_revenue += net_revenue
+        
+        viable_services.append(service_name)
+        service_breakdown.append({
+            "service": service_name,
+            "average_price_aud_mwh": round(avg_price, 2),
+            "positive_intervals": len(positive_prices),
+            "gross_revenue_aud": round(gross_revenue, 2),
+            "net_revenue_aud": round(net_revenue, 2),
+        })
+    
     return {
         "region": region,
         "market": "WEM",
         "has_fcas_data": True,
         "service_type": "ESS (Essential System Services)",
         "data_points": len(rows),
+        "median_energy_price_aud_mwh": round(median_energy_price, 2),
         "summary": {
-            "note": "WEM ESS 数据量有限，结果仅供参考",
-            "total_net_incremental_revenue_k": 0,
-            "viable_service_count": 0,
+            "note": f"{len(viable_services)} active services analyzed over {len(rows)} intervals",
+            "total_gross_revenue_aud": round(total_gross_revenue, 2),
+            "total_net_incremental_revenue_aud": round(total_net_revenue, 2),
+            "viable_service_count": len(viable_services),
+            "services_analyzed": viable_services,
         },
+        "service_breakdown": service_breakdown[:5],  # Top 5 services
         "raw_sample": rows[:5],
     }
 
@@ -1523,13 +1615,13 @@ def build_tool_registry() -> ToolRegistry:
             parameters={
                 "type": "object",
                 "properties": {
-                    "sql": {"type": "string", "description": "SQL SELECT query to execute"},
+                    "sql": {"type": "string", "description": "SQL SELECT query to execute (whitelisted tables only)"},
                 },
                 "required": ["sql"],
             },
             stage="Data Exploration",
         ),
-        _exec_data_query,
+        _exec_data_query_safe,
     )
 
     registry.register(
