@@ -132,6 +132,11 @@ class LLMAdapter:
         self.config = config or LLMConfig.from_env()
         self._client = None
         self._available: Optional[bool] = None
+        # Live health-probe state (distinct from config-only _available).
+        self._health_ok: Optional[bool] = None
+        self._health_checked_at: float = 0.0
+        self._health_ttl: float = 300.0  # re-probe at most every 5 min
+        self.last_health_error: str = ""
 
     def is_available(self) -> bool:
         """Check if the LLM provider is configured and reachable.
@@ -157,6 +162,62 @@ class LLMAdapter:
                 bool(self.config.base_url),
             )
         return self._available
+
+    async def health_check(self, force: bool = False) -> bool:
+        """Actively probe LLM reachability with a minimal request.
+
+        Unlike :meth:`is_available` (config-only, synchronous), this sends a
+        tiny real request to detect auth/quota/network failures (e.g. a 403
+        from a proxy that is configured but not actually usable). The result
+        is cached for ``_health_ttl`` seconds to avoid probing on every run.
+
+        Args:
+            force: bypass the TTL cache and probe immediately.
+
+        Returns:
+            True if a live request succeeded recently; False otherwise.
+            ``last_health_error`` holds the reason on failure.
+        """
+        import time as _time
+
+        # Config-only gate first: no key/url means definitely unavailable.
+        if not self.is_available():
+            self._health_ok = False
+            self.last_health_error = "LLM provider not configured"
+            return False
+
+        # Serve cached probe result within TTL.
+        now = _time.perf_counter()
+        if (
+            not force
+            and self._health_ok is not None
+            and (now - self._health_checked_at) < self._health_ttl
+        ):
+            return self._health_ok
+
+        # Minimal probe request (1 token) — cheap connectivity/auth check.
+        try:
+            client = await self._get_client()
+            url = self._build_url()
+            headers = self._build_headers()
+            payload = {
+                "model": self.config.model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+                "temperature": 0.0,
+            }
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            self._health_ok = True
+            self.last_health_error = ""
+        except Exception as exc:  # noqa: BLE001 - probe must never raise
+            self._health_ok = False
+            self.last_health_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            logger.warning("LLM health probe failed: %s", self.last_health_error)
+        finally:
+            self._health_checked_at = _time.perf_counter()
+
+        return self._health_ok
 
     async def _get_client(self):
         """Lazy-initialize httpx.AsyncClient."""

@@ -138,13 +138,20 @@ class AgentOrchestrator:
             report = await self._run_template_mode(
                 query, context, template, execution_id, progress_callback
             )
-        elif self.llm.is_available():
-            # LLM-driven ReAct execution
+        elif await self.llm.health_check():
+            # LLM-driven ReAct execution (only when a LIVE probe succeeds;
+            # config-only availability is insufficient — a configured-but-403
+            # proxy would otherwise yield an empty FAILED report).
             report = await self._run_react_mode(
                 query, context, execution_id, progress_callback
             )
         else:
-            # Fallback: try to match a template from query keywords
+            # Fallback: try to match a template from query keywords.
+            if self.llm.last_health_error:
+                logger.warning(
+                    "Agent run %s: LLM unhealthy (%s), degrading to template mode",
+                    execution_id, self.llm.last_health_error,
+                )
             fallback_id = match_workflow_from_query(query)
             if fallback_id:
                 fallback_template = get_workflow_template(fallback_id)
@@ -157,6 +164,10 @@ class AgentOrchestrator:
                 report = await self._run_template_mode(
                     query, context, default_template, execution_id, progress_callback
                 )
+            # Surface the degradation reason in report metadata for transparency.
+            if self.llm.last_health_error and report is not None:
+                report.metadata["llm_degraded"] = True
+                report.metadata["llm_degraded_reason"] = self.llm.last_health_error
 
         # Finalize timing
         report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
@@ -209,11 +220,18 @@ class AgentOrchestrator:
                 # Will be injected into messages after they're built
                 pass  # stored for later injection
 
-        # Forced template or LLM unavailable -> stream template execution
-        # with per-tool events (keeps SSE connection alive).
+        # Forced template or LLM unhealthy -> stream template execution
+        # with per-tool events (keeps SSE connection alive). Uses a LIVE probe
+        # (not config-only) so a configured-but-403 proxy degrades gracefully.
         template = self._resolve_template(workflow_template_id, query)
-        if template is not None or not self.llm.is_available():
-            reason = "指定模板模式" if template is not None else "LLM 未配置，降级为模板模式"
+        llm_healthy = False if template is not None else await self.llm.health_check()
+        if template is not None or not llm_healthy:
+            if template is not None:
+                reason = "指定模板模式"
+            elif self.llm.last_health_error and self.llm.is_available():
+                reason = f"LLM 不可用（{self.llm.last_health_error}），降级为模板模式"
+            else:
+                reason = "LLM 未配置，降级为模板模式"
             yield {"type": "status", "message": reason}
 
             # Resolve template for fallback keyword matching

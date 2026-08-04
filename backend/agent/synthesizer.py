@@ -251,7 +251,7 @@ def _extract_key_findings(results: List[ToolResult]) -> List[str]:
         elif result.tool_name == "investment_analysis":
             res = data.get("results", {})
             npv = res.get("npv_aud")
-            payback = res.get("simple_payback_years")
+            payback = res.get("payback_years")
             if npv is not None:
                 findings.append(f"NPV {npv:,.0f} AUD")
             if payback is not None and payback < 30:
@@ -259,7 +259,7 @@ def _extract_key_findings(results: List[ToolResult]) -> List[str]:
 
         # Market screening findings
         elif result.tool_name == "market_screening":
-            candidates = data.get("candidates", [])
+            candidates = data.get("items", [])
             if candidates:
                 top = candidates[0]
                 findings.append(f"最优区域 {top.get('label', '?')} (评分 {top.get('overall_score', '?')})")
