@@ -18,13 +18,98 @@ Configuration via environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import os
+import random
+import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Retry utilities (exponential backoff with jitter)
+# =============================================================================
+
+_T = TypeVar("_T")
+
+# We retry transient errors: 429 Too Many Requests, 5xx server errors, and
+# connection failures (timeouts/network). Permanent errors (401/403) are NOT retried.
+_RETRYABLE_CODES = frozenset([429, 408]) | set(range(500, 600))
+_RETRYABLE_EXCEPTIONS = (asyncio.TimeoutError, ConnectionError, ConnectionResetError)
+
+
+async def _retry_with_backoff(
+    func: Callable[..., _T],
+    max_retries: int = 2,
+    base_delay: float = 1.0,
+    max_delay: float = 10.0,
+    jitter_factor: float = 0.3,
+    is_retryable: Optional[Callable[[Exception, Any], bool]] = None,
+) -> _T:
+    """Execute an async function with exponential backoff retries.
+
+    Args:
+        func: Async callable to execute.
+        max_retries: Maximum number of retries (total attempts = max_retries + 1).
+        base_delay: Base delay in seconds for exponential backoff.
+        max_delay: Maximum delay cap (floor at base_delay).
+        jitter_factor: Jitter range [0, jitter_factor * current_delay].
+        is_retryable: Optional predicate(exc, attempt) -> True to force retry.
+
+    Returns:
+        The result of func on success.
+
+    Raises:
+        The last exception if all attempts fail.
+    """
+    import httpx
+
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except Exception as exc:
+            # Check permanent failures first — never retry these.
+            err_str = str(exc).lower()
+            if any(perma in err_str for perma in ("unauthorized", "forbidden", "permission denied", "invalid api key")):
+                logger.warning("LLM request permanent failure (no retry): %s", exc)
+                raise
+
+            # Check retryable status codes (if we have a response).
+            if isinstance(exc, httpx.HTTPStatusError):
+                if exc.response.status_code not in _RETRYABLE_CODES:
+                    raise  # Not retryable code
+
+            # Check retryable exceptions.
+            if not isinstance(exc, _RETRYABLE_EXCEPTIONS):
+                raise  # Wrong exception type
+
+            last_exc = exc
+
+            # Final attempt exhausted?
+            if attempt == max_retries:
+                break
+
+            # Exponential backoff with jitter.
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            jitter = delay * jitter_factor * (random.random() * 2 - 1)  # [-factor, +factor]
+            actual_delay = max(delay + jitter, 0.1)  # floor at 100ms
+
+            logger.info(
+                "LLM request failed, retrying attempt=%d in %.1fs (exc=%s)",
+                attempt + 1, actual_delay, type(exc).__name__,
+            )
+            await asyncio.sleep(actual_delay)
+
+    # All retries exhausted — raise the last exception.
+    assert last_exc is not None
+    raise last_exc
 
 
 # =============================================================================
@@ -43,6 +128,11 @@ class LLMConfig:
     timeout: float = 30.0
     max_tokens: int = 4096
     temperature: float = 0.1
+
+    # Retry configuration (applied on transient failures)
+    max_retries: int = 2
+    retry_base_delay: float = 1.0
+    retry_max_delay: float = 10.0
 
     # Azure-specific
     azure_api_version: str = "2024-02-01"
@@ -81,6 +171,22 @@ class LLMConfig:
         except (TypeError, ValueError):
             temperature = 0.1
 
+        # Retry configuration
+        try:
+            max_retries = int(os.environ.get("AUS_ELE_AGENT_LLM_MAX_RETRIES", "2"))
+        except (TypeError, ValueError):
+            max_retries = 2
+
+        try:
+            retry_base_delay = float(os.environ.get("AUS_ELE_AGENT_LLM_RETRY_BASE_DELAY", "1.0"))
+        except (TypeError, ValueError):
+            retry_base_delay = 1.0
+
+        try:
+            retry_max_delay = float(os.environ.get("AUS_ELE_AGENT_LLM_RETRY_MAX_DELAY", "10.0"))
+        except (TypeError, ValueError):
+            retry_max_delay = 10.0
+
         return cls(
             provider=provider,
             api_key=api_key,
@@ -89,6 +195,9 @@ class LLMConfig:
             timeout=timeout,
             max_tokens=max_tokens,
             temperature=temperature,
+            max_retries=max_retries,
+            retry_base_delay=retry_base_delay,
+            retry_max_delay=retry_max_delay,
             azure_api_version=os.environ.get("AUS_ELE_AGENT_LLM_AZURE_API_VERSION", "2024-02-01"),
             azure_deployment=os.environ.get("AUS_ELE_AGENT_LLM_AZURE_DEPLOYMENT", model),
         )
@@ -137,6 +246,10 @@ class LLMAdapter:
         self._health_checked_at: float = 0.0
         self._health_ttl: float = 300.0  # re-probe at most every 5 min
         self.last_health_error: str = ""
+        # Retry configuration (retried only on transient failures: 429/5xx/timeouts)
+        self._max_retries: int = self.config.max_retries if hasattr(self.config, 'max_retries') else 2
+        self._retry_base_delay: float = self.config.retry_base_delay if hasattr(self.config, 'retry_base_delay') else 1.0
+        self._retry_max_delay: float = self.config.retry_max_delay if hasattr(self.config, 'retry_max_delay') else 10.0
 
     def is_available(self) -> bool:
         """Check if the LLM provider is configured and reachable.
@@ -282,7 +395,7 @@ class LLMAdapter:
 
         Raises:
             LLMUnavailableError: If the provider is not configured.
-            LLMRequestError: If the API call fails.
+            LLMRequestError: If the API call fails after retries.
         """
         if not self.is_available():
             raise LLMUnavailableError("LLM provider is not configured")
@@ -292,11 +405,20 @@ class LLMAdapter:
         headers = self._build_headers()
         payload = self._build_payload(messages, tools)
 
-        try:
+        # Wrap the request in retry with exponential backoff
+        async def _make_request() -> LLMResponse:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
             return self._parse_response(data)
+
+        try:
+            return await _retry_with_backoff(
+                _make_request,
+                max_retries=self._max_retries,
+                base_delay=self._retry_base_delay,
+                max_delay=self._retry_max_delay,
+            )
         except Exception as exc:
             logger.error("LLM request failed: %s", exc)
             raise LLMRequestError(f"LLM request failed: {exc}") from exc
@@ -309,6 +431,7 @@ class LLMAdapter:
         """Send a streaming chat completion request.
 
         Yields content chunks as they arrive.
+        Retries transient failures (429/5xx/timeouts) with exponential backoff.
         """
         if not self.is_available():
             raise LLMUnavailableError("LLM provider is not configured")
@@ -318,7 +441,8 @@ class LLMAdapter:
         headers = self._build_headers()
         payload = self._build_payload(messages, tools, stream=True)
 
-        try:
+        # Internal stream consumer (yields chunks from a single response)
+        async def _consume_stream() -> AsyncIterator[str]:
             async with client.stream("POST", url, json=payload, headers=headers) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -335,6 +459,16 @@ class LLMAdapter:
                             yield content
                     except json.JSONDecodeError:
                         continue
+
+        # Wrap the generator consumption in retry logic
+        try:
+            async for chunk in _retry_with_backoff(
+                lambda: _consume_stream(),
+                max_retries=self._max_retries,
+                base_delay=self._retry_base_delay,
+                max_delay=self._retry_max_delay,
+            ):
+                yield chunk
         except Exception as exc:
             logger.error("LLM stream request failed: %s", exc)
             raise LLMRequestError(f"LLM stream failed: {exc}") from exc
@@ -351,6 +485,8 @@ class LLMAdapter:
         streamed tool-call deltas (which arrive fragmented across chunks) into
         complete calls.
 
+        Retries transient failures (429/5xx/timeouts) with exponential backoff.
+
         Yields dict events:
             {"type": "content", "text": <token>}
             {"type": "tool_calls", "tool_calls": [{id, name, arguments(dict)}]}
@@ -364,11 +500,11 @@ class LLMAdapter:
         headers = self._build_headers()
         payload = self._build_payload(messages, tools, stream=True)
 
-        # Accumulate tool-call fragments keyed by their streaming index.
-        acc: Dict[int, Dict[str, Any]] = {}
-        finish_reason = "stop"
-
-        try:
+        # Internal stream consumer: yields raw events from a single response.
+        # Accumulates tool-call fragments keyed by their streaming index.
+        async def _consume_stream_events() -> AsyncIterator[Dict[str, Any]]:
+            acc: Dict[int, Dict[str, Any]] = {}
+            finish_reason = "stop"
             async with client.stream("POST", url, json=payload, headers=headers) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -403,26 +539,35 @@ class LLMAdapter:
                             slot["name"] = func["name"]
                         if func.get("arguments"):
                             slot["arguments"] += func["arguments"]
+            # After streaming completes, emit accumulated tool_calls
+            if acc:
+                tool_calls = []
+                for idx in sorted(acc.keys()):
+                    slot = acc[idx]
+                    try:
+                        arguments = json.loads(slot["arguments"]) if slot["arguments"] else {}
+                    except json.JSONDecodeError:
+                        arguments = {}
+                    tool_calls.append({
+                        "id": slot["id"] or f"call_{idx}",
+                        "name": slot["name"],
+                        "arguments": arguments,
+                    })
+                yield {"type": "tool_calls", "tool_calls": tool_calls}
+            yield {"type": "done", "finish_reason": finish_reason}
+
+        # Wrap the generator consumption in retry logic
+        try:
+            async for event in _retry_with_backoff(
+                lambda: _consume_stream_events(),
+                max_retries=self._max_retries,
+                base_delay=self._retry_base_delay,
+                max_delay=self._retry_max_delay,
+            ):
+                yield event
         except Exception as exc:
             logger.error("LLM stream(events) request failed: %s", exc)
             raise LLMRequestError(f"LLM stream failed: {exc}") from exc
-
-        if acc:
-            tool_calls = []
-            for idx in sorted(acc.keys()):
-                slot = acc[idx]
-                try:
-                    arguments = json.loads(slot["arguments"]) if slot["arguments"] else {}
-                except json.JSONDecodeError:
-                    arguments = {}
-                tool_calls.append({
-                    "id": slot["id"] or f"call_{idx}",
-                    "name": slot["name"],
-                    "arguments": arguments,
-                })
-            yield {"type": "tool_calls", "tool_calls": tool_calls}
-
-        yield {"type": "done", "finish_reason": finish_reason}
 
     def _parse_response(self, data: Dict[str, Any]) -> LLMResponse:
         """Parse raw API response into LLMResponse."""
