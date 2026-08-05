@@ -255,9 +255,20 @@ def _exec_regional_ranking(params: Dict[str, Any], ctx: AgentContext) -> Dict[st
     # Filter to NEM regions only for ranking.
     # bug 修复 2026-07-29：build_market_screening_payload 返回的键是 "items"，
     # 之前误取 "candidates" 导致永远返回空列表（candidates=0）。
-    candidates = payload.get("items", [])
-    nem_ranked = [c for c in candidates if c.get("market") == "NEM"]
-    return {"year": year, "ranking": nem_ranked, "total_candidates": len(candidates)}
+    # P1：现改用 tool_contracts 契约常量，生产者/消费者单一来源，根除字段漂移。
+    from agent.tool_contracts import (
+        REGIONAL_RANKING_KEY,
+        REGIONAL_TOTAL_KEY,
+        SCREENING_ITEMS_KEY,
+        SCREENING_MARKET_KEY,
+    )
+    candidates = payload.get(SCREENING_ITEMS_KEY, [])
+    nem_ranked = [c for c in candidates if c.get(SCREENING_MARKET_KEY) == "NEM"]
+    return {
+        "year": year,
+        REGIONAL_RANKING_KEY: nem_ranked,
+        REGIONAL_TOTAL_KEY: len(candidates),
+    }
 
 
 def _exec_spike_profit(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
@@ -805,6 +816,16 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
             annual_cycles_history, dod_severity_history,
         )
 
+        # P1: use tool_contracts constants for drift-prone output keys so the
+        # producer and consumers (synthesizer) share a single source of truth.
+        from agent.tool_contracts import (
+            INVEST_IRR_KEY,
+            INVEST_NPV_KEY,
+            INVEST_PAYBACK_KEY,
+            INVEST_RESULTS_KEY,
+            INVEST_ROI_KEY,
+        )
+
         return {
             "region": region,
             "year": year,
@@ -814,12 +835,12 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
                 "capex_per_kwh": capex_per_kwh,
                 "discount_rate": discount_rate,
             },
-            "results": {
+            INVEST_RESULTS_KEY: {
                 "total_capex_aud": round(result.metrics.total_capex, 0),
-                "npv_aud": round(result.metrics.npv, 0),
-                "irr_pct": round(float(result.metrics.irr) * 100, 2) if result.metrics.irr else None,
-                "roi_pct": round(result.metrics.roi_pct, 2),
-                "payback_years": round(result.metrics.payback_years, 1) if result.metrics.payback_years else None,
+                INVEST_NPV_KEY: round(result.metrics.npv, 0),
+                INVEST_IRR_KEY: round(float(result.metrics.irr) * 100, 2) if result.metrics.irr else None,
+                INVEST_ROI_KEY: round(result.metrics.roi_pct, 2),
+                INVEST_PAYBACK_KEY: round(result.metrics.payback_years, 1) if result.metrics.payback_years else None,
                 "baseline_arbitrage_aud_yr": round(baseline_arbitrage, 0),
                 "baseline_fcas_aud_yr": round(baseline_fcas, 0),
                 "avg_spread_aud_mwh": round(spread, 2),
@@ -868,9 +889,10 @@ def _exec_compare_regions(params: Dict[str, Any], ctx: AgentContext) -> Dict[str
             results.append({"region": region, "status": "error", "error": str(e)})
 
     # Rank by NPV
+    from agent.tool_contracts import INVEST_NPV_KEY, INVEST_RESULTS_KEY
     ranked = sorted(
-        [r for r in results if r.get("results", {}).get("npv_aud") is not None],
-        key=lambda r: r["results"]["npv_aud"],
+        [r for r in results if r.get(INVEST_RESULTS_KEY, {}).get(INVEST_NPV_KEY) is not None],
+        key=lambda r: r[INVEST_RESULTS_KEY][INVEST_NPV_KEY],
         reverse=True,
     )
 
@@ -889,6 +911,7 @@ def _exec_multi_market_analysis(params: Dict[str, Any], ctx: AgentContext) -> Di
     year = params.get("year", ctx.effective_year)
 
     # Analyze NEM regions + WEM
+    from agent.tool_contracts import INVEST_IRR_KEY, INVEST_NPV_KEY, INVEST_RESULTS_KEY
     all_regions = ["NSW1", "QLD1", "SA1", "VIC1", "WEM"]
     results = []
     for region in all_regions:
@@ -900,7 +923,7 @@ def _exec_multi_market_analysis(params: Dict[str, Any], ctx: AgentContext) -> Di
         }
         try:
             result = _exec_investment_analysis(region_params, ctx)
-            if result.get("results"):
+            if result.get(INVEST_RESULTS_KEY):
                 results.append(result)
             else:
                 results.append({"region": region, "status": result.get("status", "no_data")})
@@ -908,11 +931,11 @@ def _exec_multi_market_analysis(params: Dict[str, Any], ctx: AgentContext) -> Di
             results.append({"region": region, "status": "error", "error": str(e)})
 
     # Separate NEM and WEM
-    nem_results = [r for r in results if r.get("region") != "WEM" and r.get("results")]
-    wem_result = next((r for r in results if r.get("region") == "WEM" and r.get("results")), None)
+    nem_results = [r for r in results if r.get("region") != "WEM" and r.get(INVEST_RESULTS_KEY)]
+    wem_result = next((r for r in results if r.get("region") == "WEM" and r.get(INVEST_RESULTS_KEY)), None)
 
     # Best NEM region
-    best_nem = max(nem_results, key=lambda r: r["results"]["npv_aud"]) if nem_results else None
+    best_nem = max(nem_results, key=lambda r: r[INVEST_RESULTS_KEY][INVEST_NPV_KEY]) if nem_results else None
 
     comparison = {
         "markets_analyzed": ["NEM", "WEM"],
@@ -920,20 +943,20 @@ def _exec_multi_market_analysis(params: Dict[str, Any], ctx: AgentContext) -> Di
         "params": {"power_mw": power_mw, "duration_hours": duration_hours},
         "nem_best": {
             "region": best_nem["region"],
-            **best_nem["results"],
+            **best_nem[INVEST_RESULTS_KEY],
         } if best_nem else None,
-        "wem": wem_result.get("results") if wem_result else {"status": "no_data"},
+        "wem": wem_result.get(INVEST_RESULTS_KEY) if wem_result else {"status": "no_data"},
         "all_regions": [
-            {"region": r.get("region"), "npv": r.get("results", {}).get("npv_aud"), "irr": r.get("results", {}).get("irr_pct")}
+            {"region": r.get("region"), "npv": r.get(INVEST_RESULTS_KEY, {}).get(INVEST_NPV_KEY), "irr": r.get(INVEST_RESULTS_KEY, {}).get(INVEST_IRR_KEY)}
             for r in results
         ],
         "recommendation": "",
     }
 
     # Generate recommendation
-    if best_nem and wem_result and wem_result.get("results"):
-        nem_npv = best_nem["results"]["npv_aud"]
-        wem_npv = wem_result["results"]["npv_aud"]
+    if best_nem and wem_result and wem_result.get(INVEST_RESULTS_KEY):
+        nem_npv = best_nem[INVEST_RESULTS_KEY][INVEST_NPV_KEY]
+        wem_npv = wem_result[INVEST_RESULTS_KEY][INVEST_NPV_KEY]
         if nem_npv > wem_npv:
             comparison["recommendation"] = f"NEM {best_nem['region']} NPV ({nem_npv:,.0f}) 优于 WEM ({wem_npv:,.0f})"
         else:

@@ -250,6 +250,44 @@ class LLMAdapter:
         self._max_retries: int = self.config.max_retries if hasattr(self.config, 'max_retries') else 2
         self._retry_base_delay: float = self.config.retry_base_delay if hasattr(self.config, 'retry_base_delay') else 1.0
         self._retry_max_delay: float = self.config.retry_max_delay if hasattr(self.config, 'retry_max_delay') else 10.0
+        # Token usage accumulator (cost visibility). NOTE: adapter is a singleton
+        # shared across concurrent runs, so per-run figures are approximate unless
+        # the orchestrator calls reset_usage() at run start (which it does).
+        self._usage: Dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "request_count": 0,
+        }
+
+    # ------------------------------------------------------------------
+    # Token usage tracking (P1: cost visibility)
+    # ------------------------------------------------------------------
+
+    def _accumulate_usage(self, usage: Dict[str, Any]) -> None:
+        """Add a response's token usage to the running accumulator."""
+        if not usage:
+            return
+        try:
+            self._usage["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+            self._usage["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+            self._usage["total_tokens"] += int(usage.get("total_tokens", 0) or 0)
+            self._usage["request_count"] += 1
+        except (TypeError, ValueError):
+            pass
+
+    def reset_usage(self) -> None:
+        """Zero the usage accumulator (call at the start of an agent run)."""
+        self._usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "request_count": 0,
+        }
+
+    def get_usage_snapshot(self) -> Dict[str, int]:
+        """Return a copy of the accumulated token usage (call at end of a run)."""
+        return dict(self._usage)
 
     def is_available(self) -> bool:
         """Check if the LLM provider is configured and reachable.
@@ -377,6 +415,9 @@ class LLMAdapter:
             payload["tool_choice"] = "auto"
         if stream:
             payload["stream"] = True
+            # Request token usage in the final streaming chunk so the ReAct
+            # loop's token cost is tracked (OpenAI-compatible; ignored otherwise).
+            payload["stream_options"] = {"include_usage": True}
         return payload
 
     async def chat(
@@ -517,6 +558,13 @@ class LLMAdapter:
                         chunk = json.loads(data_str)
                     except json.JSONDecodeError:
                         continue
+                    # Capture token usage from the final streaming chunk
+                    # (present when stream_options.include_usage=True). This
+                    # chunk typically has empty choices, so read it before the
+                    # `if not choices` skip below.
+                    chunk_usage = chunk.get("usage")
+                    if chunk_usage:
+                        self._accumulate_usage(chunk_usage)
                     choices = chunk.get("choices", [])
                     if not choices:
                         continue
@@ -596,6 +644,8 @@ class LLMAdapter:
             })
 
         usage = data.get("usage", {})
+        # Accumulate token usage for cost visibility (P1).
+        self._accumulate_usage(usage)
 
         return LLMResponse(
             content=content,

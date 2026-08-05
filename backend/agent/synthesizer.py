@@ -15,6 +15,14 @@ from typing import Any, Dict, List, Tuple
 from agent.llm_adapter import LLMAdapter, LLMRequestError, LLMUnavailableError
 from agent.prompts import SYNTHESIS_PROMPT, FALLBACK_REPORT_TEMPLATE
 from agent.schemas import AgentContext, ConfidenceLevel, ToolResult, ToolStatus
+from agent.tool_contracts import (
+    INVEST_NPV_KEY,
+    INVEST_PAYBACK_KEY,
+    INVEST_RESULTS_KEY,
+    SCREENING_ITEMS_KEY,
+    SCREENING_LABEL_KEY,
+    SCREENING_SCORE_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +98,24 @@ async def _llm_synthesize(
 
 
 def _format_tool_results_for_llm(tool_results: List[ToolResult]) -> str:
-    """Format tool results into a compact text representation for LLM context."""
+    """Format tool results into a compact text representation for LLM context.
+
+    Uses the same structured-summary strategy as ToolResult.to_llm_message
+    (P1: unified truncation path) instead of brute-force JSON slicing, so
+    synthesis and the ReAct loop feed the LLM consistent, information-dense
+    representations rather than arbitrarily cut JSON.
+    """
     parts = []
     for result in tool_results:
         if result.status == ToolStatus.SUCCESS:
-            # Compact JSON, limit size
-            data_str = json.dumps(result.data, ensure_ascii=False, default=str)
-            if len(data_str) > 2000:
-                data_str = data_str[:2000] + "...(truncated)"
+            data = result.data
+            if isinstance(data, dict):
+                # Structured summary (stats/lengths/samples), capped at 2000 chars.
+                data_str = result._summarize_dict(data, max_chars=2000)
+            else:
+                data_str = json.dumps(data, ensure_ascii=False, default=str)
+                if len(data_str) > 2000:
+                    data_str = data_str[:2000] + "...(truncated)"
             parts.append(f"### {result.tool_name} (成功, {result.duration_ms:.0f}ms)\n{data_str}")
         else:
             parts.append(f"### {result.tool_name} ({result.status.value})\n错误: {result.error_message}")
@@ -249,9 +267,9 @@ def _extract_key_findings(results: List[ToolResult]) -> List[str]:
 
         # Investment analysis findings
         elif result.tool_name == "investment_analysis":
-            res = data.get("results", {})
-            npv = res.get("npv_aud")
-            payback = res.get("payback_years")
+            res = data.get(INVEST_RESULTS_KEY, {})
+            npv = res.get(INVEST_NPV_KEY)
+            payback = res.get(INVEST_PAYBACK_KEY)
             if npv is not None:
                 findings.append(f"NPV {npv:,.0f} AUD")
             if payback is not None and payback < 30:
@@ -259,10 +277,10 @@ def _extract_key_findings(results: List[ToolResult]) -> List[str]:
 
         # Market screening findings
         elif result.tool_name == "market_screening":
-            candidates = data.get("items", [])
+            candidates = data.get(SCREENING_ITEMS_KEY, [])
             if candidates:
                 top = candidates[0]
-                findings.append(f"最优区域 {top.get('label', '?')} (评分 {top.get('overall_score', '?')})")
+                findings.append(f"最优区域 {top.get(SCREENING_LABEL_KEY, '?')} (评分 {top.get(SCREENING_SCORE_KEY, '?')})")
 
         # FCAS findings
         elif result.tool_name == "fcas_analysis":

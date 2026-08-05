@@ -130,6 +130,10 @@ class AgentOrchestrator:
             execution_id, query[:80], context.market.value, context.effective_region,
         )
 
+        # Reset token usage accumulator for this run (P1: cost visibility).
+        if hasattr(self.llm, "reset_usage"):
+            self.llm.reset_usage()
+
         # Determine execution mode
         template = self._resolve_template(workflow_template_id, query)
 
@@ -173,6 +177,10 @@ class AgentOrchestrator:
         report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
         report.id = execution_id
 
+        # Record token usage for this run (P1: cost visibility).
+        if hasattr(self.llm, "get_usage_snapshot"):
+            report.metadata["llm_usage"] = self.llm.get_usage_snapshot()
+
         logger.info(
             "Agent run %s completed: status=%s, duration=%.0fms, tools_called=%d",
             execution_id, report.status.value, report.total_duration_ms,
@@ -211,6 +219,10 @@ class AgentOrchestrator:
         execution_id = str(uuid.uuid4())[:8]
         start_time = time.perf_counter()
         yield {"type": "start", "execution_id": execution_id}
+
+        # Reset token usage accumulator for this run (P1: cost visibility).
+        if hasattr(self.llm, "reset_usage"):
+            self.llm.reset_usage()
 
         # Harness Agent: inject session memory context
         session_id = context.session_id
@@ -349,6 +361,9 @@ class AgentOrchestrator:
                 metadata={"mode": "template_stream", "template_id": template.id, "params": effective_params},
             )
             report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
+            # Record token usage for this run (P1: cost visibility).
+            if hasattr(self.llm, "get_usage_snapshot"):
+                report.metadata["llm_usage"] = self.llm.get_usage_snapshot()
 
             yield {
                 "type": "report",
@@ -574,6 +589,9 @@ class AgentOrchestrator:
             metadata={"mode": "react_stream", "llm_model": self.llm.config.model},
         )
         report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        # Record token usage for this run (P1: cost visibility).
+        if hasattr(self.llm, "get_usage_snapshot"):
+            report.metadata["llm_usage"] = self.llm.get_usage_snapshot()
 
         yield {
             "type": "report",
