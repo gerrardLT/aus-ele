@@ -51,6 +51,54 @@ ProgressCallback = Callable[[str], None]  # Receives progress message
 
 
 # =============================================================================
+# History budget (P2-5): bound multi-turn context
+# =============================================================================
+
+# Long multi-turn conversations can overflow the LLM context window. We bound
+# the injected history with a sliding window (recency matters most for
+# follow-ups) plus a rough character budget.
+HISTORY_MAX_MESSAGES = 10
+HISTORY_MAX_CHARS = 8000
+
+
+def _trim_history(
+    history: Optional[List[Dict[str, str]]],
+    max_messages: int = HISTORY_MAX_MESSAGES,
+    max_chars: int = HISTORY_MAX_CHARS,
+) -> List[Dict[str, str]]:
+    """Apply a sliding window + char budget to multi-turn history.
+
+    Keeps only valid user/assistant turns, retains the most recent messages,
+    and walks newest-to-oldest accumulating content until the char budget is
+    exhausted. Returns messages in chronological order.
+
+    Args:
+        history: Raw history list of {role, content} messages (frontend-owned).
+        max_messages: Maximum number of recent messages to consider.
+        max_chars: Rough character budget across the kept messages.
+
+    Returns:
+        Trimmed history (chronological), safe to prepend to the conversation.
+    """
+    if not history:
+        return []
+    valid = [m for m in history if m.get("role") in ("user", "assistant") and m.get("content")]
+    # Sliding window: keep the most recent max_messages.
+    valid = valid[-max_messages:]
+    # Char budget: walk newest -> oldest, stop once budget is exhausted.
+    budget = max_chars
+    kept: List[Dict[str, str]] = []
+    for m in reversed(valid):
+        cost = len(m["content"])
+        if budget - cost < 0 and kept:
+            break
+        kept.append(m)
+        budget -= cost
+    kept.reverse()  # restore chronological order
+    return kept
+
+
+# =============================================================================
 # Orchestrator
 # =============================================================================
 
@@ -374,12 +422,10 @@ class AgentOrchestrator:
             return
 
         messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT + "\n" + DATABASE_SCHEMA_CONTEXT}]
-        if history:
-            for m in history:
-                role = m.get("role")
-                content = m.get("content", "")
-                if role in ("user", "assistant") and content:
-                    messages.append({"role": role, "content": content})
+        # P2-5: bound multi-turn history (sliding window + char budget) so long
+        # conversations don't overflow the LLM context window.
+        for m in _trim_history(history):
+            messages.append({"role": m["role"], "content": m["content"]})
         messages.append({
             "role": "user",
             "content": f"{build_context_message(context)}\n\n用户请求: {query}",

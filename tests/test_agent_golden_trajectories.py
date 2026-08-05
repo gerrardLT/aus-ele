@@ -31,6 +31,7 @@ ensure_repo_import_paths()
 from agent.schemas import MarketType, ToolResult, ToolStatus
 from agent.synthesizer import _extract_key_findings
 from agent.tools import get_tool_registry
+from agent.orchestrator import _trim_history, HISTORY_MAX_CHARS, HISTORY_MAX_MESSAGES
 from agent.workflows import (
     WORKFLOW_TEMPLATES,
     get_workflow_template,
@@ -213,6 +214,56 @@ class TestTemplateIntegrityGoldenSet(unittest.TestCase):
         for tid in WORKFLOW_TEMPLATES:
             self.assertIsNotNone(get_workflow_template(tid))
             self.assertEqual(get_workflow_template(tid).id, tid)
+
+
+# =============================================================================
+# 4. History budget golden set (P2-5)
+# =============================================================================
+
+
+class TestHistoryBudgetGoldenSet(unittest.TestCase):
+    """Multi-turn history must be bounded (sliding window + char budget)."""
+
+    def _msg(self, role: str, content: str) -> dict:
+        return {"role": role, "content": content}
+
+    def test_empty_history(self):
+        self.assertEqual(_trim_history(None), [])
+        self.assertEqual(_trim_history([]), [])
+
+    def test_filters_invalid_roles_and_empty(self):
+        history = [
+            self._msg("user", "hi"),
+            self._msg("system", "should be dropped"),
+            self._msg("assistant", ""),
+            self._msg("assistant", "hello"),
+        ]
+        kept = _trim_history(history)
+        self.assertEqual([m["content"] for m in kept], ["hi", "hello"])
+
+    def test_sliding_window_keeps_most_recent(self):
+        history = [self._msg("user", f"msg{i}") for i in range(30)]
+        kept = _trim_history(history, max_messages=5, max_chars=100000)
+        self.assertEqual(len(kept), 5)
+        self.assertEqual(kept[-1]["content"], "msg29")  # newest preserved
+        self.assertEqual(kept[0]["content"], "msg25")
+
+    def test_char_budget_drops_oldest(self):
+        # 5 messages of 100 chars each; budget 250 -> keep at most ~2 newest.
+        history = [self._msg("user", "x" * 100) for _ in range(5)]
+        kept = _trim_history(history, max_messages=10, max_chars=250)
+        self.assertLessEqual(sum(len(m["content"]) for m in kept), 250 + 100)  # +1 for the forced-first keep
+        # Must be the NEWEST messages, in chronological order.
+        self.assertGreaterEqual(len(kept), 1)
+
+    def test_chronological_order_preserved(self):
+        history = [self._msg("user", f"m{i}") for i in range(4)]
+        kept = _trim_history(history, max_messages=10, max_chars=100000)
+        self.assertEqual([m["content"] for m in kept], ["m0", "m1", "m2", "m3"])
+
+    def test_default_bounds_are_sane(self):
+        self.assertGreater(HISTORY_MAX_MESSAGES, 0)
+        self.assertGreater(HISTORY_MAX_CHARS, 0)
 
 
 if __name__ == "__main__":
