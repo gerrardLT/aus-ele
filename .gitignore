@@ -21,6 +21,8 @@ lib64/
 !web/src/lib/**
 !deploy/scripts/lib/
 !deploy/scripts/lib/**
+# 反向放行后重新排除字节码（后置规则优先）
+deploy/scripts/lib/__pycache__/
 parts/
 sdist/
 var/
@@ -75,6 +77,9 @@ htmlcov/
 tmp_*.log
 tmp_*.out.log
 tmp_*.err.log
+tmp_*.txt
+tmp_*.py
+tmp_*.ps1
 *-live.out.log
 *-live.err.log
 tmp-openapi.json
@@ -83,3 +88,15 @@ data/fingrid_backfill_*.err.log
 backend-dev.log
 data_lake/
 .superpowers/
+
+# 运行期产物统一放 workspace/（见 AGENTS.md 文件分类规范），整体不入库
+workspace/
+logs/
+*.log
+artifacts-*.png
+.hypothesis/
+.test-results/
+.tmp-playwright/
+test-results/
+reports/backtest_report.txt
+data/predispatch_archive/
