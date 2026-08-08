@@ -69,6 +69,15 @@ class AgentContext(BaseModel):
     max_retries: int = Field(default=2, ge=0, le=5)
     session_id: Optional[str] = None
 
+    # PoC: 按阶段工具子集暴露（None=全量动作空间，现有行为不变）
+    tool_profile: Optional[str] = None
+    # 意图路由开关（§10.4-1）：开启后无显式 profile 时由关键词路由器分类，
+    # 无法归类则回落全量；默认关闭
+    enable_tool_routing: bool = False
+    # C4: Plan-and-Execute 波次并行模式（flag 隔离，默认关闭）；
+    # 计划生成失败时自动回落 ReAct
+    enable_plan_execute: bool = False
+
     # Derived defaults
     @property
     def effective_region(self) -> str:
@@ -156,10 +165,11 @@ class ToolResult(BaseModel):
             return {
                 "role": "tool",
                 "tool_call_id": self.call_id,
-                "content": json.dumps({
+                # <tool_output> 定界：回灌内容声明为数据非指令（防 prompt injection）
+                "content": f"<tool_output tool=\"{self.tool_name}\">" + json.dumps({
                     "error": self.error_message or "Unknown error",
                     "status": self.status.value,
-                }, ensure_ascii=False, indent=2),
+                }, ensure_ascii=False, indent=2) + "</tool_output>",
             }
 
         content = self.data
@@ -171,16 +181,23 @@ class ToolResult(BaseModel):
             return {
                 "role": "tool",
                 "tool_call_id": self.call_id,
-                "content": content_str,
+                "content": f"<tool_output tool=\"{self.tool_name}\">{content_str}</tool_output>",
             }
 
         # Structured summary for dict results（_summarize_dict 已返回 JSON 字符串，
         # 直接作为 content，不可再 dumps 一次造成双重序列化/转义）
         summary_str = self._summarize_dict(content, max_chars=max_chars)
+        # 完整数据落盘时（artifact），附路径供 read_artifact 按需读取
+        artifact_path = self.metadata.get("artifact_path")
+        if artifact_path:
+            summary_str = (
+                summary_str
+                + f"\n[完整数据已落盘: {artifact_path}，可用 read_artifact 工具读取]"
+            )
         return {
             "role": "tool",
             "tool_call_id": self.call_id,
-            "content": summary_str,
+            "content": f"<tool_output tool=\"{self.tool_name}\">{summary_str}</tool_output>",
         }
 
     def _summarize_dict(self, data: dict, max_chars: int = 3000) -> str:
@@ -341,6 +358,10 @@ class AgentRunRequest(BaseModel):
     workflow_template: Optional[str] = None
     params_override: Dict[str, Any] = Field(default_factory=dict)
     max_steps: int = Field(default=15, ge=1, le=30)
+    # PoC：显式工具子集 profile / 意图路由开关（默认均不启用）
+    tool_profile: Optional[str] = None
+    enable_tool_routing: bool = False
+    enable_plan_execute: bool = False
 
 
 class ChatMessage(BaseModel):
@@ -366,6 +387,10 @@ class AgentChatRequest(BaseModel):
     workflow_template: Optional[str] = None
     params_override: Dict[str, Any] = Field(default_factory=dict)
     max_steps: int = Field(default=15, ge=1, le=30)
+    # PoC：显式工具子集 profile / 意图路由开关（默认均不启用）
+    tool_profile: Optional[str] = None
+    enable_tool_routing: bool = False
+    enable_plan_execute: bool = False
 
 
 class AgentRunResponse(BaseModel):

@@ -19,6 +19,7 @@ Configuration via environment variables:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import math
@@ -29,6 +30,21 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Per-run usage scope (A4)
+# =============================================================================
+
+# 适配器是跨并发运行共享的单例，无隔离时 token 累加器互相污染。
+# 编排器在 run 开始时用 execution_id 绑定作用域，结束时解绑。
+_USAGE_SCOPE: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "agent_usage_scope", default=None
+)
+
+
+def _zero_usage() -> Dict[str, int]:
+    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "request_count": 0}
 
 
 # =============================================================================
@@ -246,6 +262,13 @@ class LLMAdapter:
         self._health_checked_at: float = 0.0
         self._health_ttl: float = 300.0  # re-probe at most every 5 min
         self.last_health_error: str = ""
+        # B3: 熔断三态（closed/open/half-open）。连续探测失败进 open（跳过
+        # 探测直降模板，省探测 token 与延迟），冷却后转 half-open 单发探测恢复。
+        self._breaker_state: str = "closed"
+        self._breaker_consecutive_failures: int = 0
+        self._breaker_opened_at: float = 0.0
+        self._breaker_open_after: int = 2
+        self._breaker_cooldown_s: float = 120.0
         # Retry configuration (retried only on transient failures: 429/5xx/timeouts)
         self._max_retries: int = self.config.max_retries if hasattr(self.config, 'max_retries') else 2
         self._retry_base_delay: float = self.config.retry_base_delay if hasattr(self.config, 'retry_base_delay') else 1.0
@@ -259,6 +282,8 @@ class LLMAdapter:
             "total_tokens": 0,
             "request_count": 0,
         }
+        # A4: 按 run_id 隔离的用量作用域（并发安全）
+        self._scoped_usage: Dict[str, Dict[str, int]] = {}
 
     # ------------------------------------------------------------------
     # Token usage tracking (P1: cost visibility)
@@ -268,26 +293,49 @@ class LLMAdapter:
         """Add a response's token usage to the running accumulator."""
         if not usage:
             return
+        scope = _USAGE_SCOPE.get()
+        if scope is not None:
+            target = self._scoped_usage.setdefault(scope, _zero_usage())
+        else:
+            target = self._usage
         try:
-            self._usage["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
-            self._usage["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
-            self._usage["total_tokens"] += int(usage.get("total_tokens", 0) or 0)
-            self._usage["request_count"] += 1
+            target["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
+            target["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
+            target["total_tokens"] += int(usage.get("total_tokens", 0) or 0)
+            target["request_count"] += 1
         except (TypeError, ValueError):
             pass
 
-    def reset_usage(self) -> None:
-        """Zero the usage accumulator (call at the start of an agent run)."""
-        self._usage = {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "request_count": 0,
-        }
+    def reset_usage(self, run_id: Optional[str] = None) -> None:
+        """Zero the usage accumulator (call at the start of an agent run).
 
-    def get_usage_snapshot(self) -> Dict[str, int]:
+        With ``run_id``: bind an isolated per-run scope (A4) so concurrent
+        runs on the shared singleton adapter don't contaminate each other.
+        """
+        if run_id is not None:
+            self._scoped_usage[run_id] = _zero_usage()
+            _USAGE_SCOPE.set(run_id)
+            # 防御性上限：清理最旧的作用域（编排器正常会解绑）
+            if len(self._scoped_usage) > 128:
+                for stale in list(self._scoped_usage)[: len(self._scoped_usage) - 128]:
+                    self._scoped_usage.pop(stale, None)
+            return
+        self._usage = _zero_usage()
+
+    def get_usage_snapshot(self, run_id: Optional[str] = None) -> Dict[str, int]:
         """Return a copy of the accumulated token usage (call at end of a run)."""
+        if run_id is not None:
+            return dict(self._scoped_usage.get(run_id) or _zero_usage())
+        scope = _USAGE_SCOPE.get()
+        if scope is not None and scope in self._scoped_usage:
+            return dict(self._scoped_usage[scope])
         return dict(self._usage)
+
+    def end_usage_scope(self, run_id: Optional[str] = None) -> None:
+        """Unbind the per-run usage scope (call at the end of an agent run)."""
+        _USAGE_SCOPE.set(None)
+        if run_id is not None:
+            self._scoped_usage.pop(run_id, None)
 
     def is_available(self) -> bool:
         """Check if the LLM provider is configured and reachable.
@@ -329,19 +377,28 @@ class LLMAdapter:
             True if a live request succeeded recently; False otherwise.
             ``last_health_error`` holds the reason on failure.
         """
-        import time as _time
-
         # Config-only gate first: no key/url means definitely unavailable.
         if not self.is_available():
             self._health_ok = False
             self.last_health_error = "LLM provider not configured"
             return False
 
-        # Serve cached probe result within TTL.
+        import time as _time
+
         now = _time.perf_counter()
+
+        # B3 熔断：open 状态跳过探测直降降级；冷却期过后转 half-open 试探恢复
+        if self._breaker_state == "open" and not force:
+            if now - self._breaker_opened_at < self._breaker_cooldown_s:
+                return False
+            self._breaker_state = "half-open"
+
+        # Serve cached probe result within TTL (仅 closed 状态、非强制且为
+        # 正结果时；负结果不走缓存，否则连续失败计数无法触发熔断)。
         if (
             not force
-            and self._health_ok is not None
+            and self._health_ok is True
+            and self._breaker_state == "closed"
             and (now - self._health_checked_at) < self._health_ttl
         ):
             return self._health_ok
@@ -361,10 +418,25 @@ class LLMAdapter:
             response.raise_for_status()
             self._health_ok = True
             self.last_health_error = ""
+            # B3: 探测成功→闭合熔断（half-open 恢复路径也在此收敛）
+            self._breaker_state = "closed"
+            self._breaker_consecutive_failures = 0
         except Exception as exc:  # noqa: BLE001 - probe must never raise
             self._health_ok = False
             self.last_health_error = f"{type(exc).__name__}: {str(exc)[:160]}"
             logger.warning("LLM health probe failed: %s", self.last_health_error)
+            # B3: 连续失败计数；达阈或 half-open 试探失败→进 open
+            self._breaker_consecutive_failures += 1
+            if (
+                self._breaker_state == "half-open"
+                or self._breaker_consecutive_failures >= self._breaker_open_after
+            ):
+                self._breaker_state = "open"
+                self._breaker_opened_at = time.perf_counter()
+                logger.warning(
+                    "LLM breaker OPEN after %d consecutive probe failures",
+                    self._breaker_consecutive_failures,
+                )
         finally:
             self._health_checked_at = _time.perf_counter()
 
@@ -501,14 +573,13 @@ class LLMAdapter:
                     except json.JSONDecodeError:
                         continue
 
-        # Wrap the generator consumption in retry logic
+        # 流式消费不包 _retry_with_backoff（bug 修复 2026-08-06，live 回放发现）：
+        # 1) 该 helper 对 func() 做 await，而 _consume_stream() 是 async 生成器，
+        #    会得到 coroutine 而非 __aiter__ 对象，'async for' 直接报错；
+        # 2) 即便修复等待方式，流中途失败后重试会重复 yield 已产出的事件，
+        #    污染 ReAct 轨迹。流级故障向上抛，由编排层统一降级/终止。
         try:
-            async for chunk in _retry_with_backoff(
-                lambda: _consume_stream(),
-                max_retries=self._max_retries,
-                base_delay=self._retry_base_delay,
-                max_delay=self._retry_max_delay,
-            ):
+            async for chunk in _consume_stream():
                 yield chunk
         except Exception as exc:
             logger.error("LLM stream request failed: %s", exc)
@@ -604,14 +675,9 @@ class LLMAdapter:
                 yield {"type": "tool_calls", "tool_calls": tool_calls}
             yield {"type": "done", "finish_reason": finish_reason}
 
-        # Wrap the generator consumption in retry logic
+        # 同 chat_stream：流式路径不包重试（见上方 bug 修复注释）
         try:
-            async for event in _retry_with_backoff(
-                lambda: _consume_stream_events(),
-                max_retries=self._max_retries,
-                base_delay=self._retry_base_delay,
-                max_delay=self._retry_max_delay,
-            ):
+            async for event in _consume_stream_events():
                 yield event
         except Exception as exc:
             logger.error("LLM stream(events) request failed: %s", exc)

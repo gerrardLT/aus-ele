@@ -38,6 +38,7 @@ from agent.schemas import (
     WorkflowTemplate,
 )
 from agent.tools import ToolRegistry
+from agent.tool_profiles import resolve_visible_tools, route_query_to_profile
 from agent.workflows import get_workflow_template, match_workflow_from_query
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,10 @@ class AgentOrchestrator:
     }
     _CACHE_TTL_SECONDS = 300  # 5 minutes
 
+    # B1: 超过此体积的工具结果全量落盘 artifact，回灌只保留摘要+路径
+    # （可恢复压缩，对应基线计量的 26.7% 不可逆压缩损失）
+    _ARTIFACT_THRESHOLD_CHARS = 3000
+
     # Per-tool timeout overrides (seconds). Heavy tools scan large tables or run
     # MILP/backtests and legitimately exceed the default 30s under real data.
     # market_screening/regional_ranking share the market-screening engine which
@@ -149,8 +154,8 @@ class AgentOrchestrator:
         self.tool_timeout = tool_timeout
         self.total_timeout = total_timeout
         self._tool_cache: Dict[str, tuple] = {}  # key -> (timestamp, ToolResult)
-        from agent.session import SessionMemory  # Harness Agent
-        self.session_memory = SessionMemory()  # Harness Agent
+        from agent.session import get_session_memory  # B6: Redis 后端（自动回落内存）
+        self.session_memory = get_session_memory()
 
     async def run(
         self,
@@ -179,8 +184,9 @@ class AgentOrchestrator:
         )
 
         # Reset token usage accumulator for this run (P1: cost visibility).
+        # A4: 按 execution_id 隔离用量作用域，并发运行不再互相污染。
         if hasattr(self.llm, "reset_usage"):
-            self.llm.reset_usage()
+            self.llm.reset_usage(run_id=execution_id)
 
         # Determine execution mode
         template = self._resolve_template(workflow_template_id, query)
@@ -227,7 +233,9 @@ class AgentOrchestrator:
 
         # Record token usage for this run (P1: cost visibility).
         if hasattr(self.llm, "get_usage_snapshot"):
-            report.metadata["llm_usage"] = self.llm.get_usage_snapshot()
+            report.metadata["llm_usage"] = self.llm.get_usage_snapshot(run_id=execution_id)
+        if hasattr(self.llm, "end_usage_scope"):
+            self.llm.end_usage_scope(run_id=execution_id)
 
         logger.info(
             "Agent run %s completed: status=%s, duration=%.0fms, tools_called=%d",
@@ -269,16 +277,19 @@ class AgentOrchestrator:
         yield {"type": "start", "execution_id": execution_id}
 
         # Reset token usage accumulator for this run (P1: cost visibility).
+        # A4: 按 execution_id 隔离用量作用域。
         if hasattr(self.llm, "reset_usage"):
-            self.llm.reset_usage()
+            self.llm.reset_usage(run_id=execution_id)
 
-        # Harness Agent: inject session memory context
+        # Harness Agent: 取会话记忆上下文（在下方构建消息时 append-only 注入）
         session_id = context.session_id
-        if session_id:
-            session_ctx = self.session_memory.get_context_block(session_id)
-            if session_ctx:
-                # Will be injected into messages after they're built
-                pass  # stored for later injection
+        session_ctx = (
+            self.session_memory.get_context_block(session_id) if session_id else ""
+        )
+        # 数据版本（会话缓存失效键，A5）：优先显式参数，否则目标年
+        data_version = (
+            context.params_override.get("data_version") or str(context.effective_year)
+        )
 
         # Forced template or LLM unhealthy -> stream template execution
         # with per-tool events (keeps SSE connection alive). Uses a LIVE probe
@@ -411,36 +422,58 @@ class AgentOrchestrator:
             report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
             # Record token usage for this run (P1: cost visibility).
             if hasattr(self.llm, "get_usage_snapshot"):
-                report.metadata["llm_usage"] = self.llm.get_usage_snapshot()
+                report.metadata["llm_usage"] = self.llm.get_usage_snapshot(run_id=execution_id)
+            if hasattr(self.llm, "end_usage_scope"):
+                self.llm.end_usage_scope(run_id=execution_id)
+
+            report_answer = full_analysis or self._safe_reasoning_narrative(tool_results, context)
+            self._apply_grounding_check(report, report_answer, tool_results)
 
             yield {
                 "type": "report",
                 "report": report.model_dump(mode="json"),
-                "answer": full_analysis or self._safe_reasoning_narrative(tool_results, context),
+                "answer": report_answer,
             }
             yield {"type": "done"}
             return
+
+        # C4: Plan-and-Execute 波次并行模式（flag 隔离）。计划生成失败时
+        # 自然回落下方 ReAct 路径（安全网）。
+        if context.enable_plan_execute:
+            pe_plan = await self._generate_execution_plan(query, context)
+            if pe_plan:
+                async for ev in self._run_plan_execute_stream(
+                    query, context, execution_id, start_time, pe_plan
+                ):
+                    yield ev
+                return
+            yield {"type": "status", "message": "计划生成失败，切换 ReAct 模式"}
 
         messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT + "\n" + DATABASE_SCHEMA_CONTEXT}]
         # P2-5: bound multi-turn history (sliding window + char budget) so long
         # conversations don't overflow the LLM context window.
         for m in _trim_history(history):
             messages.append({"role": m["role"], "content": m["content"]})
-        messages.append({
-            "role": "user",
-            "content": f"{build_context_message(context)}\n\n用户请求: {query}",
-        })
-
-        # Harness Agent: inject session memory into system message
-        if session_id:
-            session_ctx = self.session_memory.get_context_block(session_id)
-            if session_ctx:
-                messages[0]["content"] += f"\n\n{session_ctx}"
+        user_content = f"{build_context_message(context)}\n\n用户请求: {query}"
+        if session_ctx:
+            # KV-cache 友好（Manus 原则：稳定前缀 + append-only）：系统提示前缀
+            # 保持固定，动态会话记忆只追加到用户消息尾部，不再改写 messages[0]
+            user_content += f"\n\n{session_ctx}"
+        messages.append({"role": "user", "content": user_content})
 
         steps: List[AgentStep] = []
         tool_results: List[ToolResult] = []
         stage_results: List[StageResult] = []
-        openai_tools = self.tools.to_openai_tools()
+        # PoC：按阶段工具子集暴露。优先级：显式 profile > 意图路由（需开启）> 全量。
+        # 可见集运行内固定不变；路由器无法归类时回落全量动作空间（安全网）。
+        active_profile = context.tool_profile
+        profile_source = "explicit" if active_profile else None
+        if active_profile is None and context.enable_tool_routing:
+            active_profile = route_query_to_profile(query)
+            if active_profile:
+                profile_source = "routed"
+        visible_tools = resolve_visible_tools(explicit=active_profile)
+        openai_tools = self.tools.to_openai_tools(visible_tools)
         final_answer_given = False
         final_content = ""
 
@@ -451,7 +484,11 @@ class AgentOrchestrator:
                 yield {"type": "status", "message": "正在制定分析计划..."}
                 plan = await self._generate_plan(query, context, openai_tools)
                 if plan:
-                    messages[0]["content"] += f"\n\n当前分析计划:\n{plan.model_dump_json()}"
+                    # append-only：不改写已构建的前缀，计划以新消息追加到尾部
+                    messages.append({
+                        "role": "user",
+                        "content": f"当前分析计划（按此计划执行）:\n{plan.model_dump_json()}",
+                    })
                     yield {"type": "plan", "plan": plan.model_dump()}
 
         for step_num in range(1, self.max_steps + 1):
@@ -532,12 +569,37 @@ class AgentOrchestrator:
 
             # Execute tools in parallel (with retry)
             async def _exec_one(idx: int) -> ToolResult:
-                return await self._execute_tool_with_retry(
+                # A5: 会话缓存命中则跳过重复执行（强制消费 has_result）；
+                # 缓存条目带 data_version 哈希，数据同步后自动失效。
+                if context.session_id and self.session_memory.has_result(
+                    context.session_id, tool_calls[idx]["name"],
+                    merged_args_list[idx], data_version,
+                ):
+                    logger.info(
+                        "Session cache hit, skipping %s", tool_calls[idx]["name"],
+                    )
+                    return ToolResult(
+                        tool_name=tool_calls[idx]["name"],
+                        call_id=tool_calls[idx]["id"],
+                        status=ToolStatus.SUCCESS,
+                        data={
+                            "cached": True,
+                            "summary": self.session_memory.get_summary(
+                                context.session_id, tool_calls[idx]["name"],
+                                merged_args_list[idx], data_version,
+                            ),
+                        },
+                        metadata={"cached": True},
+                    )
+                result = await self._execute_tool_with_retry(
                     tool_name=tool_calls[idx]["name"],
                     call_id=tool_calls[idx]["id"],
                     merged_args=merged_args_list[idx],
                     context=context,
                 )
+                # B1：大结果落盘 artifact（可恢复压缩，回灌摘要附路径）
+                self._maybe_persist_artifact(result, execution_id)
+                return result
 
             raw_results = await asyncio.gather(
                 *[_exec_one(i) for i in range(len(tool_calls))],
@@ -583,14 +645,9 @@ class AgentOrchestrator:
 
             # Harness Agent: store successful results in session memory (version-aware cache)
             if session_id:
-                # Get current data version from context.params_override['data_version'] or compute default
-                data_version = context.params_override.get("data_version")
-                if not data_version:
-                    # Default: effective_year as string (e.g. '2026')
-                    data_version = str(context.effective_year)
-                
                 for r, merged_args in zip(raw_results, merged_args_list):
-                    if not isinstance(r, Exception) and r.status == ToolStatus.SUCCESS:
+                    if not isinstance(r, Exception) and r.status == ToolStatus.SUCCESS \
+                            and not r.metadata.get("cached"):
                         summary = self._to_stage_result(r).summary or r.tool_name
                         self.session_memory.put(session_id, r.tool_name, merged_args, summary, data_version)
 
@@ -617,6 +674,13 @@ class AgentOrchestrator:
                 final_content, "", ConfidenceLevel.LOW, "",
             )
 
+        report_metadata = {"mode": "react_stream", "llm_model": self.llm.config.model}
+        if visible_tools is not None:
+            # A/B 归因：记录本次运行使用的子集 profile、来源与可见工具数
+            report_metadata["tool_profile"] = active_profile
+            report_metadata["tool_profile_source"] = profile_source
+            report_metadata["visible_tool_count"] = len(openai_tools)
+
         report = AgentReport(
             id=execution_id,
             query=query,
@@ -632,17 +696,225 @@ class AgentOrchestrator:
             tool_trace=tool_results,
             steps=steps,
             status=status,
-            metadata={"mode": "react_stream", "llm_model": self.llm.config.model},
+            metadata=report_metadata,
         )
         report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
         # Record token usage for this run (P1: cost visibility).
         if hasattr(self.llm, "get_usage_snapshot"):
-            report.metadata["llm_usage"] = self.llm.get_usage_snapshot()
+            report.metadata["llm_usage"] = self.llm.get_usage_snapshot(run_id=execution_id)
+        if hasattr(self.llm, "end_usage_scope"):
+            self.llm.end_usage_scope(run_id=execution_id)
+
+        report_answer = final_content or executive_summary
+        self._apply_grounding_check(report, report_answer, tool_results)
 
         yield {
             "type": "report",
             "report": report.model_dump(mode="json"),
-            "answer": final_content or executive_summary,
+            "answer": report_answer,
+        }
+        yield {"type": "done"}
+
+    # =========================================================================
+    # Plan-and-Execute Mode (C4)
+    # =========================================================================
+
+    _MAX_PLAN_WAVES = 4
+    _MAX_REPLAN = 1  # 重规划阀门：整波失败时最多重规划一次，防无限循环
+
+    async def _generate_execution_plan(
+        self, query: str, context: AgentContext
+    ) -> Optional[Dict[str, Any]]:
+        """LLM 生成波次结构执行计划（structured output，非法即返回 None）。"""
+        from agent.prompts import PLAN_EXECUTE_PROMPT
+
+        tool_names = [t["function"]["name"] for t in self.tools.to_openai_tools()]
+        prompt = PLAN_EXECUTE_PROMPT.format(
+            query=query,
+            context=build_context_message(context),
+            tools=", ".join(tool_names),
+        )
+        try:
+            response = await self.llm.chat([
+                {"role": "system", "content": "你是执行规划器。只输出 JSON。"},
+                {"role": "user", "content": prompt},
+            ])
+            content = (response.content or "").strip()
+            if content.startswith("```"):
+                content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            data = json.loads(content)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Plan-execute planning failed: %s", exc)
+            return None
+
+        waves_raw = data.get("waves")
+        if not isinstance(waves_raw, list) or not waves_raw or len(waves_raw) > self._MAX_PLAN_WAVES:
+            return None
+        registered = set(tool_names)
+        waves: List[List[Dict[str, Any]]] = []
+        for wave in waves_raw:
+            if not isinstance(wave, list):
+                return None
+            steps = []
+            for step in wave[:4]:  # 每波次最多 4 个工具
+                if isinstance(step, dict) and step.get("tool") in registered:
+                    args = step.get("args") if isinstance(step.get("args"), dict) else {}
+                    steps.append({"tool": step["tool"], "args": args})
+            if steps:
+                waves.append(steps)
+        if not waves:
+            return None
+        return {"goal": data.get("goal", ""), "waves": waves,
+                "reasoning": data.get("reasoning", "")}
+
+    async def _run_plan_execute_stream(
+        self,
+        query: str,
+        context: AgentContext,
+        execution_id: str,
+        start_time: float,
+        plan: Dict[str, Any],
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """按波次并行执行计划（同波次 asyncio.gather），含一次重规划阀门。"""
+        yield {"type": "plan", "plan": plan}
+
+        steps: List[AgentStep] = []
+        tool_results: List[ToolResult] = []
+        stage_results: List[StageResult] = []
+        replans_left = self._MAX_REPLAN
+        wave_idx = 0
+
+        while wave_idx < len(plan["waves"]):
+            if time.perf_counter() - start_time > self.total_timeout:
+                yield {"type": "status", "message": "达到总超时，提前结束"}
+                break
+
+            wave = plan["waves"][wave_idx]
+            merged_args_list = []
+            for st in wave:
+                merged = dict(st["args"])
+                if "region" not in merged and context.effective_region:
+                    merged["region"] = context.effective_region
+                if "year" not in merged:
+                    merged["year"] = context.effective_year
+                for k, v in context.params_override.items():
+                    if k not in merged:
+                        merged[k] = v
+                merged_args_list.append(merged)
+
+            for i, st in enumerate(wave):
+                yield {
+                    "type": "tool_call", "step": len(steps) + i + 1,
+                    "name": st["tool"], "call_id": f"pe_{wave_idx}_{i}",
+                    "arguments": merged_args_list[i],
+                }
+
+            async def _exec_pe(i: int, _wave=wave, _widx=wave_idx) -> ToolResult:
+                return await self._execute_tool_with_retry(
+                    tool_name=_wave[i]["tool"],
+                    call_id=f"pe_{_widx}_{i}",
+                    merged_args=merged_args_list[i],
+                    context=context,
+                )
+
+            raw_results = await asyncio.gather(
+                *[_exec_pe(i) for i in range(len(wave))], return_exceptions=True,
+            )
+
+            wave_has_success = False
+            for i, raw in enumerate(raw_results):
+                if isinstance(raw, Exception):
+                    result = ToolResult(
+                        tool_name=wave[i]["tool"], call_id=f"pe_{wave_idx}_{i}",
+                        status=ToolStatus.ERROR, error_message=str(raw),
+                    )
+                else:
+                    result = raw
+                self._maybe_persist_artifact(result, execution_id)
+                tool_results.append(result)
+                sr = self._to_stage_result(result)
+                stage_results.append(sr)
+                steps.append(AgentStep(
+                    step_number=len(steps) + 1,
+                    thought=f"Plan wave {wave_idx + 1}",
+                    action=ToolCall(id=f"pe_{wave_idx}_{i}", tool_name=wave[i]["tool"],
+                                    arguments=merged_args_list[i]),
+                    observation=result,
+                ))
+                yield {
+                    "type": "tool_result", "step": len(steps),
+                    "name": result.tool_name, "call_id": result.call_id,
+                    "status": result.status.value, "duration_ms": result.duration_ms,
+                    "summary": sr.summary, "key_metrics": sr.key_metrics,
+                    "error": result.error_message, "retry_count": result.retry_count,
+                    "chart": result.data.get("chart") if result.data else None,
+                    "download_path": result.data.get("download_path") if result.data else None,
+                }
+                if result.status == ToolStatus.SUCCESS:
+                    wave_has_success = True
+
+            # 重规划阀门：整波失败且还有后续波次时，尝试重新规划一次
+            if not wave_has_success and replans_left > 0 and wave_idx < len(plan["waves"]) - 1:
+                replans_left -= 1
+                yield {"type": "status", "message": "整波失败，尝试重新规划..."}
+                new_plan = await self._generate_execution_plan(query, context)
+                if new_plan:
+                    plan = new_plan
+                    wave_idx = 0
+                    yield {"type": "plan", "plan": plan}
+                    continue
+            wave_idx += 1
+
+        # 状态判定 + 综合（与 ReAct 分支同构）
+        success_count = sum(1 for r in tool_results if r.status == ToolStatus.SUCCESS)
+        if not tool_results:
+            status = WorkflowStatus.FAILED
+        elif success_count == len(tool_results):
+            status = WorkflowStatus.COMPLETED
+        elif success_count > 0:
+            status = WorkflowStatus.PARTIAL
+        else:
+            status = WorkflowStatus.FAILED
+
+        yield {"type": "status", "message": "正在生成结构化报告..."}
+        try:
+            executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
+                query, tool_results, context
+            )
+        except Exception:  # noqa: BLE001
+            executive_summary, recommendation, confidence, full_analysis = ("", "", ConfidenceLevel.LOW, "")
+
+        report = AgentReport(
+            id=execution_id,
+            query=query,
+            workflow_type="plan_execute",
+            region=context.effective_region,
+            market=context.market.value,
+            executive_summary=executive_summary,
+            stage_results=stage_results,
+            recommendation=recommendation,
+            confidence_level=confidence,
+            risk_flags=self._extract_risk_flags(tool_results),
+            data_quality_notes=self._extract_quality_notes(tool_results),
+            tool_trace=tool_results,
+            steps=steps,
+            status=status,
+            metadata={"mode": "plan_execute", "llm_model": self.llm.config.model,
+                      "plan_goal": plan.get("goal", "")},
+        )
+        report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        if hasattr(self.llm, "get_usage_snapshot"):
+            report.metadata["llm_usage"] = self.llm.get_usage_snapshot(run_id=execution_id)
+        if hasattr(self.llm, "end_usage_scope"):
+            self.llm.end_usage_scope(run_id=execution_id)
+
+        report_answer = full_analysis or executive_summary
+        self._apply_grounding_check(report, report_answer, tool_results)
+
+        yield {
+            "type": "report",
+            "report": report.model_dump(mode="json"),
+            "answer": report_answer,
         }
         yield {"type": "done"}
 
@@ -742,11 +1014,11 @@ class AgentOrchestrator:
             status = WorkflowStatus.FAILED
 
         # Generate synthesis (LLM or fallback)
-        executive_summary, recommendation, confidence, _ = await self._synthesize(
+        executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
             query, tool_results, context
         )
 
-        return AgentReport(
+        report = AgentReport(
             id=execution_id,
             query=query,
             workflow_type=template.id,
@@ -767,6 +1039,10 @@ class AgentOrchestrator:
                 "template_name": template.name,
             },
         )
+        self._apply_grounding_check(
+            report, full_analysis or executive_summary, tool_results
+        )
+        return report
 
     # =========================================================================
     # ReAct Mode Execution (LLM-driven)
@@ -901,11 +1177,11 @@ class AgentOrchestrator:
             status = WorkflowStatus.FAILED
 
         # Synthesize final report
-        executive_summary, recommendation, confidence, _ = await self._synthesize(
+        executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
             query, tool_results, context
         )
 
-        return AgentReport(
+        report = AgentReport(
             id=execution_id,
             query=query,
             workflow_type="react_llm",
@@ -922,6 +1198,10 @@ class AgentOrchestrator:
             status=status,
             metadata={"mode": "react", "llm_model": self.llm.config.model},
         )
+        self._apply_grounding_check(
+            report, full_analysis or executive_summary, tool_results
+        )
+        return report
 
     # =========================================================================
     # Tool Execution Helper
@@ -1059,6 +1339,38 @@ class AgentOrchestrator:
                 adapted["year"] = adapted["year"] - 1
 
         return adapted
+
+    def _maybe_persist_artifact(self, result: ToolResult, execution_id: str) -> None:
+        """B1：大结果全量落盘，回灌摘要附路径（可恢复压缩）。
+
+        文件名平铺为 artifact_<execution_id>_<tool>_<rand>.json，复用现有
+        /api/v1/agent/download/{filename} 路由（其路径穿越防护同样生效）。
+        """
+        if result.status != ToolStatus.SUCCESS or not isinstance(result.data, dict):
+            return
+        if result.metadata.get("artifact_path") or result.metadata.get("cached"):
+            return
+        try:
+            payload = json.dumps(result.data, ensure_ascii=False, default=str)
+        except Exception:  # noqa: BLE001
+            return
+        if len(payload) <= self._ARTIFACT_THRESHOLD_CHARS:
+            return
+        try:
+            from pathlib import Path
+
+            out_dir = Path(__file__).resolve().parent.parent.parent / "output"
+            out_dir.mkdir(exist_ok=True)
+            safe_name = "".join(
+                c if c.isalnum() or c in "_-" else "_" for c in result.tool_name
+            )
+            filename = f"artifact_{execution_id}_{safe_name}_{uuid.uuid4().hex[:6]}.json"
+            (out_dir / filename).write_text(payload, encoding="utf-8")
+            result.metadata["artifact_path"] = f"/api/v1/agent/download/{filename}"
+            result.metadata["artifact_chars"] = len(payload)
+            logger.debug("Artifact persisted: %s (%d chars)", filename, len(payload))
+        except Exception as exc:  # noqa: BLE001 - 落盘失败不阻断主流程
+            logger.debug("Artifact persist failed: %s", exc)
 
     async def _execute_tool_with_retry(
         self, tool_name: str, call_id: str, merged_args: Dict[str, Any], context: AgentContext
@@ -1204,6 +1516,31 @@ class AgentOrchestrator:
     # =========================================================================
     # Result Helpers
     # =========================================================================
+
+    # =========================================================================
+    # Numeric Grounding Check (A1)
+    # =========================================================================
+
+    def _apply_grounding_check(
+        self, report: AgentReport, answer: str, tool_results: List[ToolResult]
+    ) -> None:
+        """数值溯源校验：结果写入 metadata，高占比不可溯源时追加风险标记。
+
+        只观测不阻断：误报时最多多一条风险提示，不会让报告失败。
+        """
+        try:
+            from agent.grounding import check_numeric_grounding
+
+            check = check_numeric_grounding(answer or "", tool_results)
+            report.metadata["numeric_grounding"] = check
+            if check["checked"] >= 4 and check["ungrounded_ratio"] > 0.5:
+                report.risk_flags.append(
+                    f"数值溯源警示：回答中 {check['checked']} 个数字有 "
+                    f"{check['checked'] - check['grounded']} 个未能追溯到工具结果，"
+                    f"请人工复核关键数值"
+                )
+        except Exception as exc:  # noqa: BLE001 - 护栏自身不得弄崩报告
+            logger.debug("Grounding check skipped: %s", exc)
 
     def _to_stage_result(self, result: ToolResult) -> StageResult:
         """Convert a ToolResult to a StageResult."""

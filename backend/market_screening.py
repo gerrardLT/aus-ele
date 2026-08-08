@@ -116,31 +116,40 @@ def _build_nem_candidates(db, *, year: int, quality_scores: dict[str, float]) ->
         cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s", (table_name,))
         if not cursor.fetchone():
             return []
+        # 性能优化（B4，2026-08-08）：
+        # 1) SQL 预过滤 NEM 区域，减少传输与遍历；
+        # 2) 保持 tuple 行，不再为 ~54 万行逐行构造 dict（旧版主要开销），
+        #    summarize_nem_fcas_opportunity 的 columns 参数原生支持 tuple 行。
+        # 数值路径未变，输出与旧实现逐字段等价（测试套验证）。
         cursor.execute(
             f"""
             SELECT settlement_date, region_id, rrp_aud_mwh,
                    raise1sec_rrp, raise6sec_rrp, raise60sec_rrp, raise5min_rrp, raisereg_rrp,
                    lower1sec_rrp, lower6sec_rrp, lower60sec_rrp, lower5min_rrp, lowerreg_rrp
             FROM {table_name}
-            ORDER BY settlement_date ASC
-            """
+            WHERE region_id IN ({', '.join('?' for _ in NEM_REGIONS)})
+            ORDER BY region_id ASC, settlement_date ASC
+            """,
+            tuple(NEM_REGIONS),
         )
         columns = [desc[0] for desc in cursor.description]
-        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        raw_rows = cursor.fetchall()
 
-    by_region: dict[str, list[dict]] = defaultdict(list)
-    for row in rows:
-        if row["region_id"] in NEM_REGIONS:
-            by_region[row["region_id"]].append(row)
+    region_idx = columns.index("region_id")
+    rrp_idx = columns.index("rrp_aud_mwh")
+    by_region: dict[str, list] = defaultdict(list)
+    for row in raw_rows:
+        by_region[row[region_idx]].append(row)
 
     items = []
     for region, region_rows in by_region.items():
-        prices = [float(row.get("rrp_aud_mwh") or 0.0) for row in region_rows]
+        prices = [float(row[rrp_idx] or 0.0) for row in region_rows]
         price_shape = _summarize_price_shape(prices)
         opportunity = summarize_nem_fcas_opportunity(
             region_rows,
             capacity_mw=SCREENING_PROFILE["power_mw"],
             duration_hours=SCREENING_PROFILE["duration_hours"],
+            columns=columns,
         )
         service_nets = [item["net_incremental_revenue_k"] for item in opportunity["service_breakdown"]]
         storage_fit = _clamp(

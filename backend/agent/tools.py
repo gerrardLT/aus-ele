@@ -46,6 +46,21 @@ def _safe_year(year: Any) -> int:
     return y
 
 
+def _price_table_exists(db, table_name: str) -> bool:
+    """检查分年价格表是否存在（P0：目标年表缺失容错）。
+
+    基线计量（2026-08-06）发现线上失败 Top1 是 trading_price_<year> 表缺失时
+    抛出裸 SQL 错误进入工具错误流。提前检查并让工具返回结构化 no_data，
+    使 LLM 与综合器能优雅处理（orchestrator 会将其提取为风险标记）而非报错。
+    检测自身失败时返回 True，交由原查询暴露真实错误，避免连接性问题被误判为缺数据。
+    """
+    try:
+        with db.get_connection() as conn:
+            return db._table_exists(conn, table_name)
+    except Exception:
+        return True
+
+
 # =============================================================================
 # Tool Executor Type
 # =============================================================================
@@ -84,9 +99,17 @@ class ToolRegistry:
     def list_definitions(self) -> List[ToolDefinition]:
         return list(self._tools.values())
 
-    def to_openai_tools(self) -> List[Dict[str, Any]]:
-        """Convert all tool definitions to OpenAI tools format."""
-        return [tool.to_openai_schema() for tool in self._tools.values()]
+    def to_openai_tools(self, visible: Optional[set] = None) -> List[Dict[str, Any]]:
+        """Convert all tool definitions to OpenAI tools format.
+
+        Args:
+            visible: 可选可见集（PoC 按阶段子集暴露）。为 None 时返回全量；
+                非 None 时仅返回名称在集合内的工具 schema。
+        """
+        tools = self._tools.values()
+        if visible is not None:
+            tools = [t for t in tools if t.name in visible]
+        return [tool.to_openai_schema() for tool in tools]
 
     async def execute(
         self,
@@ -218,6 +241,10 @@ def _exec_price_trend(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, An
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
+    if not _price_table_exists(db, table_name):
+        return {"region": region, "year": year, "status": "no_data",
+                "note": f"价格表 trading_price_{year} 尚未同步"}
+
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -282,6 +309,10 @@ def _exec_spike_profit(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, A
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
+    if not _price_table_exists(db, table_name):
+        return {"region": region, "year": year, "status": "no_data",
+                "spike_count": 0, "note": f"价格表 trading_price_{year} 尚未同步"}
+
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -315,6 +346,10 @@ def _exec_peak_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     window_hours = params.get("window_hours", 4)
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
+
+    if not _price_table_exists(db, table_name):
+        return {"region": region, "year": year, "status": "no_data",
+                "windows": [], "summary": {}, "note": f"价格表 trading_price_{year} 尚未同步"}
 
     with db.get_connection() as conn:
         cursor = conn.cursor()
@@ -367,6 +402,11 @@ def _exec_fcas_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
 
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
+
+    if not _price_table_exists(db, table_name):
+        return {"region": region, "year": year, "status": "no_data",
+                "has_fcas_data": False, "summary": {},
+                "note": f"价格表 trading_price_{year} 尚未同步"}
 
     with db.get_connection() as conn:
         cursor = conn.cursor()
@@ -676,6 +716,9 @@ def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Di
     # Fetch price data for backtest
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
+    if not _price_table_exists(db, table_name):
+        return {"region": region, "year": year, "status": "no_data",
+                "note": f"价格表 trading_price_{year} 尚未同步"}
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -759,6 +802,9 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     db = get_db()
     safe_yr = _safe_year(year)
     table_name = f"trading_price_{safe_yr}"
+    if not _price_table_exists(db, table_name):
+        return {"region": region, "year": year, "status": "no_data",
+                "note": f"价格表 trading_price_{safe_yr} 尚未同步"}
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -1037,6 +1083,10 @@ def _exec_timeseries_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
 
+    if not _price_table_exists(db, table_name):
+        return {"status": "no_data", "region": region, "year": year,
+                "note": f"价格表 trading_price_{year} 尚未同步"}
+
     # Whitelist metric columns
     allowed_metrics = {
         "rrp_aud_mwh", "raisereg_rrp", "lowerreg_rrp",
@@ -1181,6 +1231,47 @@ def _exec_export_data(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, An
     }
 
 
+def _exec_read_artifact(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Read a persisted tool-result artifact (B1: 可恢复压缩的读取端).
+
+    只允许读 output/ 目录下的 artifact_* 文件（路径穿越防护与
+    download 路由一致）；超大文件截断返回前 20k 字符。
+    """
+    import json as _json
+    from pathlib import Path
+
+    filename = (params.get("filename") or "").strip()
+    if not filename or ".." in filename or "/" in filename or "\\" in filename:
+        return {"status": "error", "error": "非法的 artifact 文件名"}
+    if not filename.startswith("artifact_") or not filename.endswith(".json"):
+        return {"status": "error", "error": "只允许读取 artifact_*.json 文件"}
+
+    output_dir = Path(__file__).resolve().parent.parent.parent / "output"
+    filepath = (output_dir / filename).resolve()
+    if not str(filepath).startswith(str(output_dir.resolve())):
+        return {"status": "error", "error": "非法的 artifact 路径"}
+    if not filepath.exists():
+        return {"status": "error", "error": f"artifact 不存在: {filename}"}
+
+    try:
+        text = filepath.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"status": "error", "error": f"读取失败: {exc}"}
+
+    if len(text) > 20000:
+        return {
+            "status": "success",
+            "truncated": True,
+            "total_chars": len(text),
+            "note": "文件过大，返回前 20000 字符；如需其他部分请说明",
+            "data_preview": text[:20000],
+        }
+    try:
+        return {"status": "success", "truncated": False, "data": _json.loads(text)}
+    except _json.JSONDecodeError:
+        return {"status": "success", "truncated": False, "raw": text}
+
+
 def _exec_risk_stratification(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute revenue risk stratification."""
     from engines.risk_stratification_engine import RiskStratificationEngine
@@ -1194,6 +1285,10 @@ def _exec_risk_stratification(params: Dict[str, Any], ctx: AgentContext) -> Dict
     duration_hours = params.get("duration_hours", 4.0)
     year = _safe_year(year)
     table_name = f"trading_price_{year}"
+
+    if not _price_table_exists(db, table_name):
+        return {"region": region, "year": year, "status": "no_data",
+                "note": f"价格表 trading_price_{year} 尚未同步"}
 
     with db.get_connection() as conn:
         cursor = conn.cursor()
@@ -1726,6 +1821,23 @@ def build_tool_registry() -> ToolRegistry:
         _exec_export_data,
     )
 
+    # B1: read_artifact — 配套 artifact 落盘机制的按需读取端
+    registry.register(
+        ToolDefinition(
+            name="read_artifact",
+            description="Read the full persisted data of a tool result artifact. Use when a tool_output hint says 完整数据已落盘 and you need fields missing from the summary. Only filenames starting with 'artifact_' are allowed.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "Artifact filename from the tool_output hint (artifact_*.json)"},
+                },
+                "required": ["filename"],
+            },
+            stage="Data Exploration",
+        ),
+        _exec_read_artifact,
+    )
+
     # --- Phase 2: Chart / Scenario / Portfolio / Generation ---
     registry.register(
         ToolDefinition(
@@ -2104,6 +2216,11 @@ def _exec_market_pulse(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, A
     year = _safe_year(year)
 
     result = {"region": region, "year": year, "snapshots": {}}
+
+    if not _price_table_exists(db, f"trading_price_{year}"):
+        result["status"] = "no_data"
+        result["note"] = f"价格表 trading_price_{year} 尚未同步"
+        return result
 
     try:
         with db.get_connection() as conn:

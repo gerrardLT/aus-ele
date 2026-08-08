@@ -117,7 +117,12 @@ class TestAgentSchemas(unittest.TestCase):
         msg = tr.to_llm_message()
         self.assertEqual(msg["role"], "tool")
         self.assertEqual(msg["tool_call_id"], "call_123")
-        parsed = json.loads(msg["content"])
+        # A2 新契约：内容被 <tool_output> 定界包裹（声明为数据非指令）
+        content = msg["content"]
+        prefix = '<tool_output tool="test">'
+        self.assertTrue(content.startswith(prefix))
+        self.assertTrue(content.endswith("</tool_output>"))
+        parsed = json.loads(content[len(prefix):-len("</tool_output>")])
         self.assertEqual(parsed["value"], 42)
 
     def test_tool_result_to_llm_message_error(self):
@@ -128,9 +133,27 @@ class TestAgentSchemas(unittest.TestCase):
             error_message="Something failed",
         )
         msg = tr.to_llm_message()
-        parsed = json.loads(msg["content"])
+        # A2 新契约：错误消息同样被定界包裹
+        content = msg["content"]
+        prefix = '<tool_output tool="test">'
+        self.assertTrue(content.startswith(prefix))
+        self.assertTrue(content.endswith("</tool_output>"))
+        parsed = json.loads(content[len(prefix):-len("</tool_output>")])
         self.assertEqual(parsed["error"], "Something failed")
         self.assertEqual(parsed["status"], "error")
+
+    def test_tool_result_artifact_hint_appended(self):
+        """B1 契约：落盘 artifact 时回灌内容附路径提示。"""
+        tr = ToolResult(
+            tool_name="test",
+            call_id="call_789",
+            status=ToolStatus.SUCCESS,
+            data={"value": 42},
+            metadata={"artifact_path": "/api/v1/agent/download/artifact_abc.json"},
+        )
+        msg = tr.to_llm_message()
+        self.assertIn("read_artifact", msg["content"])
+        self.assertIn("artifact_abc.json", msg["content"])
 
     def test_agent_report_defaults(self):
         report = AgentReport(query="test query")

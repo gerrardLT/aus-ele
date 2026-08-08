@@ -193,6 +193,9 @@ async def run_agent(
         year=request.year,
         params_override=request.params_override,
         max_steps=request.max_steps,
+        tool_profile=request.tool_profile,
+        enable_tool_routing=request.enable_tool_routing,
+        enable_plan_execute=request.enable_plan_execute,
     )
 
     try:
@@ -254,6 +257,9 @@ async def _execute_async_task(task_id: str, request: AgentRunRequest) -> None:
         year=request.year,
         params_override=request.params_override,
         max_steps=request.max_steps,
+        tool_profile=request.tool_profile,
+        enable_tool_routing=request.enable_tool_routing,
+        enable_plan_execute=request.enable_plan_execute,
     )
 
     def progress_cb(msg: str) -> None:
@@ -329,6 +335,9 @@ async def chat_stream(
         params_override=request.params_override,
         max_steps=request.max_steps,
         session_id=request.session_id,
+        tool_profile=request.tool_profile,
+        enable_tool_routing=request.enable_tool_routing,
+        enable_plan_execute=request.enable_plan_execute,
     )
     history = [m.model_dump() for m in request.history]
 
@@ -559,7 +568,70 @@ def _ensure_agent_log_table(cursor) -> None:
     if _agent_log_table_ready:
         return
     cursor.execute(_CREATE_AGENT_LOG_TABLE)
+    # B2: 轨迹级可观测列（旧表升级，已存在则跳过）
+    try:
+        cursor.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'agent_execution_log' AND column_name = 'trajectory_json'"
+        )
+        if cursor.fetchone() is None:
+            cursor.execute(
+                "ALTER TABLE agent_execution_log ADD COLUMN trajectory_json TEXT"
+            )
+    except Exception:  # noqa: BLE001 - 列升级失败不阻断日志写入
+        pass
     _agent_log_table_ready = True
+
+
+# ---------------------------------------------------------------------------
+# B2: 轨迹级可观测——紧凑轨迹摘要 + 失败分桶
+# ---------------------------------------------------------------------------
+
+
+def _classify_tool_error(status: str, error_message: str) -> str:
+    """工具失败分桶（供线上失败模式统计）。"""
+    err = (error_message or "").lower()
+    if status == "timeout" or "timeout" in err or "timed out" in err:
+        return "timeout"
+    if "no_data" in err or "no data" in err:
+        return "no_data"
+    if "不存在" in (error_message or "") or "does not exist" in err or "尚未同步" in (error_message or ""):
+        return "missing_table"
+    if "sql" in err or "syntax" in err or "不在允许查询列表" in (error_message or ""):
+        return "sql_error"
+    return "other"
+
+
+def _build_trajectory(steps) -> list:
+    """从 steps（AgentStep 对象或 dict）构建紧凑轨迹摘要。
+
+    每步一条：工具名/状态/耗时/重试/失败分桶——支持"为何这次没调 X"类诊断。
+    """
+    trajectory = []
+    for step in steps or []:
+        if isinstance(step, dict):
+            action = step.get("action") or {}
+            obs = step.get("observation") or {}
+            tool = action.get("tool_name")
+            status = obs.get("status", "unknown")
+            dur = obs.get("duration_ms")
+            retry = obs.get("retry_count")
+            err = obs.get("error_message")
+        else:
+            action = getattr(step, "action", None)
+            obs = getattr(step, "observation", None)
+            tool = getattr(action, "tool_name", None) if action else None
+            status = obs.status.value if obs is not None and getattr(obs, "status", None) is not None else "unknown"
+            dur = getattr(obs, "duration_ms", None)
+            retry = getattr(obs, "retry_count", None)
+            err = getattr(obs, "error_message", None)
+        if not tool:
+            continue
+        entry = {"tool": tool, "status": status, "duration_ms": dur, "retry": retry or 0}
+        if status != "success":
+            entry["error_bucket"] = _classify_tool_error(status, err or "")
+        trajectory.append(entry)
+    return trajectory
 
 
 def _log_execution(report) -> None:
@@ -573,8 +645,8 @@ def _log_execution(report) -> None:
             _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
-                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     report.id,
                     report.query,
@@ -593,6 +665,7 @@ def _log_execution(report) -> None:
                         default=str,
                     ),
                     report.total_duration_ms,
+                    json.dumps(_build_trajectory(report.steps), ensure_ascii=False),
                 ),
             )
             conn.commit()
@@ -615,8 +688,8 @@ def _log_execution_dict(report: dict) -> None:
             _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
-                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     report.get("id"),
                     report.get("query", ""),
@@ -631,6 +704,7 @@ def _log_execution_dict(report: dict) -> None:
                         default=str,
                     ),
                     report.get("total_duration_ms", 0.0),
+                    json.dumps(_build_trajectory(report.get("steps", [])), ensure_ascii=False),
                 ),
             )
             conn.commit()

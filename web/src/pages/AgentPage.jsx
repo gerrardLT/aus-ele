@@ -48,11 +48,26 @@ const TOOL_STATUS_COLOR = {
 let msgSeq = 0;
 const nextId = () => `m${Date.now()}_${msgSeq++}`;
 
+// 分析模式（工具子集暴露 PoC 灰度，2026-08-07）：
+// full=全量动作空间（默认，行为不变）；routed=意图路由（后端自动分类，
+// 无法归类回落全量）；其余=显式阶段子集（无路由风险）。
+const TOOL_MODES = [
+  { id: 'full', label: '全量工具空间' },
+  { id: 'routed', label: '智能路由（灰度）' },
+  { id: 'stage1_screening', label: '市场筛选子集' },
+  { id: 'stage2_revenue', label: '收入分析子集' },
+  { id: 'stage4_outlook', label: '风险前瞻子集' },
+  { id: 'stage6_financial', label: '财务建模子集' },
+  { id: 'multi_region_decision', label: '多区域对比子集' },
+  { id: 'data_exploration', label: '数据探索子集' },
+];
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AgentPage() {
   const [market, setMarket] = useState('NEM');
   const [region, setRegion] = useState('NSW1');
+  const [toolMode, setToolMode] = useState('full');
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [streaming, setStreaming] = useState(false);
@@ -246,6 +261,12 @@ export default function AgentPage() {
         max_steps: 15,
         params_override: bessParams,
         session_id: sessionIdRef.current,
+        // 工具暴露模式：routed=开启意图路由；显式子集直传 profile；full=缺省全量
+        ...(toolMode === 'routed'
+          ? { enable_tool_routing: true }
+          : toolMode !== 'full'
+            ? { tool_profile: toolMode }
+            : {}),
       };
 
       try {
@@ -268,7 +289,7 @@ export default function AgentPage() {
         refreshHistory();
       }
     },
-    [messages, streaming, market, region, bessParams, handleEvent, patchActive, refreshHistory],
+    [messages, streaming, market, region, bessParams, toolMode, handleEvent, patchActive, refreshHistory],
   );
 
   const handleSend = useCallback(() => {
@@ -343,6 +364,8 @@ export default function AgentPage() {
       setMarket={setMarket}
       region={region}
       setRegion={setRegion}
+      toolMode={toolMode}
+      setToolMode={setToolMode}
       regions={regions}
       input={input}
       setInput={setInput}
@@ -393,6 +416,8 @@ function AgentLayout({
   setMarket,
   region,
   setRegion,
+  toolMode,
+  setToolMode,
   regions,
   input,
   setInput,
@@ -551,6 +576,19 @@ function AgentLayout({
             {regions.map((r) => (
               <option key={r} value={r}>
                 {r}
+              </option>
+            ))}
+          </select>
+          <select
+            value={toolMode}
+            onChange={(e) => setToolMode(e.target.value)}
+            disabled={streaming}
+            title="分析模式：工具子集暴露灰度（PoC）——子集模式更省 token 且限制探索范围；深度/不确定问题用全量"
+            className="rounded border border-[var(--color-border)] bg-transparent px-3 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] disabled:opacity-40"
+          >
+            {TOOL_MODES.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
               </option>
             ))}
           </select>
