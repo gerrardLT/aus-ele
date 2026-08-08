@@ -6,6 +6,38 @@ import { getApiBase } from './apiBase.js';
 const API_BASE = getApiBase();
 const AGENT_BASE = `${API_BASE}/v1/agent`;
 
+// ─── Web 会话引导（后端 P0 加固后 agent 端点要求 JWT Bearer） ────────────────
+// 前端启动后向 /auth/web-session 引导一个短期令牌并缓存；
+// 生产可通过 VITE_BOOTSTRAP_SECRET 提供边缘共享密钥（可选）。
+let _token = null;
+let _tokenExp = 0;
+
+async function ensureAuthToken() {
+  const now = Math.floor(Date.now() / 1000);
+  if (_token && _tokenExp > now + 30) return _token;
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    const bootstrapSecret = import.meta.env.VITE_BOOTSTRAP_SECRET;
+    if (bootstrapSecret) headers['X-Bootstrap-Secret'] = bootstrapSecret;
+    const res = await fetch(`${API_BASE}/v1/auth/web-session`, {
+      method: 'POST',
+      headers,
+    });
+    if (!res.ok) return null;
+    const d = await res.json();
+    _token = d.token || null;
+    _tokenExp = now + (d.expires_in || 3600);
+    return _token;
+  } catch {
+    return null;
+  }
+}
+
+async function authHeaders(extra = {}) {
+  const t = await ensureAuthToken();
+  return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
+}
+
 /**
  * Run an agent workflow synchronously.
  * @param {Object} params
@@ -21,7 +53,7 @@ const AGENT_BASE = `${API_BASE}/v1/agent`;
 export async function runAgent(params) {
   const response = await fetch(`${AGENT_BASE}/run`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(params),
   });
   if (!response.ok) {
@@ -39,7 +71,7 @@ export async function runAgent(params) {
 export async function runAgentAsync(params) {
   const response = await fetch(`${AGENT_BASE}/run-async`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(params),
   });
   if (!response.ok) {
@@ -88,7 +120,9 @@ export async function listWorkflows() {
  * @returns {Promise<{executions: Array, total: number}>}
  */
 export async function getAgentHistory(limit = 20) {
-  const response = await fetch(`${AGENT_BASE}/history?limit=${limit}`);
+  const response = await fetch(`${AGENT_BASE}/history?limit=${limit}`, {
+    headers: await authHeaders(),
+  });
   if (!response.ok) throw new Error(`Failed to get history: ${response.status}`);
   return response.json();
 }
@@ -110,7 +144,10 @@ export async function getExecutionDetail(executionId) {
  * @returns {Promise<{deleted: boolean}>}
  */
 export async function deleteExecution(executionId) {
-  const response = await fetch(`${AGENT_BASE}/history/${executionId}`, { method: 'DELETE' });
+  const response = await fetch(`${AGENT_BASE}/history/${executionId}`, {
+    method: 'DELETE',
+    headers: await authHeaders(),
+  });
   if (!response.ok) throw new Error(`Failed to delete execution: ${response.status}`);
   return response.json();
 }
@@ -180,10 +217,10 @@ export async function pollTaskUntilDone(taskId, options = {}) {
 export async function streamAgentChat(params, { onEvent, signal } = {}) {
   const response = await fetch(`${AGENT_BASE}/chat-stream`, {
     method: 'POST',
-    headers: {
+    headers: await authHeaders({
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
-    },
+    }),
     body: JSON.stringify(params),
     signal,
   });
