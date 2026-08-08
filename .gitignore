@@ -100,3 +100,4 @@ artifacts-*.png
 test-results/
 reports/backtest_report.txt
 data/predispatch_archive/
+web/.env.local

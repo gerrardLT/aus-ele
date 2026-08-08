@@ -12,6 +12,10 @@ COPY web /app
 ARG VITE_API_BASE=/api
 ENV VITE_API_BASE=${VITE_API_BASE}
 
+# web-session 引导密钥（构建期嵌入，生产由 CI secret 注入）
+ARG VITE_BOOTSTRAP_SECRET=
+ENV VITE_BOOTSTRAP_SECRET=${VITE_BOOTSTRAP_SECRET}
+
 RUN npm run build
 
 FROM nginx:1.27-alpine

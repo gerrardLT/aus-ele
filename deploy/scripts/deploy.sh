@@ -132,6 +132,7 @@ write_env_file() {
         echo "PG_HOST_PORT=${PG_HOST_PORT:-15432}"
         echo "AUS_ELE_JWT_SECRET=${AUS_ELE_JWT_SECRET}"
         echo "FINGRID_API_KEY=${FINGRID_API_KEY}"
+        echo "AUS_ELE_WEB_BOOTSTRAP_SECRET=${AUS_ELE_WEB_BOOTSTRAP_SECRET:-}"
         echo "AUS_ELE_PG_PASSWORD=${AUS_ELE_PG_PASSWORD:-aemo_pg_pass_2026}"
         # AI Agent LLM 配置（U6）— 固定值，无需 GitHub Secrets
         echo "AUS_ELE_AGENT_LLM_PROVIDER=openai"

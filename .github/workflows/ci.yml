@@ -210,15 +210,17 @@ jobs:
         env:
           RETRY_MAX: "3"
           RETRY_INTERVAL_S: "10"
+          WEB_BOOTSTRAP_SECRET: ${{ secrets.AUS_ELE_WEB_BOOTSTRAP_SECRET }}
         run: |
           set -uo pipefail
           SHA="${{ github.sha }}"
           PREFIX="${REGISTRY}/${IMAGE_PREFIX}"
 
           build_push() {
-            local svc="$1" file="$2"
+            local svc="$1" file="$2"; shift 2
             docker buildx build \
               --file "$file" \
+              "$@" \
               --tag "${PREFIX}/${svc}:latest" \
               --tag "${PREFIX}/${svc}:${SHA}" \
               --cache-from "type=gha,scope=${svc}" \
@@ -229,7 +231,8 @@ jobs:
 
           retry_build_push() {
             local svc="$1" file="$2" attempt=1
-            until build_push "$svc" "$file"; do
+            local extra="${3:-}"
+            until build_push "$svc" "$file" ${extra}; do
               if [ "$attempt" -ge "$RETRY_MAX" ]; then
                 echo "::error::镜像构建/推送失败（已重试 ${RETRY_MAX} 次）: ${svc}（R3.7/R3.8）"
                 return 1
@@ -242,7 +245,7 @@ jobs:
           }
 
           retry_build_push backend Dockerfile.backend
-          retry_build_push web web/Dockerfile
+          retry_build_push web web/Dockerfile "--build-arg VITE_BOOTSTRAP_SECRET=${WEB_BOOTSTRAP_SECRET:-}"
 
       - name: 阶段状态汇总
         if: always()
@@ -336,13 +339,14 @@ jobs:
           port: ${{ secrets.SSH_PORT || '22' }}
           timeout: 30s
           command_timeout: 20m
-          envs: AUS_ELE_JWT_SECRET,FINGRID_API_KEY,IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_USERNAME,GHCR_TOKEN,API_HOST_PORT,WEB_HOST_PORT,APP_DIR,AUS_ELE_PG_PASSWORD,AUS_ELE_CORS_ALLOW_ORIGINS
+          envs: AUS_ELE_JWT_SECRET,FINGRID_API_KEY,AUS_ELE_WEB_BOOTSTRAP_SECRET,IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_USERNAME,GHCR_TOKEN,API_HOST_PORT,WEB_HOST_PORT,APP_DIR,AUS_ELE_PG_PASSWORD,AUS_ELE_CORS_ALLOW_ORIGINS
           script: |
             set -e
             bash "${APP_DIR}/deploy/scripts/deploy.sh"
         env:
           AUS_ELE_JWT_SECRET: ${{ secrets.AUS_ELE_JWT_SECRET }}
           FINGRID_API_KEY: ${{ secrets.FINGRID_API_KEY }}
+          AUS_ELE_WEB_BOOTSTRAP_SECRET: ${{ secrets.AUS_ELE_WEB_BOOTSTRAP_SECRET }}
           AUS_ELE_PG_PASSWORD: ${{ secrets.AUS_ELE_PG_PASSWORD || 'aemo_pg_pass_2026' }}
           IMAGE_TAG: ${{ github.sha }}
           REGISTRY: ${{ env.REGISTRY }}

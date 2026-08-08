@@ -4,9 +4,9 @@
 JWT Bearer，但 web 前端此前没有任何令牌获取/附加逻辑，导致 agent UI 全部 401
 （"Missing authorization header"）。本模块为 web UI 提供会话引导端点：
 
-- 若设置环境变量 ``AUS_ELE_WEB_BOOTSTRAP_SECRET``，请求必须携带匹配的
-  ``X-Bootstrap-Secret`` 头（生产可由边缘层注入或构建期嵌入 VITE_ 变量）；
-  未设置时视为内网/开发环境直接签发（仍写审计日志）。
+- 环境变量 ``AUS_ELE_WEB_BOOTSTRAP_SECRET`` 为**强制**门控：未配置时拒绝签发
+  （503），不匹配时 403（L3 审查修复，2026-08-08）。生产由边缘层注入或
+  构建期嵌入 VITE_ 变量；本地开发在 .env / web/.env.local 配置。
 - 签发短期 access token（principal=web-session），复用 access_control 的
   签发与审计链路（upsert_access_token + audit access_token.issued）。
 - 该端点是 OIDC 人工登录接入前的权宜方案；安全 posture 说明见任务记录 §16.4-3。
@@ -60,7 +60,13 @@ def create_web_session(
 ) -> dict:
     """Issue a short-lived access token for the web UI (bootstrap session)."""
     expected = os.environ.get("AUS_ELE_WEB_BOOTSTRAP_SECRET", "").strip()
-    if expected and (x_bootstrap_secret or "") != expected:
+    if not expected:
+        # L3 修复：禁止未配置 secret 时裸签发（CWE-306）
+        raise HTTPException(
+            status_code=503,
+            detail="Bootstrap secret not configured (AUS_ELE_WEB_BOOTSTRAP_SECRET)",
+        )
+    if (x_bootstrap_secret or "") != expected:
         raise HTTPException(status_code=403, detail="Bootstrap secret mismatch")
 
     from access_control import issue_access_token
