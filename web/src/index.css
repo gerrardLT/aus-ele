@@ -42,6 +42,43 @@
   --glow-color: oklch(0.65 0.18 260);
 }
 
+/* --- Agent 执行状态/数据可视化 token（DESIGN.md：状态三色恒与图标双编码，
+   暗色下负值需红+负号+括号三重编码） --- */
+:root {
+  --color-status-success: #16a34a;
+  --color-status-timeout: #b45309;
+  --color-status-error: #dc2626;
+  --color-negative: #dc2626;
+  --font-mono-data: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+[data-theme="dark"] {
+  --color-status-success: oklch(0.72 0.15 155);
+  --color-status-timeout: oklch(0.78 0.14 80);
+  --color-status-error: oklch(0.66 0.21 25);
+  --color-negative: #FF6B6B;
+}
+
+/* --- 报告打印/导出强制浅色（DESIGN.md：投委会 PDF 场景）：
+   在打印媒介下将报告作用域内的主题变量覆盖为浅色 --- */
+@media print {
+  .agent-report-print {
+    --color-background: oklch(0.965 0.008 250);
+    --color-panel: oklch(0.985 0.005 250);
+    --color-surface: oklch(0.993 0.003 250);
+    --color-surface-hover: oklch(0.955 0.01 248);
+    --color-text: oklch(0.24 0.028 255);
+    --color-muted: oklch(0.44 0.018 252);
+    --color-border: oklch(0.88 0.01 248);
+    --color-error: oklch(0.58 0.21 25);
+    --color-inverted: oklch(0.28 0.03 255);
+    --color-inverted-text: oklch(0.985 0.004 250);
+    --color-primary: oklch(0.50 0.2 260);
+    --color-negative: #b91c1c;
+    --glow-opacity: 0;
+    background: white;
+  }
+}
+
 @layer base {
   body {
     background-color: var(--color-background);

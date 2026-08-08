@@ -32,18 +32,63 @@ const MARKETS = [
 const REGIONS_NEM = ['NSW1', 'QLD1', 'SA1', 'TAS1', 'VIC1'];
 const REGIONS_WEM = ['WEM'];
 
+// 状态三色恒与图标双编码（DESIGN.md：色盲安全，颜色不作为唯一信息通道）
 const STATUS_MAP = {
-  completed: { color: 'var(--color-primary)', label: '完成' },
-  partial: { color: '#D97706', label: '部分完成' },
-  failed: { color: 'var(--color-error)', label: '失败' },
-  running: { color: '#6B7280', label: '执行中' },
+  completed: { color: 'var(--color-status-success)', icon: '✓', label: '完成' },
+  partial: { color: 'var(--color-status-timeout)', icon: '⚠', label: '部分完成' },
+  failed: { color: 'var(--color-status-error)', icon: '✕', label: '失败' },
+  running: { color: 'var(--color-muted)', icon: '●', label: '执行中' },
 };
 
-const TOOL_STATUS_COLOR = {
-  success: 'bg-green-500',
-  error: 'bg-red-500',
-  timeout: 'bg-red-500',
+// 工具级执行状态（Dynamic Checklist 六态：含 cached/degraded）
+const TOOL_STATUS_META = {
+  success: { icon: '✓', color: 'var(--color-status-success)', label: '成功' },
+  running: { icon: '●', color: 'var(--color-primary)', label: '执行中' },
+  timeout: { icon: '⏱', color: 'var(--color-status-timeout)', label: '超时' },
+  error: { icon: '✕', color: 'var(--color-status-error)', label: '失败' },
+  cached: { icon: '↺', color: 'var(--color-muted)', label: '缓存' },
 };
+
+function StatusIcon({ status, meta = TOOL_STATUS_META }) {
+  const m = meta[status] || meta.running;
+  return (
+    <span
+      aria-label={m.label}
+      className={`inline-flex shrink-0 items-center justify-center text-[11px] leading-none ${
+        status === 'running' ? 'animate-pulse' : ''
+      }`}
+      style={{ color: m.color, width: 14 }}
+    >
+      {m.icon}
+    </span>
+  );
+}
+
+// 负值三重编码（DESIGN.md：红 + 负号 + 括号，防暗底误读负号）
+function formatSigned(value, fmt = (v) => v.toLocaleString('en-US', { maximumFractionDigits: 0 })) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  const n = Number(value);
+  if (n < 0) {
+    return (
+      <span style={{ color: 'var(--color-negative)' }}>
+        ({fmt(Math.abs(n))})
+      </span>
+    );
+  }
+  return fmt(n);
+}
+
+// 错误归因分离（DESIGN.md：工具故障 ≠ AI 能力，不把外部问题归咎于 agent）
+function attributeError(toolName, errorMsg) {
+  const msg = (errorMsg || '').toLowerCase();
+  if (msg.includes('不存在') || msg.includes('does not exist') || msg.includes('尚未同步'))
+    return { text: errorMsg, external: true, hint: '外部数据未就绪，与 AI 能力无关' };
+  if (msg.includes('timeout') || msg.includes('超时'))
+    return { text: errorMsg, external: true, hint: '计算超出时间预算（可重试或降低参数规模）' };
+  if (msg.includes('connection') || msg.includes('502') || msg.includes('503'))
+    return { text: errorMsg, external: true, hint: '外部服务不可达，稍后重试' };
+  return { text: errorMsg, external: false, hint: null };
+}
 
 let msgSeq = 0;
 const nextId = () => `m${Date.now()}_${msgSeq++}`;
@@ -491,13 +536,12 @@ function AgentLayout({
                 className="group relative w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
               >
                 <div className="flex items-center gap-1.5">
-                  <span
-                    className="h-1.5 w-1.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: STATUS_MAP[item.status]?.color || '#6B7280' }}
-                  />
+                  <span className="inline-flex w-3 shrink-0 justify-center text-[9px]" style={{ color: STATUS_MAP[item.status]?.color || '#6B7280' }}>
+                    {STATUS_MAP[item.status]?.icon || '●'}
+                  </span>
                   <span className="truncate">{item.query}</span>
                 </div>
-                <div className="mt-0.5 pl-3 text-[10px] text-white/30">
+                <div className="mt-0.5 pl-3 font-mono text-[10px] tabular-nums text-white/30">
                   {item.market}/{item.region || '—'} ·{' '}
                   {item.total_duration_ms
                     ? `${(item.total_duration_ms / 1000).toFixed(1)}s`
@@ -754,9 +798,9 @@ function UserBubble({ text }) {
 }
 
 function AssistantMessage({ message, onCompare, onSuggest }) {
-  const { answer, trace, status_line, error, report, streaming, answerDone, plan, reflections, charts, downloadLink } = message;
-  const hasTrace = trace && trace.length > 0;
-  const isDone = !streaming;
+  const { answer, trace, status_line, error, report, streaming, answerDone, plan, charts, downloadLink } = message;
+  const degraded = report && report.metadata && report.metadata.llm_degraded;
+  const hasEvidence = (trace && trace.length > 0) || report || (charts && charts.length > 0) || downloadLink;
 
   return (
     <div className="flex flex-col gap-3">
@@ -768,24 +812,172 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
         </div>
       )}
 
+      {/* 降级横幅（DESIGN.md Screen 5 Pattern B：细条琥珀色，不阻断工作区） */}
+      {degraded && <DegradedBanner reason={report.metadata.llm_degraded_reason} />}
+
       {/* Plan view */}
       {plan && <PlanView plan={plan} />}
 
-      {/* ① Structured report (conclusion) — always visible, top priority */}
-      {report && (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <ReportView report={report} onCompare={onCompare} onSuggest={onSuggest} />
+      {/* 双栏：左=推理流，右=证据面板（窄屏自动堆叠，DESIGN.md Screen 1/6） */}
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(380px,460px)]">
+        <div className="flex min-w-0 flex-col gap-3">
+          {answer && (
+            <Collapsible
+              title="推理过程"
+              defaultOpen={!(!streaming)}
+              badge={streaming && !answerDone ? '生成中' : undefined}
+            >
+              <MarkdownText text={answer} streaming={streaming && !answerDone} />
+            </Collapsible>
+          )}
+          {error && (
+            <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2.5 text-xs text-[var(--color-error)]">
+              {error}
+            </div>
+          )}
         </div>
-      )}
 
-      {/* Charts from tool results */}
-      {charts && charts.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {charts.map((c, i) => <ChartRenderer key={i} chart={c} />)}
+        {hasEvidence && (
+          <EvidencePanel message={message} onCompare={onCompare} onSuggest={onSuggest} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Degraded banner (LLM 不可用 → 模板模式透明化) ────────────────────
+
+function DegradedBanner({ reason }) {
+  return (
+    <div
+      className="flex items-start gap-2 rounded-lg border px-4 py-2.5 text-xs"
+      style={{
+        borderColor: 'color-mix(in srgb, var(--color-status-timeout) 45%, transparent)',
+        background: 'color-mix(in srgb, var(--color-status-timeout) 8%, transparent)',
+      }}
+    >
+      <span style={{ color: 'var(--color-status-timeout)' }}>⚠</span>
+      <div>
+        <div className="font-medium" style={{ color: 'var(--color-status-timeout)' }}>
+          LLM 服务不可用，已降级为确定性模板模式
         </div>
-      )}
+        {reason && <div className="mt-0.5 text-[var(--color-muted)]">{reason}</div>}
+      </div>
+    </div>
+  );
+}
 
-      {/* Download link */}
+// ─── Evidence panel (四 Tab：轨迹/图表/报告/证据，DESIGN.md Screen 1) ────────────
+
+const EVIDENCE_TABS = [
+  { id: 'trace', label: '轨迹' },
+  { id: 'charts', label: '图表' },
+  { id: 'report', label: '报告' },
+  { id: 'evidence', label: '证据' },
+];
+
+function EvidencePanel({ message, onCompare, onSuggest }) {
+  const { trace, report, charts, totalSteps } = message;
+  const [tab, setTab] = useState('trace');
+
+  // 报告生成后自动切换到报告 tab
+  useEffect(() => {
+    if (report) setTab('report');
+  }, [report]);
+
+  const counts = {
+    trace: (trace && trace.length) || 0,
+    charts: (charts && charts.length) || 0,
+    report: report ? 1 : 0,
+    evidence: (trace && trace.length) || 0,
+  };
+
+  return (
+    <div className="flex min-w-0 flex-col self-start rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+      <div className="flex items-center gap-1 border-b border-[var(--color-border)] px-2 pt-2">
+        {EVIDENCE_TABS.map((t) => {
+          const disabled = counts[t.id] === 0;
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              disabled={disabled}
+              className={`rounded-t px-2.5 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-30 ${
+                active
+                  ? 'border border-b-0 border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]'
+                  : 'text-[var(--color-muted)] hover:text-[var(--color-text)]'
+              }`}
+            >
+              {t.label}
+              {t.id !== 'report' && counts[t.id] > 0 && (
+                <span className="ml-1 font-mono tabular-nums text-[10px]">({counts[t.id]})</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div className="max-h-[600px] overflow-y-auto p-3">
+        {tab === 'trace' && <ToolTrace trace={trace || []} totalSteps={totalSteps} />}
+        {tab === 'charts' && (
+          <div className="flex flex-col gap-3">
+            {(charts || []).map((c, i) => (
+              <ChartRenderer key={i} chart={c} />
+            ))}
+          </div>
+        )}
+        {tab === 'report' && report && (
+          <div className="agent-report-print rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+            <ReportView report={report} trace={trace} onCompare={onCompare} onSuggest={onSuggest} />
+          </div>
+        )}
+        {tab === 'evidence' && <EvidenceList trace={trace || []} downloadLink={message.downloadLink} />}
+      </div>
+    </div>
+  );
+}
+
+// ─── Evidence list (工具级审计清单：参数/归因/重试/下载，DESIGN.md Trace item) ────────
+
+function EvidenceList({ trace, downloadLink }) {
+  return (
+    <div className="space-y-1.5">
+      {trace.map((t, i) => {
+        const attr = t.error ? attributeError(t.name, t.error) : null;
+        return (
+          <div
+            key={t.callId || `${t.name}_${i}`}
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[11px]"
+          >
+            <div className="flex items-center gap-2">
+              <StatusIcon status={t.status} />
+              <span className="font-mono text-[12px] text-[var(--color-text)]">{t.name}</span>
+              {typeof t.durationMs === 'number' && t.durationMs > 0 && (
+                <span className="ml-auto font-mono text-[10px] tabular-nums text-[var(--color-muted)]">
+                  {(t.durationMs / 1000).toFixed(1)}s
+                </span>
+              )}
+            </div>
+            {t.arguments && Object.keys(t.arguments).length > 0 && (
+              <div className="mt-1 truncate pl-6 font-mono text-[10px] text-[var(--color-muted)]" title={JSON.stringify(t.arguments)}>
+                args: {JSON.stringify(t.arguments)}
+              </div>
+            )}
+            {t.summary && (
+              <div className="mt-1 pl-6 leading-5 text-[var(--color-muted)]">{t.summary}</div>
+            )}
+            {t.error && attr && (
+              <div className="mt-1 pl-6 leading-5" style={{ color: 'var(--color-status-error)' }}>
+                {attr.text}
+                {attr.hint && <span className="ml-1 text-[var(--color-muted)]">· {attr.hint}</span>}
+              </div>
+            )}
+            {t.retryCount > 0 && (
+              <div className="pl-6 text-[10px] text-[var(--color-muted)]">重试 ×{t.retryCount}</div>
+            )}
+          </div>
+        );
+      })}
       {downloadLink && (
         <a
           href={downloadLink}
@@ -793,35 +985,6 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
         >
           ↓ 下载数据文件
         </a>
-      )}
-
-      {/* ② Streamed answer / thinking — collapsible after done */}
-      {answer && (
-        <Collapsible
-          title="推理过程"
-          defaultOpen={!isDone}
-          badge={streaming && !answerDone ? '生成中' : undefined}
-        >
-          <MarkdownText text={answer} streaming={streaming && !answerDone} />
-        </Collapsible>
-      )}
-
-      {/* ③ Tool-call trace (steps) — collapsible after done */}
-      {hasTrace && (
-        <Collapsible
-          title={`分析步骤 (${trace.length})`}
-          defaultOpen={!isDone}
-          badge={trace.some((t) => t.status === 'running') ? '执行中' : undefined}
-        >
-          <ToolTrace trace={trace} totalSteps={message.totalSteps} />
-        </Collapsible>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2.5 text-xs text-[var(--color-error)]">
-          {error}
-        </div>
       )}
     </div>
   );
@@ -958,15 +1121,7 @@ function ToolTrace({ trace, totalSteps }) {
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
         >
           <div className="flex items-center gap-2">
-            {t.status === 'running' ? (
-              <span className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-yellow-500" />
-            ) : (
-              <span
-                className={`h-2 w-2 flex-shrink-0 rounded-full ${
-                  TOOL_STATUS_COLOR[t.status] || 'bg-yellow-500'
-                }`}
-              />
-            )}
+            <StatusIcon status={t.status} />
             <span className="font-mono text-[12px] text-[var(--color-text)]">{t.name}</span>
             {typeof t.step === 'number' && (
               <span className="text-[10px] text-[var(--color-muted)]">· 步骤 {t.step}</span>
@@ -975,7 +1130,7 @@ function ToolTrace({ trace, totalSteps }) {
               <span className="text-[10px] text-[var(--color-muted)]">执行中...</span>
             )}
             {typeof t.durationMs === 'number' && t.durationMs > 0 && (
-              <span className="ml-auto text-[10px] tabular-nums text-[var(--color-muted)]">
+              <span className="ml-auto font-mono text-[10px] tabular-nums text-[var(--color-muted)]">
                 {t.durationMs.toFixed(0)}ms
                 {t.retryCount > 0 && <span className="ml-1 text-[var(--color-primary)]">重试×{t.retryCount}</span>}
               </span>
@@ -989,6 +1144,11 @@ function ToolTrace({ trace, totalSteps }) {
           {t.error && (
             <div className="mt-1 pl-4 text-[11px] leading-5 text-[var(--color-error)]">
               {t.error}
+              {attributeError(t.name, t.error).hint && (
+                <span className="ml-1 text-[var(--color-muted)]">
+                  → {attributeError(t.name, t.error).hint}
+                </span>
+              )}
               {getErrorSuggestion(t.name, t.error) && (
                 <span className="ml-1 text-[var(--color-muted)]">
                   → {getErrorSuggestion(t.name, t.error)}
@@ -1004,32 +1164,120 @@ function ToolTrace({ trace, totalSteps }) {
 
 // ─── Report View ──────────────────────────────────────────────────────────────
 
-function ReportView({ report, onCompare, onSuggest }) {
+// KPI 提取：仅取关键结论级指标（DESIGN.md：禁止逐数字全量徽章）
+function extractKpis(report) {
+  const kpis = [];
+  for (const s of report.stage_results || []) {
+    const km = s.key_metrics || {};
+    if (s.tool_name === 'investment_analysis' && km.results) {
+      const r = km.results;
+      if (r.npv_aud != null) kpis.push({ label: 'NPV', value: r.npv_aud, unit: 'AUD', source: s.tool_name });
+      if (r.irr_pct != null) kpis.push({ label: 'IRR', value: r.irr_pct, unit: '%', fmt: (v) => v.toFixed(1), source: s.tool_name });
+      if (r.payback_years != null) kpis.push({ label: '回收期', value: r.payback_years, unit: '年', fmt: (v) => v.toFixed(1), source: s.tool_name });
+    }
+    if (s.tool_name === 'price_trend_analysis' && km.stats) {
+      if (km.stats.avg_price != null) kpis.push({ label: '均价', value: km.stats.avg_price, unit: 'AUD/MWh', fmt: (v) => v.toFixed(1), source: s.tool_name });
+      if (km.stats.negative_ratio_pct != null) kpis.push({ label: '负价比例', value: km.stats.negative_ratio_pct, unit: '%', fmt: (v) => v.toFixed(1), source: s.tool_name });
+    }
+    if (s.tool_name === 'market_screening' && Array.isArray(km.items) && km.items[0]) {
+      const top = km.items[0];
+      if (top.overall_score != null) kpis.push({ label: '最优区域评分', value: top.overall_score, unit: `(${top.label || ''})`, fmt: (v) => v.toFixed(1), source: s.tool_name });
+    }
+  }
+  return kpis.slice(0, 4);
+}
+
+function KpiCard({ label, value, unit, fmt, source }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2.5">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-muted)]">
+        {label}
+      </div>
+      <div
+        className="mt-1 text-xl font-semibold tabular-nums text-[var(--color-text)]"
+        style={{ fontFamily: 'var(--font-mono-data)' }}
+      >
+        {formatSigned(value, fmt)}
+        {unit && <span className="ml-1 text-[10px] font-normal text-[var(--color-muted)]">{unit}</span>}
+      </div>
+      {/* 溯源徽章：诚实语义——该数值出现在来源工具的结果中（非因果验证承诺） */}
+      <span
+        className="mt-1.5 inline-flex items-center gap-1 rounded bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--color-primary)]"
+        title={`该数值出现在 ${source} 的工具结果中`}
+      >
+        来源: {source}
+      </span>
+    </div>
+  );
+}
+
+// 部分成功逐项条（DESIGN.md Screen 5 Pattern A：不用二元失败横幅）
+function PartialSuccessStrip({ trace }) {
+  if (!trace || trace.length === 0) return null;
+  const done = trace.filter((t) => t.status !== 'running');
+  const ok = done.filter((t) => t.status === 'success').length;
+  const allDone = done.length === trace.length;
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2">
+      <div className="mb-1.5 text-[11px] text-[var(--color-muted)]">
+        {allDone
+          ? `${ok}/${trace.length} 项分析完成${ok < trace.length ? '，未完成项已降低结论置信度' : ''}`
+          : `执行中 ${done.length}/${trace.length}…`}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {trace.map((t, i) => (
+          <span key={t.callId || i} className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-muted)]">
+            <StatusIcon status={t.status} />
+            {t.name}
+            {typeof t.durationMs === 'number' && t.durationMs > 0 && (
+              <span className="tabular-nums">{(t.durationMs / 1000).toFixed(1)}s</span>
+            )}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReportView({ report, trace, onCompare, onSuggest }) {
   const status = STATUS_MAP[report.status] || STATUS_MAP.running;
+  const kpis = extractKpis(report);
+  const meta = report.metadata || {};
+  const usage = meta.llm_usage;
 
   const handleExportPDF = () => {
     window.print();
   };
 
   return (
-    <div className="space-y-6">
-      {/* Status bar */}
-      <div className="flex items-center gap-3">
+    <div className="space-y-5">
+      {/* Status bar: icon+色双编码徽章 + 模式/成本 chip */}
+      <div className="flex flex-wrap items-center gap-2">
         <span
           className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold"
           style={{ borderColor: status.color, color: status.color }}
         >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: status.color }} />
+          <span>{status.icon}</span>
           {status.label}
         </span>
         {report.total_duration_ms > 0 && (
-          <span className="text-[11px] text-[var(--color-muted)]">
+          <span className="font-mono text-[11px] tabular-nums text-[var(--color-muted)]">
             耗时 {(report.total_duration_ms / 1000).toFixed(1)}s
           </span>
         )}
         {report.workflow_type && (
           <span className="rounded bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] text-[var(--color-muted)]">
             {report.workflow_type}
+          </span>
+        )}
+        {meta.tool_profile && (
+          <span className="rounded bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] text-[var(--color-muted)]">
+            工具集: {meta.tool_profile}{meta.tool_profile_source ? ` (${meta.tool_profile_source})` : ''}
+          </span>
+        )}
+        {usage && usage.total_tokens > 0 && (
+          <span className="font-mono rounded bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] tabular-nums text-[var(--color-muted)]">
+            {usage.total_tokens.toLocaleString('en-US')} tokens
           </span>
         )}
         <button
@@ -1039,6 +1287,18 @@ function ReportView({ report, onCompare, onSuggest }) {
           导出 PDF
         </button>
       </div>
+
+      {/* 部分成功逐项条 */}
+      <PartialSuccessStrip trace={trace} />
+
+      {/* 关键 KPI 卡（等宽数字 + 负值三重编码 + 关键结论级溯源徽章） */}
+      {kpis.length > 0 && (
+        <div className="grid grid-cols-2 gap-2">
+          {kpis.map((k, i) => (
+            <KpiCard key={i} {...k} />
+          ))}
+        </div>
+      )}
 
       {/* Executive Summary */}
       {report.executive_summary && (
@@ -1097,6 +1357,13 @@ function ReportView({ report, onCompare, onSuggest }) {
             ))}
           </ul>
         </section>
+      )}
+
+      {/* 展开全部证据（报告级 tool_trace 披露，DESIGN.md Audit Trail） */}
+      {trace && trace.length > 0 && (
+        <Collapsible title={`展开全部证据 (${trace.length} 次工具调用)`}>
+          <EvidenceList trace={trace} />
+        </Collapsible>
       )}
 
       {/* Footer: base params + suggested follow-ups */}

@@ -402,6 +402,19 @@ class AgentOrchestrator:
             except Exception:  # noqa: BLE001
                 executive_summary, recommendation, confidence, full_analysis = ("", "", ConfidenceLevel.LOW, "")
 
+            # 降级透明化：非用户指定模板而是因 LLM 不可用降级时，
+            # 标记 llm_degraded 供前端 DegradedBanner 展示（与 run() 路径对齐）
+            stream_meta = {
+                "mode": "template_stream",
+                "template_id": template.id,
+                "params": effective_params,
+            }
+            if workflow_template_id is None and not llm_healthy:
+                stream_meta["llm_degraded"] = True
+                stream_meta["llm_degraded_reason"] = (
+                    self.llm.last_health_error or "LLM 不可用"
+                )
+
             report = AgentReport(
                 id=execution_id,
                 query=query,
@@ -417,7 +430,7 @@ class AgentOrchestrator:
                 tool_trace=tool_results,
                 steps=[],
                 status=status,
-                metadata={"mode": "template_stream", "template_id": template.id, "params": effective_params},
+                metadata=stream_meta,
             )
             report.total_duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
             # Record token usage for this run (P1: cost visibility).
