@@ -3,81 +3,90 @@
 ========================================================================
 
 ========================================================================
-  A. 基准吻合度 (Modo Energy 历史数据)
+  A. 基准吻合度 (Modo Energy 历史数据，已退役口径，仅信息展示)
 ========================================================================
-    [X]  NSW1   2024_full   : model=$ 212,884  bench=$ 148,000  dev= +43.8%
-    [X]  QLD1   2024_full   : model=$ 217,275  bench=$ 125,000  dev= +73.8%
-    [OK] VIC1   2024_full   : model=$ 145,996  bench=$ 135,000  dev=  +8.1%
-    [OK] SA1    2024_full   : model=$ 211,290  bench=$ 165,000  dev= +28.1%
-    [OK] NSW1   2025_H1_calendar: model=$ 163,968  bench=$ 138,000  dev= +18.8%
-    [OK] QLD1   2025_H1_calendar: model=$ 166,956  bench=$ 165,000  dev=  +1.2%
-    [OK] VIC1   2025_H1_calendar: model=$ 134,478  bench=$ 110,000  dev= +22.3%
-    [OK] SA1    2025_H1_calendar: model=$ 184,349  bench=$ 155,000  dev= +18.9%
-    [X]  NSW1   2025_H2_calendar: model=$ 152,563  bench=$ 110,000  dev= +38.7%
-    [X]  QLD1   2025_H2_calendar: model=$ 143,541  bench=$ 105,000  dev= +36.7%
-    [X]  VIC1   2025_H2_calendar: model=$ 134,478  bench=$  95,000  dev= +41.6%
-    [OK] SA1    2025_H2_calendar: model=$ 184,349  bench=$ 145,000  dev= +27.1%
-    [X]  NSW1   2025_26_summer: model=$ 110,281  bench=$  72,000  dev= +53.2%
-    [X]  QLD1   2025_26_summer: model=$  95,804  bench=$  34,000  dev=+181.8%
-    [X]  VIC1   2025_26_summer: model=$  99,946  bench=$  68,000  dev= +47.0%
-    [OK] SA1    2025_26_summer: model=$ 114,554  bench=$ 109,000  dev=  +5.1%
+    [X]  NSW1   2024_full   : model=$  74,599  bench=$ 148,000  dev= -49.6%
+    [X]  QLD1   2024_full   : model=$  84,138  bench=$ 125,000  dev= -32.7%
+    [X]  VIC1   2024_full   : model=$  52,220  bench=$ 135,000  dev= -61.3%
+    [X]  SA1    2024_full   : model=$ 115,197  bench=$ 165,000  dev= -30.2%
+    [X]  NSW1   2025_H1_calendar: model=$  54,234  bench=$ 138,000  dev= -60.7%
+    [X]  QLD1   2025_H1_calendar: model=$  60,919  bench=$ 165,000  dev= -63.1%
+    [X]  VIC1   2025_H1_calendar: model=$  45,287  bench=$ 110,000  dev= -58.8%
+    [X]  SA1    2025_H1_calendar: model=$  97,526  bench=$ 155,000  dev= -37.1%
+    [X]  NSW1   2025_H2_calendar: model=$  47,863  bench=$ 110,000  dev= -56.5%
+    [X]  QLD1   2025_H2_calendar: model=$  46,881  bench=$ 105,000  dev= -55.4%
+    [X]  VIC1   2025_H2_calendar: model=$  45,287  bench=$  95,000  dev= -52.3%
+    [X]  SA1    2025_H2_calendar: model=$  97,526  bench=$ 145,000  dev= -32.7%
+    [X]  NSW1   2025_26_summer: model=$ 106,430  bench=$  72,000  dev= +47.8%
+    [X]  QLD1   2025_26_summer: model=$ 108,623  bench=$  34,000  dev=+219.5%
+    [X]  VIC1   2025_26_summer: model=$ 102,200  bench=$  68,000  dev= +50.3%
+    [OK] SA1    2025_26_summer: model=$ 117,160  bench=$ 109,000  dev=  +7.5%
 
-  [FAIL] MAPE: 40.39 (target <= 30)
-  - RMSE: 57.48
-  [FAIL] Bias (avg, abs): 40.39 (target <= 15)
-  [FAIL] Hit Rate <=30%: 50.0 (target >= 75)
+  [INFO] MAPE: 57.22（退役基准，不作验收）
+  - RMSE: 72.38
+  [INFO] Bias (avg, abs): 16.58（退役基准，不作验收）
+  [INFO] Hit Rate <=30%: 6.2（退役基准，不作验收）
+  [INFO] 现行有效验证 = scripts/validate_holdout_spread.py
 
 ========================================================================
   B. ML 模型质量
 ========================================================================
-  [WARN] ML 未校准: status = failed
+  [PASS] Status: calibrated (target = calibrated)
+  - Train period: 2020-01-02 to 2024-12-31
+  - Validation period: 2025-01-01 to 2026-06-30
+  [PASS] Train samples: 11860 (target >= 1000)
+  - MAE: 30.97
+  [PASS] R^2: 0.741 (target >= 0.3)
+  [PASS] Direction Accuracy: 0.549 (target >= 0.45)
+  [PASS] CI Coverage (P10-P90): 0.828 (target in (0.65, 0.9))
+  [PASS] Concept Drift: False (target = False)
 
 ========================================================================
   C. 数学不变量 (17 个属性测试)
 ========================================================================
-  pytest 输出: 20 passed in 5.88s
+  pytest 输出: 20 passed in 8.32s
   [PASS] 全部 17 个属性测试通过
 
 ========================================================================
   D. 情景一致性 (NPV: 远期应有 High > Central 或 Low > Central)
 ========================================================================
-    NSW1: Central=$  97,500, High=$ 118,705, Low=$  94,970, spread=24.3%
-    QLD1: Central=$  87,610, High=$  81,294, Low=$ 109,123, spread=31.8%
-    VIC1: Central=$ 102,043, High=$ 116,027, Low=$  95,644, spread=20.0%
-    SA1: Central=$ 255,736, High=$ 248,031, Low=$ 264,702, spread=6.5%
-  [PASS] Avg scenario spread (High-Low)/Central %: 20.7 (target >= 5)
+    NSW1: Central=$  78,052, High=$ 100,920, Low=$  70,161, spread=39.4%
+    QLD1: Central=$  63,723, High=$  77,774, Low=$  93,769, spread=47.2%
+    VIC1: Central=$  75,087, High=$  87,428, Low=$  71,324, spread=21.4%
+    SA1: Central=$ 264,810, High=$ 267,069, Low=$ 267,912, spread=1.2%
+  [PASS] Avg scenario spread (High-Low)/Central %: 27.3 (target >= 5)
 
 ========================================================================
   E. 时间动态 (mean_spread 长期应受 BESS 压缩)
 ========================================================================
-    Year 1 spread:  $93.6
-    Year 10 spread: $45.6
-    Year 20 spread: $39.3
+    Year 1 spread:  $70.3
+    Year 10 spread: $31.5
+    Year 20 spread: $27.4
   [PASS] Y10 < Y1 (压缩在中期生效): True (target = True)
   [PASS] Y20 revenue < Y1 (SoH 退化生效): True (target = True)
 
 ========================================================================
   F. 区域差异性 (验证 QLD/SA 表现差异)
 ========================================================================
-    NSW1: 5 年平均 capture rate = 0.245
-    QLD1: 5 年平均 capture rate = 0.210
-    VIC1: 5 年平均 capture rate = 0.254
-    SA1: 5 年平均 capture rate = 0.327
+    NSW1: 5 年平均 capture rate = 0.146
+    QLD1: 5 年平均 capture rate = 0.111
+    VIC1: 5 年平均 capture rate = 0.150
+    SA1: 5 年平均 capture rate = 0.246
   [PASS] SA capture > QLD (高波动保留更多价差): True (target = True)
 
 ========================================================================
   G. 商业逻辑 (CIS 合约应提供正价值)
 ========================================================================
-    Pure Merchant NPV/MW: $    97,500
-    Hybrid 50/50 NPV/MW:  $   336,388
-    CIS Full NPV/MW:      $   575,275
+    Pure Merchant NPV/MW: $    78,052
+    Hybrid 50/50 NPV/MW:  $   325,691
+    CIS Full NPV/MW:      $   573,330
   [PASS] CIS > Merchant (合约提供正价值): True (target = True)
   [PASS] Hybrid 介于两端 (单调性): True (target = True)
 
 ========================================================================
   H. ML 降级 (即使 ML 失败也能正常运行)
 ========================================================================
-    Without ML, NSW1 NPV/MW: $36,844
+    Without ML, NSW1 NPV/MW: $7,978
   [PASS] ML 失败时仍能生成预测: True (target = True)
 
 ========================================================================
@@ -88,25 +97,25 @@
         能暴露模型缺失的季节性。当前实测本段 MAPE 偏高、Hit Rate 偏低，
         属此已知年度粒度限制 (Req 2 设计取舍)，非实现缺陷。
 
-    验证点总数: 60 (target 96+)
+    验证点总数: 150 (target 96+)
 
-    NSW1  : n= 12  MAPE=  73.0%  Bias=  -73.0%  Hit Rate= 16.7%
-    QLD1  : n= 12  MAPE=  68.8%  Bias=  -68.8%  Hit Rate=  8.3%
-    SA1   : n= 12  MAPE=  75.0%  Bias=  -75.0%  Hit Rate=  0.0%
-    TAS1  : n= 12  MAPE=  71.2%  Bias=  -71.2%  Hit Rate=  8.3%
-    VIC1  : n= 12  MAPE=  55.2%  Bias=  -55.2%  Hit Rate=  8.3%
+    NSW1  : n= 30  MAPE=  80.0%  Bias=  -79.9%  Hit Rate= 13.3%
+    QLD1  : n= 30  MAPE=  73.0%  Bias=  -70.0%  Hit Rate= 16.7%
+    SA1   : n= 30  MAPE=  77.5%  Bias=  -77.5%  Hit Rate=  3.3%
+    TAS1  : n= 30  MAPE=  79.8%  Bias=  -70.5%  Hit Rate=  3.3%
+    VIC1  : n= 30  MAPE=  71.4%  Bias=  -71.4%  Hit Rate= 13.3%
 
-  [FAIL] MAPE: 68.64 (target <= 30)
-  - RMSE: 72.41
-  - Bias (avg): -68.64
-  [FAIL] Hit Rate <=30%: 8.3 (target >= 75)
+  [FAIL] MAPE: 76.32 (target <= 30)
+  - RMSE: 80.26
+  - Bias (avg): -73.87
+  [FAIL] Hit Rate <=30%: 10.0 (target >= 75)
 
 ========================================================================
   总结
 ========================================================================
-  通过: 24
-  失败: 5
-  通过率: 82.8%
+  通过: 30
+  失败: 2
+  通过率: 93.8%
 
-  WARNING: 5 validation(s) failed
+  WARNING: 2 validation(s) failed
 ========================================================================

@@ -272,7 +272,9 @@ class TestHeadlineBasisAnnotation:
         return SimpleNamespace(
             cost_breakdown=None,
             cash_flows=cash_flows,
-            metrics=SimpleNamespace(debt_capacity=0.0),
+            # 与生产 ScenarioMetrics 契约对齐（S5/A3）：total_capex 是
+            # _enrich_with_financial_accuracy_modules 的必需字段（折旧基数）。
+            metrics=SimpleNamespace(debt_capacity=0.0, total_capex=7_000_000.0),
         )
 
     def test_after_tax_confirmed_when_tax_config_present(self):

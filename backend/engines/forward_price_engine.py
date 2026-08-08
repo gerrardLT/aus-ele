@@ -1909,6 +1909,16 @@ class ForwardPriceEngine:
         annual_projections: List[AnnualRevenueProjection] = []
         discount_rate = 0.08  # Default discount rate
 
+        # 可达成口径（2026-08-05）：实测调度效率折扣，把后视套利收入
+        # 折算为真实预测下可达成的水平（详见 engines/dispatch_efficiency.py）。
+        # 仅作用于能量套利（FCAS 单独分量不折扣）；对合约锁定收入一并
+        # 折扣属保守处理（CIS 类固定收入实际不受调度效率影响）。
+        from engines.dispatch_efficiency import (
+            METHODOLOGY_NOTE as _EFF_NOTE,
+            get_realized_efficiency as _get_realized_efficiency,
+        )
+        _eff_discount, _eff_warnings = _get_realized_efficiency(region, caliber="regional")
+
         # Pre-compute duration_efficiency_factor (constant across years)
         duration_efficiency = self._compute_duration_efficiency(battery.duration_hours)
 
@@ -1975,6 +1985,10 @@ class ForwardPriceEngine:
                     structural_risks=structural_risks,
                     effective_peak_demand=effective_peak_demand,
                     duration_efficiency_factor=duration_efficiency,
+                    achievable_revenue_per_mw=(
+                        revenue * _eff_discount / battery.power_mw
+                        if battery.power_mw > 0 else 0.0
+                    ),
                 )
             )
 
@@ -1992,6 +2006,11 @@ class ForwardPriceEngine:
         # Build metadata with aggregated structural risks
         metadata = {
             "structural_risks": all_structural_risks,
+            "achievable_caliber": {
+                "efficiency_discount": _eff_discount,
+                "warnings": _eff_warnings,
+                "methodology": _EFF_NOTE,
+            },
         }
 
         return ScenarioProjection(

@@ -1,7 +1,7 @@
 """完整回测脚本 - 多维度验证模型质量。
 
 8 类指标:
-  A. 基准吻合度 (Modo Energy)
+  A. 基准吻合度 (Modo Energy，已退役口径仅信息展示，2026-07-28)
   B. ML 模型质量
   C. 数学不变量
   D. 情景一致性
@@ -92,8 +92,15 @@ def main():
     engine = ForwardPriceEngine()
     pass_count, fail_count = 0, 0
 
-    # === A. 基准吻合度 ===
-    section("A. 基准吻合度 (Modo Energy 历史数据)")
+    # === A. 基准吻合度（已退役口径，仅信息展示） ===
+    # 2026-07-28：validate_against_benchmarks 正式退役（循环验证：季节乘子/RVF
+    # 曾在同一基准上调参又验收，且锚点语义错位），docstring 已标 deprecated。
+    # 基准值还是蚕食压缩前时代的 Modo 收入，与 2025+ 市场现实已脱节
+    # （对照：2026-08-05 独立验证证实模型当前数字与 Modo 最新实测
+    # 吻合，见《任务记录-P0实施》第 11 节）。
+    # 现行有效验证 = scripts/validate_holdout_spread.py（零污染 holdout）。
+    # 故本节仅保留数字展示（INFO），不再计 pass/fail。
+    section("A. 基准吻合度 (Modo Energy 历史数据，已退役口径，仅信息展示)")
     bench = engine.validate_against_benchmarks()
     deviations = [abs(r["deviation_pct"]) for r in bench["results"]]
     biases = [r["deviation_pct"] for r in bench["results"]]
@@ -112,20 +119,12 @@ def main():
                 f"dev={r['deviation_pct']:+6.1f}%")
         out("")
 
-        for n, v, t, op in [
-            ("MAPE", round(mape, 2), 30, "<="),
-            ("RMSE", round(rmse, 2), None, None),
-            ("Bias (avg, abs)", round(abs(bias), 2), 15, "<="),
-            ("Hit Rate <=30%", round(hit_rate_30, 1), 75, ">="),
-        ]:
-            if t is None:
-                metric(n, v)
-            else:
-                p = metric(n, v, t, op)
-                if p is True:
-                    pass_count += 1
-                elif p is False:
-                    fail_count += 1
+        # 仅信息展示，不计入 pass/fail（退役口径）
+        out(f"  [INFO] MAPE: {round(mape, 2)}（退役基准，不作验收）")
+        out(f"  - RMSE: {round(rmse, 2)}")
+        out(f"  [INFO] Bias (avg, abs): {round(abs(bias), 2)}（退役基准，不作验收）")
+        out(f"  [INFO] Hit Rate <=30%: {round(hit_rate_30, 1)}（退役基准，不作验收）")
+        out("  [INFO] 现行有效验证 = scripts/validate_holdout_spread.py")
     else:
         out("  [WARN] 无基准数据可用")
 

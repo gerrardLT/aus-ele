@@ -568,6 +568,44 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                     </div>
                   </div>
 
+                  {/* 实测可达成口径（2026-08-05）：历史 pre-dispatch 闭环滚动回测实测 */}
+                  {backtest_observed?.realized_efficiency_discount != null && (
+                    <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-900">
+                          {lang === 'zh' ? '实测可达成口径（NEM 闭环回测）' : 'Realized achievable caliber (NEM closed-loop backtest)'}
+                        </span>
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-mono text-amber-900">
+                          {lang === 'zh' ? '区域实测效率 ' : 'regional efficiency '}{pct1(backtest_observed.realized_efficiency_discount)}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <SummaryBlock
+                          label={lang === 'zh' ? '完美预见上界' : 'Perfect-foresight ceiling'}
+                          value={fmt(perfectForesightNet ?? realizableNet)}
+                        />
+                        <SummaryBlock
+                          label={lang === 'zh' ? '实测可达成收入' : 'Achievable (realized)'}
+                          value={fmt(backtest_observed.achievable_net_observed)}
+                        />
+                        <SummaryBlock
+                          label={lang === 'zh' ? '实测折扣' : 'Realized discount'}
+                          value={pct1(backtest_observed.realized_efficiency_discount)}
+                        />
+                      </div>
+                      <div className="mt-2 text-xs leading-5 text-amber-900">
+                        {lang === 'zh'
+                          ? '用 AEMO 历史 pre-dispatch 真实预测驱动的闭环滚动回测实测：完美预见套利收入仅约 20%~45% 可在真实预测下达成，显著严于上方文献折扣。投资决策请以可达成口径为准。'
+                          : 'Closed-loop rolling backtests driven by real historical AEMO pre-dispatch forecasts show only ~20–45% of perfect-foresight arbitrage is actually attainable — materially harsher than the literature haircut above. Prefer the achievable caliber for investment decisions.'}
+                      </div>
+                      {Array.isArray(backtest_observed.realized_efficiency_warnings) && backtest_observed.realized_efficiency_warnings.length > 0 && (
+                        <div className="mt-1 text-[10px] font-mono text-amber-800">
+                          {backtest_observed.realized_efficiency_warnings.join(' · ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* 税前/税后对照（有税务时） */}
                   {afterTaxMetrics && (
                     <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 p-3">

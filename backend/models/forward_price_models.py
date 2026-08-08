@@ -156,6 +156,10 @@ class AnnualRevenueProjection(BaseModel):
     effective_peak_demand: Optional[float] = None
     duration_efficiency_factor: Optional[float] = None
     autobidder_decay: Optional[float] = None
+    # 可达成口径（2026-08-05）：merchant 套利收入 × 实测调度效率折扣。
+    # 实测来源：历史 pre-dispatch 闭环滚动回测（详见
+    # engines/dispatch_efficiency.py 模块注释）。None = 未启用。
+    achievable_revenue_per_mw: Optional[float] = None
 
 
 class ScenarioProjection(BaseModel):

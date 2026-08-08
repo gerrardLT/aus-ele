@@ -1566,6 +1566,24 @@ def _run_standardized_bess_backtest(backtest_params: BessBacktestParams) -> dict
     soc_series = [float(item["soc_mwh"]) for item in result["timeline"]]
     _, dod_severity = dod_severity_from_soc(soc_series, backtest_params.energy_mwh)
 
+    # Achievable caliber (2026-08-05): both the rolling-window and perfect
+    # solves above use realized prices (hindsight). Closed-loop rolling
+    # backtests driven by real historical pre-dispatch forecasts show only
+    # ~31% of hindsight arbitrage revenue is actually achievable
+    # (engines.dispatch_efficiency). Report the discounted figure alongside,
+    # never replacing the hindsight numbers (backward compatible).
+    from engines.dispatch_efficiency import (
+        METHODOLOGY_NOTE as _EFF_NOTE,
+        get_realized_efficiency as _get_realized_efficiency,
+    )
+    _eff_discount, _eff_warnings = _get_realized_efficiency(
+        backtest_params.region, caliber="regional"
+    )
+    _achievable_net = (
+        perfect_net * _eff_discount if perfect_net is not None
+        else summary["net_revenue"] * _eff_discount
+    )
+
     return {
         "annual_revenue": summary["gross_revenue"],
         "annual_net_revenue": summary["net_revenue"],
@@ -1574,6 +1592,10 @@ def _run_standardized_bess_backtest(backtest_params: BessBacktestParams) -> dict
         "perfect_foresight_net": perfect_net,
         "perfect_foresight_ratio": perfect_foresight_ratio,
         "foresight_window_hours": summary.get("foresight_window_hours"),
+        "achievable_net_revenue": round(_achievable_net, 2),
+        "achievable_efficiency_discount": _eff_discount,
+        "achievable_caliber_warnings": _eff_warnings,
+        "achievable_methodology": _EFF_NOTE,
         "backtest_mode": "optimized_hindsight",
         "revenue_scope": "trajectory_gross_energy",
         "methodology_version": "bess_backtest_v1",
@@ -7454,13 +7476,19 @@ def _get_fcas_baseline(params: InvestmentParams, data_version: str) -> tuple[flo
 
 
 def _derive_arbitrage_baseline(params: InvestmentParams, backtest_summary: dict) -> tuple[float, str]:
-    efficiency_factor = max(0.0, 1.0 - params.forecast_inefficiency)
     methodology_version = backtest_summary.get("backtest_reference", {}).get("methodology_version", "")
 
     if "bess_backtest_v1" in methodology_version:
         observed_net = backtest_summary.get("avg_annual_arbitrage_net", 0.0)
-        baseline = observed_net * efficiency_factor * params.revenue_capture_rate
-        return baseline, "observed_net_revenue"
+        # 方案 B（2026-08-05，任务记录附录 10）：用区域实测调度效率替换
+        # 文献 forecast_inefficiency 折扣（NEM pre-dispatch 闭环回测实测
+        # 完美前瞻仅 20%~45% 可达成，文献 11% 严重低估损失）；
+        # capture_rate 同步退出套利路径（实测值已含真实预测下的
+        # 可达成性，再乘属双重折扣）。FCAS 路径不受影响。
+        from engines.dispatch_efficiency import get_realized_efficiency
+        realized_eff, _ = get_realized_efficiency(params.region, caliber="regional")
+        baseline = observed_net * realized_eff
+        return baseline, "observed_net_revenue_realized"
 
     return 0.0, "no_standardized_backtest_data"
 
@@ -7489,6 +7517,14 @@ def _build_investment_response(
             elif isinstance(row, dict):
                 serialized.append(dict(row))
         return serialized
+
+    # 实测调度效率折扣（2026-08-05，详见 engines/dispatch_efficiency.py）：
+    # 仅用于 backtest_observed 的展示/审计字段，不参与 baseline 计算。
+    from engines.dispatch_efficiency import (
+        METHODOLOGY_NOTE as _EFF_NOTE,
+        get_realized_efficiency as _get_realized_efficiency,
+    )
+    _eff_discount, _eff_warnings = _get_realized_efficiency(params.region, caliber="regional")
 
     base_metrics = base_result.metrics.model_dump()
     storage_capex = max(
@@ -7607,8 +7643,26 @@ def _build_investment_response(
                 else None
             ),
             "foresight_horizon_source": backtest_summary.get("foresight_haircut_source"),
-            "forecast_error_haircut": params.forecast_inefficiency,
-            "forecast_error_source": "literature:arXiv:2501.07121",
+            "forecast_error_haircut": 1.0 - _eff_discount,
+            "forecast_error_source": _EFF_NOTE,
+            "forecast_error_haircut_deprecated_knob": params.forecast_inefficiency,
+            # 实测可达成口径（2026-08-05）：与上方两段 haircut 并列的第三段
+            # 证据——用 NEM 历史 pre-dispatch 真实预测闭环滚动回测实测的
+            # 区域效率（详见 engines/dispatch_efficiency.py）。实证折扣
+            # （0.20~0.45）显著大于文献 11% 猜测，仅供展示与审计，不改变
+            # 现有 baseline 计算（避免双重折扣，口径切换另行决策）。
+            "realized_efficiency_discount": _eff_discount,
+            "realized_efficiency_warnings": _eff_warnings,
+            "realized_efficiency_source": _EFF_NOTE,
+            "achievable_net_observed": (
+                round(
+                    (backtest_summary.get("avg_annual_arbitrage_perfect") or observed_net_arbitrage)
+                    * _eff_discount,
+                    2,
+                )
+                if observed_net_arbitrage is not None
+                else None
+            ),
         },
         "backtest_mode": backtest_summary.get("backtest_mode", "unavailable"),
         "revenue_scope": backtest_summary.get("revenue_scope", "unavailable"),

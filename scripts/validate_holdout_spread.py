@@ -1,4 +1,4 @@
-"""Holdout spread validation — 真样本外价差验证（v2 双层检验）。
+"""Holdout spread validation — 真样本外价差验证（v2 双层检验 + v3 naïve 基线对照）。
 
 背景（2026-07）:
     项目此前的 validate_against_benchmarks 存在循环验证问题：季节乘子 /
@@ -21,6 +21,15 @@ v1 → v2 演进:
     双重计数修正是由 v1 holdout 结果**驱动发现**的结构性 bug fix，未向
     holdout 窗口做任何数值参数拟合——对"参数"干净，但对"模型结构选择"
     存在一次反馈。下一批完全零污染检验 = 2026-07 数据（AEMO 月末发布）。
+
+v3 新增（2026-08-05，对照 Lago et al. 2021 开放基准的最佳实践）:
+    BASELINE 层：naïve 基线对照。EPF 文献标准要求任何预测模型必须与
+    naïve/seasonal naïve 基线同口径对比。两个基线仅使用 LEVEL 窗口
+    （2025-07-01 起）之前的数据，零污染：
+    - B1 naïve-30d：窗口前 30 天（2025-06）已实现价差均值（持续性外推）
+    - B2 naïve-12m：窗口前 12 个月（2024-07~2025-07）已实现价差均值（同期去年）
+    TREND 层同步新增 naïve 基线（flat，隐含 YoY=0）与 seasonal naïve
+    （重复前一年同比 Q2'25/Q2'24）。
 
 用法:
     cd backend && python ../scripts/validate_holdout_spread.py
@@ -138,12 +147,78 @@ def main() -> int:
             print(f"LEVEL mean |dev| = {sum(level_devs)/len(level_devs):.1f}%  |  "
                   f"worst = {max(level_devs):.1f}%")
 
+        # ---------- BASELINE 层 ----------
+        # 基线仅使用 LEVEL 窗口（2025-07-01）之前的数据，零污染。
+        print()
+        print("--- BASELINE: naive 基线对照（Lago 2021 基准标准做法） ---")
+        print(f"{'region':6} {'model%':>8} {'B1_n30%':>8} {'B2_n12m%':>9}  best")
+        model_abs, b1_abs, b2_abs = [], [], []
+        for region in NEM_REGIONS:
+            # 与 LEVEL 层同一窗口（跨表拼接，全季节 12 个月）
+            actual, days = realized_spread(conn, region, [
+                ("trading_price_2025", "2025-07-01", "2026-01-01"),
+                ("trading_price_2026", "2026-01-01", "2026-07-01"),
+            ])
+            if days == 0:
+                print(f"{region:6} {'--':>8} {'no data':>8}")
+                continue
+            # B1: 窗口前 30 天（2025-06-01 ~ 07-01）持续性外推
+            b1, d1 = realized_spread(conn, region, [
+                ("trading_price_2025", "2025-06-01", "2025-07-01"),
+            ])
+            # B2: 窗口前 12 个月（2024-07-01 ~ 2025-07-01）同期去年
+            b2, d2 = realized_spread(conn, region, [
+                ("trading_price_2024", "2024-07-01", "2025-07-01"),
+            ])
+            dev_m = (pred_2026[region] - actual) / actual * 100
+            model_abs.append(abs(dev_m))
+            row = f"{region:6} {dev_m:+8.1f}"
+            if d1 > 0:
+                dev_b1 = (b1 - actual) / actual * 100
+                b1_abs.append(abs(dev_b1))
+                row += f" {dev_b1:+8.1f}"
+            else:
+                row += f" {'--':>8}"
+            if d2 > 0:
+                dev_b2 = (b2 - actual) / actual * 100
+                b2_abs.append(abs(dev_b2))
+                row += f" {dev_b2:+9.1f}"
+            else:
+                row += f" {'--':>9}"
+            # 判定当区最优（三者均有值时）
+            candidates = [("model", abs(dev_m))]
+            if d1 > 0:
+                candidates.append(("B1_n30", abs(dev_b1)))
+            if d2 > 0:
+                candidates.append(("B2_n12m", abs(dev_b2)))
+            best = min(candidates, key=lambda x: x[1])[0]
+            row += f"  {best}"
+            print(row)
+
+        def _mean(xs: list[float]) -> float:
+            return sum(xs) / len(xs) if xs else float("nan")
+
+        m = _mean(model_abs)
+        b1m = _mean(b1_abs)
+        b2m = _mean(b2_abs)
+        print(f"BASELINE mean |dev|: model={m:.1f}%  B1_n30={b1m:.1f}%  B2_n12m={b2m:.1f}%")
+        if model_abs and b1_abs:
+            print(f"rMAE vs B1_n30  = {m / b1m:.2f}  (<1 模型胜出；>1 说明打不过持续性基线)")
+        if model_abs and b2_abs:
+            print(f"rMAE vs B2_n12m = {m / b2m:.2f}  (<1 模型胜出；>1 说明打不过同期去年基线)")
+
         # ---------- TREND 层 ----------
         print()
         print("--- TREND: 模型隐含年压缩 (pred27/pred26) vs 实际同比 (Q2'26/Q2'25) ---")
-        print(f"{'region':6} {'model_yoy%':>10} {'actual_yoy%':>11} {'gap_pp':>8}")
+        print("      naive 基线: flat(隐含YoY=0)；seasonal naive = 重复前一年同比(Q2'25/Q2'24)")
+        print(f"{'region':6} {'model_yoy%':>10} {'actual_yoy%':>11} {'gap_pp':>8} {'flat|gap|':>9} {'snaive_yoy%':>11} {'snaive|gap|':>11}")
         trend_gaps = []
+        flat_abs_gaps = []
+        snaive_abs_gaps = []
         for region in NEM_REGIONS:
+            q2_24, d24 = realized_spread(conn, region, [
+                ("trading_price_2024", "2024-04-01", "2024-07-01"),
+            ])
             q2_25, d25 = realized_spread(conn, region, [
                 ("trading_price_2025", "2025-04-01", "2025-07-01"),
             ])
@@ -157,15 +232,31 @@ def main() -> int:
             actual_yoy = (q2_26 / q2_25 - 1.0) * 100
             gap = model_yoy - actual_yoy
             trend_gaps.append(gap)
-            print(f"{region:6} {model_yoy:+10.1f} {actual_yoy:+11.1f} {gap:+8.1f}")
+            # naïve flat 基线：隐含 YoY = 0
+            flat_abs_gaps.append(abs(0.0 - actual_yoy))
+            row = f"{region:6} {model_yoy:+10.1f} {actual_yoy:+11.1f} {gap:+8.1f} {abs(actual_yoy):9.1f}"
+            # seasonal naïve：重复前一年同比 Q2'25/Q2'24
+            if d24 > 0:
+                snaive_yoy = (q2_25 / q2_24 - 1.0) * 100
+                snaive_abs_gaps.append(abs(snaive_yoy - actual_yoy))
+                row += f" {snaive_yoy:+11.1f} {abs(snaive_yoy - actual_yoy):11.1f}"
+            else:
+                row += f" {'--':>11} {'--':>11}"
+            print(row)
         if trend_gaps:
             avg_gap = sum(trend_gaps) / len(trend_gaps)
             print(f"TREND mean gap = {avg_gap:+.1f}pp "
                   f"(正值 = 模型压缩斜率比市场实际温和/乐观)")
+            print(f"TREND mean |gap|: model={sum(abs(g) for g in trend_gaps)/len(trend_gaps):.1f}pp  "
+                  f"naive_flat={sum(flat_abs_gaps)/len(flat_abs_gaps):.1f}pp"
+                  + (f"  seasonal_naive={sum(snaive_abs_gaps)/len(snaive_abs_gaps):.1f}pp"
+                     if snaive_abs_gaps else ""))
 
     print()
     print("解读提示:")
     print("  LEVEL 检验修正后的水平锚定是否合理（跨全季节 12 个月，无季节错位）。")
+    print("  BASELINE 检验模型相对零成本基线的增量价值（rMAE<1 才算赢）；")
+    print("  若打不过 B1/B2，模型复杂度需要重构而非继续调参（Lago 2021 基准精神）。")
     print("  TREND 检验模型的年度压缩斜率是否跟得上市场真实蚕食速度。")
     print("  注意实际 YoY 同时含饱和压缩与年际气候/事件差异，gap 解读需保留余量。")
     print("  2026-07 数据发布后 = 下一批对结构选择也零污染的检验窗口。")

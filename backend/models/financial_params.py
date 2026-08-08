@@ -150,15 +150,16 @@ class InvestmentParams(BaseModel):
     #      backtest: rolling net vs perfect-foresight net. Captures the value
     #      lost because a real operator can only see a finite look-ahead window
     #      (typically ~1% for a 24h commit + 24h look-ahead on NEM data).
-    #   2. FORECAST-ERROR haircut - this knob. Captures the value lost because a
-    #      real operator dispatches against *imperfect* price forecasts (plus
-    #      bid/offer slippage and forced outages), which the MPC backtest cannot
-    #      model because it optimises against realised prices.
-    # The two are multiplicative and NOT double-counted: the MPC rolling net
-    # already embeds only the horizon truncation (~1%), so this knob adds the
-    # forecast-error loss on top. Default 0.11 is anchored to the literature
-    # (Hornek et al. 2025, arXiv:2501.07121: forecast-driven vs perfect-foresight
-    # dispatch loses ~11% of arbitrage value on European day-ahead/intraday).
+    #   2. FORECAST-ERROR haircut - this knob. DEPRECATED as of 2026-08-05
+    #      (方案 B, 任务记录附录 10): the arbitrage baseline now uses the
+    #      region-specific REALIZED dispatch efficiency from closed-loop
+    #      NEM pre-dispatch backtests (engines/dispatch_efficiency.py,
+    #      0.20~0.45 retained) instead of this literature anchor, and
+    #      revenue_capture_rate no longer applies on the arbitrage path.
+    #      This field is kept for payload compatibility only; it is still
+    #      surfaced in responses as forecast_error_haircut_deprecated_knob.
+    #      Original anchor: Hornek et al. 2025, arXiv:2501.07121 (~11% loss
+    #      on European day-ahead/intraday) - superseded by NEM measurements.
     forecast_inefficiency: float = 0.11
     
     backtest_years: List[int] = [2024, 2025]

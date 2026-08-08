@@ -77,7 +77,14 @@ class DispatchOptimizer:
     ) -> List[Dict]:
         """
         Placeholder for rolling forecast simulation.
-        Would use a sliding window LP with historical forecast data.
+
+        2026-08-05 更新：真实的滚动预测回测已由
+        ``scripts/backtest_rolling_predispatch.py`` 实现（用 NEMWeb 归档的
+        历史 pre-dispatch 预测驱动，数据表 predispatch_price_forecast）。
+        三周×五区扩周实测 efficiency（滚动/后视）全表均值 31.4%，
+        区间 -6.6%~51.3%——完美前瞻显著高估可达成收入，详见
+        《任务记录-2026-08-05-P0实施-基线对照与滚动回测闭环》第 6 节。
+        本方法保留后视回落仅作兼容，不应再用于收入结论。
         """
         # For now, just return hindsight as fallback or raise NotImplementedError
         return DispatchOptimizer.run_hindsight_optimization(interval_data, specs)

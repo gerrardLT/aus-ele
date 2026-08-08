@@ -324,11 +324,13 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
             if coopt_baseline is not None and coopt_baseline.years_used > 0:
                 # Joint optimization replaces the additive arbitrage + FCAS sum,
                 # eliminating the power-capacity double-count.
-                efficiency_factor = max(0.0, 1.0 - params.forecast_inefficiency)
-                baseline_arbitrage = (
-                    coopt_baseline.energy_revenue * efficiency_factor * params.revenue_capture_rate
-                )
-                arbitrage_baseline_source = "co_optimized"
+                # 方案 B（2026-08-05，任务记录附录 10）：套利基线用区域实测
+                # 调度效率折扣替换文献 forecast_inefficiency，capture_rate 退出
+                # 套利路径（实测值已含可达成性）；FCAS 仍乘 capture_rate。
+                from engines.dispatch_efficiency import get_realized_efficiency
+                realized_eff, _ = get_realized_efficiency(params.region, caliber="regional")
+                baseline_arbitrage = coopt_baseline.energy_revenue * realized_eff
+                arbitrage_baseline_source = "co_optimized_realized"
                 baseline_fcas = coopt_baseline.fcas_revenue * params.revenue_capture_rate
                 fcas_baseline_source = "co_optimized"
             else:
@@ -545,8 +547,11 @@ def _enrich_with_financial_accuracy_modules(
             # Extract pre-tax cash flows from base result
             pre_tax_cash_flows: List[CashFlowYear] = base_result.cash_flows
 
-            # Calculate capex — reuse FinancialModel's computed value (S5/A3 dedup)
-            total_capex = base_result.metrics.total_capex
+            # Calculate capex — reuse FinancialModel's computed value (S5/A3 dedup).
+            # Defensive getattr: degrade to zero capex (no depreciation shield)
+            # instead of aborting the whole after-tax analysis if a caller
+            # passes a metrics object missing the field.
+            total_capex = getattr(base_result.metrics, "total_capex", 0.0)
 
             # Derive annual debt service from the base result metrics
             # Use the same debt sizing logic as FinancialModel
@@ -556,7 +561,7 @@ def _enrich_with_financial_accuracy_modules(
                 params.financial.debt_tenor_years,
                 params.financial.project_life_years,
             )
-            debt_capacity = base_result.metrics.debt_capacity
+            debt_capacity = getattr(base_result.metrics, "debt_capacity", 0.0)
             if debt_capacity > 0:
                 annual_debt_service = float(
                     -npf.pmt(params.financial.cost_of_debt, tenor, debt_capacity)

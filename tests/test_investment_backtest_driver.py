@@ -74,10 +74,13 @@ class InvestmentBacktestDriverTests(unittest.TestCase):
         self.assertIn("summary", result["backtest_reference"]["drivers"][0])
         self.assertIn("costs", result["backtest_reference"]["drivers"][0]["summary"])
         self.assertIn("equivalent_cycles", result["backtest_reference"]["drivers"][0]["summary"])
-        self.assertEqual(
-            result["baseline_revenue"]["arbitrage"],
-            result["backtest_observed"]["net_energy_revenue"],
-        )
+        # 方案 B（2026-08-05）：套利基线 = 已实现净值 × 区域实测调度效率
+        # （NSW1=0.280，见 engines/dispatch_efficiency.py），capture_rate 与
+        # forecast_inefficiency 不再参与套利路径（旧等值断言已废弃）。
+        from engines.dispatch_efficiency import REGIONAL_EFFICIENCY_MEAN
+        expected = result["backtest_observed"]["net_energy_revenue"] * REGIONAL_EFFICIENCY_MEAN["NSW1"]
+        self.assertAlmostEqual(result["baseline_revenue"]["arbitrage"], expected, places=6)
+        self.assertEqual(result["arbitrage_baseline_source"], "observed_net_revenue_realized")
         self.assertFalse(result["backtest_fallback_used"])
 
     def test_investment_analysis_does_not_fall_back_to_legacy_backtest_when_standardized_path_is_unavailable(self):
