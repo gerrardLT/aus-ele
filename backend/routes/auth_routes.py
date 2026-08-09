@@ -16,6 +16,10 @@ JWT Bearer，但 web 前端此前没有任何令牌获取/附加逻辑，导致 
    漏配 env 引发 503 及下游级联 401）。
 3. **显式允许名单**：``AUS_ELE_WEB_ALLOWED_ORIGINS``（逗号分隔完整 origin）
    支持前后端分离部署的显式放行。
+4. **签发限流 + 审计日志**（L3 加固）：Origin 头仅浏览器内不可伪造，
+   上述门控只防浏览器介导的跨站攻击；对自设 Origin 的非浏览器调用方，
+   以按 IP 滑动窗口限流（AUS_ELE_WEB_SESSION_RATE_LIMIT，默认 30 次/分钟，
+   超限 429）+ 签发/拒绝审计日志收敛滥用面。
 
 此前强制 secret 门控要求后端 env 与前端构建变量两处严格同步，任一侧
 漏配/重启即必现 503（"Bootstrap secret not configured"）与下游 401，
@@ -29,10 +33,13 @@ JWT Bearer，但 web 前端此前没有任何令牌获取/附加逻辑，导致 
 from __future__ import annotations
 
 import datetime
+import logging
 import os
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Header, HTTPException, Request
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -40,6 +47,42 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 _BOOTSTRAP_ORG = "org_webbootstrap"
 _BOOTSTRAP_WS = "ws_default"
 _BOOTSTRAP_PR = "pr_websession"
+
+# ── 签发限流（L3 加固，2026-08-09）──────────────────────────────────
+# Origin 门控只防浏览器介导的跨站请求，非浏览器调用方可自设 Origin；
+# 叠加按 IP 滑动窗口限流，限制无凭据签发的滥用面（与 access_control 的
+# 登录限流同款机制）。单 worker 进程内内存即可；多 worker 下窗口不共享，
+# 上限按 worker 数线性放大，可接受。
+_BOOTSTRAP_RATE_LIMIT_MAX = int(os.environ.get("AUS_ELE_WEB_SESSION_RATE_LIMIT", "30"))
+_BOOTSTRAP_RATE_LIMIT_WINDOW_SECONDS = int(
+    os.environ.get("AUS_ELE_WEB_SESSION_RATE_LIMIT_WINDOW", "60")
+)
+_bootstrap_attempts: dict[str, list[datetime.datetime]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    """取调用方 IP。
+
+    优先 X-Real-IP：nginx 反代以 ``$remote_addr`` 覆写（可信）。
+    不用 X-Forwarded-For 首段——它可被客户端伪造从而绕过限流（CWE-348）；
+    无代理时回落 ASGI 对端地址。
+    """
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        return real_ip
+    client = getattr(request, "client", None)
+    return getattr(client, "host", "") or "unknown"
+
+
+def _check_bootstrap_rate_limit(ip: str) -> None:
+    """滑动窗口限流：超限抛 429。"""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    attempts = _bootstrap_attempts.setdefault(ip, [])
+    while attempts and (now - attempts[0]).total_seconds() > _BOOTSTRAP_RATE_LIMIT_WINDOW_SECONDS:
+        attempts.pop(0)
+    if len(attempts) >= _BOOTSTRAP_RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Too many web-session bootstrap requests")
+    attempts.append(now)
 
 
 def _now_iso() -> str:
@@ -119,11 +162,23 @@ def create_web_session(
     放行条件（任一即可）：显式共享密钥匹配；同站点 Origin/Referer 门控。
     两者都不满足时 fail-closed（403）。不再依赖强制 secret（避免漏配
     env 导致 503 + 下游 401 的脆弱链路）。
+
+    安全边界（L3 加固，2026-08-09）：Origin 头仅在浏览器内不可伪造，
+    同源门控防的是浏览器介导的跨站攻击；非浏览器调用方可自设 Origin，
+    故叠加按 IP 滑动窗口限流（超限 429）+ 签发审计日志收敛滥用面。
+    签发的是低权限短 token（web-session 引导身份），非管理员凭据。
     """
+    ip = _client_ip(request)
+    _check_bootstrap_rate_limit(ip)
+
     expected = os.environ.get("AUS_ELE_WEB_BOOTSTRAP_SECRET", "").strip()
     secret_ok = bool(expected) and (x_bootstrap_secret or "").strip() == expected
 
     if not secret_ok and not _same_site(request):
+        logger.warning(
+            "web-session bootstrap denied: ip=%s origin=%r", ip,
+            request.headers.get("origin"),
+        )
         raise HTTPException(
             status_code=403,
             detail=(
@@ -139,6 +194,10 @@ def create_web_session(
     _ensure_bootstrap_identity(db)
     issued = issue_access_token(
         db, principal_id=_BOOTSTRAP_PR, workspace_id=_BOOTSTRAP_WS
+    )
+    logger.info(
+        "web-session bootstrap issued: ip=%s origin=%r via=%s",
+        ip, request.headers.get("origin"), "secret" if secret_ok else "same-site",
     )
     return {
         "token": issued["token"],

@@ -36,7 +36,14 @@ class WebSessionGateTests(unittest.TestCase):
         # 确保测试起点不带相关 env
         os.environ.pop("AUS_ELE_WEB_BOOTSTRAP_SECRET", None)
         os.environ.pop("AUS_ELE_WEB_ALLOWED_ORIGINS", None)
+        # 清理限流窗口状态，避免用例间相互污染
+        auth_routes._bootstrap_attempts.clear()
+        self._orig_rate_max = auth_routes._BOOTSTRAP_RATE_LIMIT_MAX
         self.addCleanup(self._env_patch.stop)
+        self.addCleanup(self._restore_rate_max)
+
+    def _restore_rate_max(self):
+        auth_routes._BOOTSTRAP_RATE_LIMIT_MAX = self._orig_rate_max
 
     def _call(self, headers=None, secret_header=None):
         """以打桩的 db/签发函数调用端点，返回签发结果。"""
@@ -133,6 +140,42 @@ class WebSessionGateTests(unittest.TestCase):
         self._expect_denied(
             headers={"origin": "not a url", "host": "127.0.0.1:8085"}
         )
+
+    # ── 签发限流（L3 加固）──────────────────────────────────────────
+    def test_rate_limit_blocks_excess_requests(self):
+        auth_routes._BOOTSTRAP_RATE_LIMIT_MAX = 3
+        headers = {"origin": "http://localhost:5174", "host": "127.0.0.1:8085",
+                   "x-real-ip": "203.0.113.7"}
+        for _ in range(3):
+            result, _ = self._call(headers=headers)
+            self.assertEqual(result["token"], "tok_bootstrap")
+        with self.assertRaises(HTTPException) as ctx:
+            self._call(headers=headers)
+        self.assertEqual(ctx.exception.status_code, 429)
+
+    def test_rate_limit_keyed_by_client_ip(self):
+        """不同 X-Real-IP 客户端各自计窗，互不影响。"""
+        auth_routes._BOOTSTRAP_RATE_LIMIT_MAX = 1
+        base = {"origin": "http://localhost:5174", "host": "127.0.0.1:8085"}
+        self._call(headers={**base, "x-real-ip": "203.0.113.1"})
+        # 第二个 IP 仍可签发
+        result, _ = self._call(headers={**base, "x-real-ip": "203.0.113.2"})
+        self.assertEqual(result["token"], "tok_bootstrap")
+        # 第一个 IP 已超限
+        with self.assertRaises(HTTPException) as ctx:
+            self._call(headers={**base, "x-real-ip": "203.0.113.1"})
+        self.assertEqual(ctx.exception.status_code, 429)
+
+    def test_spoofed_x_forwarded_for_does_not_change_rate_key(self):
+        """伪造 X-Forwarded-For 不影响限流键（CWE-348 回归防护）。"""
+        auth_routes._BOOTSTRAP_RATE_LIMIT_MAX = 1
+        base = {"origin": "http://localhost:5174", "host": "127.0.0.1:8085",
+                "x-real-ip": "203.0.113.9"}
+        self._call(headers=base)
+        # 伪造不同 XFF 但真实 IP 相同 → 仍超限
+        with self.assertRaises(HTTPException) as ctx:
+            self._call(headers={**base, "x-forwarded-for": "1.2.3.4"})
+        self.assertEqual(ctx.exception.status_code, 429)
 
 
 if __name__ == "__main__":
