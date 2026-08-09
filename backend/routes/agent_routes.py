@@ -310,6 +310,52 @@ async def get_task_status(task_id: str) -> AgentTaskStatusResponse:
 # Streaming chat (SSE) — live ReAct trace + multi-turn conversation
 # ---------------------------------------------------------------------------
 
+# SSE 心跳间隔（秒）。重工具（co_optimized_backtest/market_screening 等）
+# 执行期间事件流长时间空闲，云侧防火墙/NAT 会按空闲超时掐断 TCP，
+# 前端报 "network error"（生产实测于步骤 9 co_optimized_backtest）。
+# 注释帧 ``: keep-alive`` 为 SSE 标准心跳，前端解析器已兼容（忽略注释帧）。
+_SSE_KEEPALIVE_INTERVAL_SECONDS = 10.0
+_SENTINEL = object()
+
+
+async def _stream_with_keepalive(events):
+    """为 SSE 事件流附加空闲心跳，防止中间设备按空闲超时掐断长连接。
+
+    采用队列式生产者/消费者：编排器生成器在独立任务中持续运行，
+    **绝不被取消**（避免 async generator 取消反模式损伤执行中的
+    工具任务）；消费端仅在队列读取超时时发心跳标记。yield 原始
+    dict 事件；心跳以 ``None`` 标记，由调用方格式化为 SSE 注释帧。
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _producer() -> None:
+        try:
+            async for event in events:
+                await queue.put(event)
+        except Exception as exc:  # noqa: BLE001 - surface as SSE error, never 500
+            logger.error("Agent chat-stream failed: %s", exc, exc_info=True)
+            await queue.put({"type": "error", "message": "Agent streaming failed"})
+        finally:
+            await queue.put(_SENTINEL)
+
+    task = asyncio.create_task(_producer())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(
+                    queue.get(), timeout=_SSE_KEEPALIVE_INTERVAL_SECONDS
+                )
+            except asyncio.TimeoutError:
+                yield None  # 心跳标记
+                continue
+            if item is _SENTINEL:
+                break
+            yield item
+    finally:
+        # 客户端提前断开时才取消生产者；正常路径下任务已完成。
+        if not task.done():
+            task.cancel()
+
 
 @router.post("/chat-stream")
 async def chat_stream(
@@ -343,30 +389,34 @@ async def chat_stream(
 
     async def event_generator():
         final_report = None
-        try:
-            async for event in orchestrator.run_stream(
+        saw_done = False
+        async for item in _stream_with_keepalive(
+            orchestrator.run_stream(
                 query=request.query,
                 context=context,
                 history=history,
                 workflow_template_id=request.workflow_template,
-            ):
-                if event.get("type") == "report":
-                    final_report = event.get("report")
-                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
-        except Exception as exc:  # noqa: BLE001 - surface as SSE error, never 500
-            logger.error("Agent chat-stream failed: %s", exc, exc_info=True)
-            err = {"type": "error", "message": "Agent streaming failed"}
-            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+            )
+        ):
+            if item is None:  # 心跳：SSE 注释帧，前端解析器已兼容忽略
+                yield ": keep-alive\n\n"
+                continue
+            if item.get("type") == "report":
+                final_report = item.get("report")
+            if item.get("type") == "done":
+                saw_done = True
+            yield f"data: {json.dumps(item, ensure_ascii=False, default=str)}\n\n"
+        if not saw_done:
+            # 异常路径（编排器抛错被转为 error 帧）也保证前端能收到收尾帧。
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-        else:
-            # Best-effort execution log, off the event loop.
-            if final_report is not None:
-                try:
-                    await asyncio.get_running_loop().run_in_executor(
-                        None, _log_execution_dict, final_report
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("chat-stream log failed: %s", exc)
+        # Best-effort execution log, off the event loop.
+        if final_report is not None:
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, _log_execution_dict, final_report
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("chat-stream log failed: %s", exc)
 
     return StreamingResponse(
         event_generator(),
