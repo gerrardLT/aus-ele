@@ -7,8 +7,10 @@ const API_BASE = getApiBase();
 const AGENT_BASE = `${API_BASE}/v1/agent`;
 
 // ─── Web 会话引导（后端 P0 加固后 agent 端点要求 JWT Bearer） ────────────────
-// 前端启动后向 /auth/web-session 引导一个短期令牌并缓存；
-// 生产可通过 VITE_BOOTSTRAP_SECRET 提供边缘共享密钥（可选）。
+// 前端启动后向 /auth/web-session 引导一个短期令牌并缓存。
+// 后端门控（2026-08-09）：同站点 Origin/Referer 自动放行（dev 代理/生产
+// 直连均满足）；VITE_BOOTSTRAP_SECRET 仅在配置时作为显式共享密钥附加，
+// 用于无 Origin 的调用方，未配置不影响 web UI 取令牌。
 let _token = null;
 let _tokenExp = 0;
 
