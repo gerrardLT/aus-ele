@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -693,6 +694,23 @@ def _exec_forward_spread(params: Dict[str, Any], ctx: AgentContext) -> Dict[str,
     return {"region": region, "result": str(result)}
 
 
+# 联合优化回测区间数上限（OOM 修复，2026-08-09）。PuLP 逐区间构建 MILP
+# 变量/约束，全量 8760 步在生产导致 CBC 求解器撑爆容器 cgroup 内存
+# （dmesg："cbc invoked oom-killer"，backend worker 被杀 → 前端 network error）。
+# 等间距降采样到 ≤2160 区间：价格覆盖范围不变、仅时间分辨率下降，
+# 内存与建模耗时随区间数线性下降。可通过 params_override 的
+# max_intervals 字段按需覆盖（影响结果代表性，谨慎）。
+_COPT_MAX_INTERVALS = 2160
+
+
+def _downsample_backtest_rows(rows: List[Dict[str, Any]], max_intervals: int):
+    """等间距降采样，返回 (采样后行, stride)；stride=1 表示未降采样。"""
+    if max_intervals <= 0 or len(rows) <= max_intervals:
+        return rows, 1
+    stride = math.ceil(len(rows) / max_intervals)
+    return rows[::stride], stride
+
+
 def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute co-optimized energy + FCAS backtest."""
     from deps import get_db
@@ -733,6 +751,11 @@ def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Di
     if not rows:
         return {"region": region, "year": year, "status": "no_data"}
 
+    # OOM 防护：降采样控制求解器内存占用（见 _COPT_MAX_INTERVALS 注释）
+    max_intervals = int(params.get("max_intervals") or _COPT_MAX_INTERVALS)
+    rows, stride = _downsample_backtest_rows(rows, max_intervals)
+    interval_hours = (5.0 / 60.0) * stride
+
     engine = CoOptimizationEngine(battery, config)
 
     # Transform row data to engine expected format
@@ -740,7 +763,7 @@ def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Di
         {
             "timestamp": r.get("settlement_date", ""),
             "price": float(r.get("rrp_aud_mwh") or 0.0),
-            "interval_hours": 5.0 / 60.0,
+            "interval_hours": interval_hours,
         }
         for r in rows
     ]
@@ -751,8 +774,16 @@ def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Di
 
     result = engine.optimize(energy_prices=energy_prices, fcas_prices=fcas_prices)
     if hasattr(result, "__dict__"):
-        return {k: v for k, v in vars(result).items() if not k.startswith("_")}
-    return {"region": region, "year": year, "result": str(result)}
+        payload = {k: v for k, v in vars(result).items() if not k.startswith("_")}
+    else:
+        payload = {"region": region, "year": year, "result": str(result)}
+    if stride > 1:
+        # 透明性：报告中注明降采样，避免误读为全分辨率回测
+        payload["note"] = (
+            f"为控制求解器内存占用已降采样至 {len(rows)} 个区间"
+            f"（stride={stride}，价格覆盖范围不变，时间分辨率下降）"
+        )
+    return payload
 
 
 def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:

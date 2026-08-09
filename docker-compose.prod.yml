@@ -23,8 +23,12 @@ services:
   backend:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX}/backend:${IMAGE_TAG}
     restart: unless-stopped
-    mem_limit: 1200m
+    # OOM 修复（2026-08-09）：此前 1200m + 4 worker，重工具波次（CBC/Monte Carlo）
+    # 撑爆 cgroup 被 OOM kill（dmesg 实证）。单 worker（async 模型下并发靠
+    # 事件循环+线程池，足够）+ 降采样后内存余量充足，1500m 为兜底。
+    mem_limit: 1500m
     environment:
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-1}
       AUS_ELE_DB_BACKEND: postgresql
       AUS_ELE_PG_HOST: postgres
       AUS_ELE_PG_PORT: 5432
