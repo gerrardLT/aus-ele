@@ -138,7 +138,7 @@ write_env_file() {
         echo "AUS_ELE_AGENT_LLM_PROVIDER=openai"
         echo "AUS_ELE_AGENT_LLM_API_KEY=sk-0ce5871611da7ad64550a11a99237bf8a733f079eddf4ace5b9c39d9d75207c1"
         echo "AUS_ELE_AGENT_LLM_BASE_URL=https://api.443.hk/v1"
-        echo "AUS_ELE_AGENT_LLM_MODEL=gpt-5.6-sol"
+        echo "AUS_ELE_AGENT_LLM_MODEL=gpt-5.6-terra"  # luna 已被供应商下架（2026-08-09，404）
         # CORS（生产域名）
         echo "AUS_ELE_CORS_ALLOW_ORIGINS=${AUS_ELE_CORS_ALLOW_ORIGINS:-}"
     } >>"${ENV_FILE}"
