@@ -824,7 +824,9 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
           {answer && (
             <Collapsible
               title="推理过程"
-              defaultOpen={!(!streaming)}
+              // 默认展开且流结束后不自动折叠（用户反馈 2026-08-09）；
+              // 手动折叠仍可用（Collapsible 仅在 defaultOpen 变化时自动收起）。
+              defaultOpen
               badge={streaming && !answerDone ? '生成中' : undefined}
             >
               <MarkdownText text={answer} streaming={streaming && !answerDone} />
