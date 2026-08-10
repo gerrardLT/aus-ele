@@ -117,9 +117,9 @@ export default function NetworkImpactDisplay({ config, lang = 'zh', region }) {
       <p className="text-xs text-[var(--color-muted)] font-sans mb-4">{t.subtitle}</p>
 
       {/* Project Summary */}
-      <div className="mb-4 p-3 rounded border border-green-300 bg-green-50 dark:bg-green-950/20">
+      <div className="mb-4 p-3 rounded border border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/10">
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-green-600 dark:text-green-400 text-lg">◆</span>
+          <span className="text-[var(--color-status-success)] text-lg">◆</span>
           <span className="text-sm font-serif font-bold">{data.project_name || 'Network Project'}</span>
         </div>
         <div className="grid grid-cols-2 gap-4">
@@ -129,7 +129,7 @@ export default function NetworkImpactDisplay({ config, lang = 'zh', region }) {
           </div>
           <div>
             <p className="text-xs text-[var(--color-muted)]">{t.reductionPct}</p>
-            <p className="text-sm font-mono font-bold text-green-700 dark:text-green-300">
+            <p className="text-sm font-mono font-bold text-[var(--color-status-success)]">
               {reductionPct != null ? `-${reductionPct.toFixed(1)}%` : '—'}
             </p>
           </div>
@@ -176,10 +176,10 @@ export default function NetworkImpactDisplay({ config, lang = 'zh', region }) {
                       <td className="text-right py-2 px-2 font-mono text-xs">
                         {beforeSpread != null ? `$${beforeSpread.toFixed(1)}` : '—'}
                       </td>
-                      <td className="text-right py-2 px-2 font-mono text-xs text-green-800 dark:text-green-400">
+                      <td className="text-right py-2 px-2 font-mono text-xs text-[var(--color-status-success)]">
                         {afterSpread != null ? `$${afterSpread.toFixed(1)}` : '—'}
                       </td>
-                      <td className="text-right py-2 px-2 font-mono text-xs text-green-800 dark:text-green-400 font-bold">
+                      <td className="text-right py-2 px-2 font-mono text-xs text-[var(--color-status-success)] font-bold">
                         {diffPct != null ? `-${diffPct.toFixed(1)}%` : '—'}
                       </td>
                     </tr>

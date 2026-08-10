@@ -385,9 +385,9 @@ describe('CrossValidationTable', () => {
     await waitFor(() => {
       expect(screen.getByText('Bayswater Closure')).toBeInTheDocument();
     });
-    // 差异 15.3% 的行应该有红色高亮背景
+    // 差异 15.3% 的行应该有高亮背景（主题状态 token，2026-08-10 暗色适配）
     const highDiscrepancyRow = screen.getByText('+15.3%').closest('tr');
-    expect(highDiscrepancyRow.className).toContain('bg-red-50');
+    expect(highDiscrepancyRow.className).toContain('bg-[var(--color-status-error)]/8');
   });
 
   it('过期数据显示警告标志', async () => {

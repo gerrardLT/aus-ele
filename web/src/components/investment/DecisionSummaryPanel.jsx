@@ -70,10 +70,11 @@ const LABELS = {
   },
 };
 
+// 主题状态 token：暗色下自动提亮（2026-08-10）
 const SIGNAL_COLORS = {
-  green: '#15803d',
-  yellow: '#b45309',
-  red: '#b91c1c',
+  green: 'var(--color-status-success)',
+  yellow: 'var(--color-status-timeout)',
+  red: 'var(--color-status-error)',
 };
 
 function SignalLight({ color, label, detail }) {
@@ -205,7 +206,7 @@ export default function DecisionSummaryPanel({ metrics, params, mc, regimeCompac
           <ul className="space-y-1 text-sm text-[var(--color-text)]">
             {risks.map((risk, i) => (
               <li key={i} className="flex items-start gap-2">
-                <span className="mt-1 text-[#b91c1c]">•</span>
+                <span className="mt-1 text-[var(--color-negative)]">•</span>
                 <span>{risk}</span>
               </li>
             ))}

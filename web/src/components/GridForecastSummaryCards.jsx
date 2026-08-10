@@ -12,22 +12,22 @@ const CARD_KEYS = [
 function getTone(value) {
   if (value >= 75) {
     return {
-      panel: 'border-rose-200 bg-rose-50/80',
+      panel: 'border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8',
       bar: 'bg-rose-500',
-      text: 'text-rose-700',
+      text: 'text-[var(--color-status-error)]',
     };
   }
   if (value >= 55) {
     return {
-      panel: 'border-amber-200 bg-amber-50/80',
+      panel: 'border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8',
       bar: 'bg-amber-500',
-      text: 'text-amber-700',
+      text: 'text-[var(--color-status-timeout)]',
     };
   }
   return {
-    panel: 'border-emerald-200 bg-emerald-50/70',
+    panel: 'border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/8',
     bar: 'bg-emerald-500',
-    text: 'text-emerald-700',
+    text: 'text-[var(--color-status-success)]',
   };
 }
 
@@ -58,7 +58,7 @@ export default function GridForecastSummaryCards({ summary, t, locale = 'en' }) 
               <div className="pb-0.5 text-[11px] uppercase tracking-widest text-[var(--color-muted)]">/ 100</div>
             </div>
 
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/80">
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--color-surface)]">
               <div
                 className={`h-full rounded-full ${tone.bar}`}
                 style={{ width: `${Math.max(6, Math.min(score, 100))}%` }}

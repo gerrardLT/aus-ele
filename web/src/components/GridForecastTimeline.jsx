@@ -7,12 +7,12 @@ import {
 
 function getWindowTone(windowType) {
   if (windowType === 'charge') {
-    return 'border-emerald-200 bg-emerald-50/70';
+    return 'border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/8';
   }
   if (windowType === 'discharge') {
-    return 'border-amber-200 bg-amber-50/70';
+    return 'border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8';
   }
-  return 'border-slate-200 bg-slate-50/70';
+  return 'border-[var(--color-border)] bg-[var(--color-surface-hover)]/70';
 }
 
 function formatProbability(value) {
@@ -72,7 +72,7 @@ export default function GridForecastTimeline({ windows, t, locale = 'en' }) {
                     return (
                       <span
                         key={key}
-                        className="inline-flex items-center rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest text-slate-700"
+                        className="inline-flex items-center rounded-full bg-[var(--color-surface)] px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest text-[var(--color-muted)]"
                       >
                         {formatted}
                       </span>
@@ -86,7 +86,7 @@ export default function GridForecastTimeline({ windows, t, locale = 'en' }) {
                   {Object.entries(window.scores || {}).slice(0, 4).map(([key, value]) => (
                     <div
                       key={key}
-                      className="rounded border border-white/80 bg-white/80 px-2.5 py-2"
+                      className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2"
                     >
                       <div className="text-[10px] uppercase tracking-[0.16em] text-[var(--color-muted)]">
                         {getForecastScoreLabel(key, locale)}

@@ -272,13 +272,13 @@ export default function RevenueStacking({
       </div>
 
       {legacySpreadFallback && (
-        <div className="mb-6 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+        <div className="mb-6 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 px-4 py-3 text-xs leading-5 text-[var(--color-status-timeout)]">
           {t.stackLegacyFallback}
         </div>
       )}
 
       {isWem && (
-        <div className="mb-6 rounded border border-amber-500 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="mb-6 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 p-4 text-sm text-[var(--color-status-timeout)]">
           <div className="flex flex-wrap items-center gap-3">
             <DataQualityBadge metadata={sectionMetadata} lang={lang} tags={sectionStatusTags} />
             <div className="font-semibold tracking-wide">

@@ -87,13 +87,14 @@ const LABELS = {
 
 /**
  * 偏差颜色编码：绿色(≤15%)、琥珀色(15-30%)、红色(>30%)
+ * 使用主题状态 token，暗色模式下自动提亮（2026-08-10）。
  */
 function _getDeviationColor(deviation) {
-  if (deviation == null) return 'bg-gray-100 text-gray-600';
+  if (deviation == null) return 'bg-[var(--color-surface-hover)] text-[var(--color-muted)]';
   const abs = Math.abs(deviation);
-  if (abs <= 15) return 'bg-green-100 text-green-800';
-  if (abs <= 30) return 'bg-amber-100 text-amber-800';
-  return 'bg-red-100 text-red-800';
+  if (abs <= 15) return 'bg-[var(--color-status-success)]/10 text-[var(--color-status-success)]';
+  if (abs <= 30) return 'bg-[var(--color-status-timeout)]/10 text-[var(--color-status-timeout)]';
+  return 'bg-[var(--color-status-error)]/10 text-[var(--color-status-error)]';
 }
 
 export default function ForwardSpreadCurve({ config, lang = 'zh', region: regionProp }) {
@@ -196,8 +197,8 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
           <span
             className={`inline-block px-2 py-0.5 text-xs rounded font-sans ${
               calibrationStatus.status === 'calibrated'
-                ? 'bg-green-100 text-green-800'
-                : 'bg-amber-100 text-amber-800'
+                ? 'bg-[var(--color-status-success)]/10 text-[var(--color-status-success)]'
+                : 'bg-[var(--color-status-timeout)]/10 text-[var(--color-status-timeout)]'
             }`}
             title={calibrationStatus.status !== 'calibrated'
               ? `${calibrationStatus.status}${calibrationStatus.calibrated_at ? ` (${calibrationStatus.calibrated_at})` : ''}`
@@ -221,7 +222,8 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
         <p className="text-xs text-[var(--color-muted)] italic mb-2">{t.noHistorical}</p>
       )}
 
-      <div className="h-[380px]">
+      {/* 图表容器显式主题背景：置信带遮罩与之同色，双主题下均无亮色块 */}
+      <div className="h-[380px] rounded-lg bg-[var(--color-surface)]">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
@@ -237,13 +239,13 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
             <Tooltip content={<SpreadTooltip t={t} />} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
 
-            {/* 置信带：High 和 Low 之间的浅蓝色填充 */}
+            {/* 置信带：High 和 Low 之间的主题色填充（原浅色方案仅适配亮色） */}
             <Area
               type="monotone"
               dataKey="high_spread"
               stroke="none"
-              fill="#dbeafe"
-              fillOpacity={0.5}
+              fill="var(--color-primary)"
+              fillOpacity={0.12}
               name={t.confidenceBand}
               legendType="none"
               isAnimationActive={false}
@@ -252,19 +254,19 @@ export default function ForwardSpreadCurve({ config, lang = 'zh', region: region
               type="monotone"
               dataKey="low_spread"
               stroke="none"
-              fill="#ffffff"
+              fill="var(--color-surface)"
               fillOpacity={1}
               legendType="none"
               isAnimationActive={false}
             />
 
-            {/* 历史数据：黑色实线 */}
+            {/* 历史数据：主题文本色实线（亮色下近黑、暗色下近白） */}
             <Line
               type="monotone"
               dataKey="historical_spread"
-              stroke="#000000"
+              stroke="var(--color-text)"
               strokeWidth={2}
-              dot={{ r: 3, fill: '#000000' }}
+              dot={{ r: 3, fill: 'var(--color-text)' }}
               name={t.historical}
               connectNulls={false}
               isAnimationActive={false}

@@ -9,10 +9,10 @@ import {
 
 function toneClasses(tone) {
   if (tone === 'success') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800';
+    return 'border-emerald-500/30 bg-emerald-500/10 text-[var(--color-status-success)]';
   }
   if (tone === 'warning') {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-800';
+    return 'border-[var(--color-status-timeout)]/30 bg-amber-500/10 text-[var(--color-status-timeout)]';
   }
   return 'border-[var(--color-border)] bg-[var(--color-surface)]/70 text-[var(--color-muted)]';
 }

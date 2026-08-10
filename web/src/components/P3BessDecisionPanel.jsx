@@ -18,7 +18,7 @@ function money(value) {
 
 function SmallMetric({ label, value }) {
   return (
-    <div className="rounded border border-[var(--color-border)] bg-white/60 px-3 py-2">
+    <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
       <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted)]">{label}</div>
       <div className="mt-1 text-sm font-medium text-[var(--color-text)] break-words">{value}</div>
     </div>
@@ -160,14 +160,14 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
         />
       </div>
       {payload.market === 'WEM' || payload.regulatoryScope === 'WEM' ? (
-        <div className="mt-3 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+        <div className="mt-3 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 px-4 py-3 text-xs leading-5 text-[var(--color-status-timeout)]">
           {locale === 'zh'
             ? 'WEM 的市场设计与 NEM 不同。当前结论更适合用于市场进入方向判断，暂未纳入容量收入，也不建议与 NEM 结果逐项对比。'
             : 'WEM follows a different market design from NEM. This conclusion is best used for market-entry direction, does not yet include capacity revenue, and should not be compared one-for-one with NEM results.'}
         </div>
       ) : null}
 
-      <div className="mt-4 rounded border border-[var(--color-border)] bg-white/50 p-4">
+      <div className="mt-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.decisionHeadline || copy.recommendationSummary}</div>
         <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
           <div>
@@ -186,7 +186,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
         </div>
       </div>
 
-      <div className="mt-4 rounded border border-[var(--color-border)] bg-white/50 p-4">
+      <div className="mt-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.recommendationSummary}</div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <SmallMetric label={copy.readinessStatus} value={payload.readinessStatus || copy.notAvailable} />
@@ -203,7 +203,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
       </div>
 
       {explanationChain.length > 0 ? (
-        <div className="mt-4 rounded border border-[var(--color-border)] bg-white/50 p-4">
+        <div className="mt-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
           <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.decisionWhy || copy.explanationChain}</div>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             {explanationChain.map((item, index) => (
@@ -217,7 +217,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
         </div>
       ) : null}
 
-      <div className="mt-4 rounded border border-[var(--color-border)] bg-white/50 p-4">
+      <div className="mt-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.decisionEconomics || copy.riskBoundary}</div>
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div className="grid gap-2 sm:grid-cols-2">
@@ -241,7 +241,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
         <SmallMetric label={copy.calibrationGrade} value={calibrationLabel || copy.notAvailable} />
       </div>
 
-      <details className="mt-4 rounded border border-[var(--color-border)] bg-white/40 p-4">
+      <details className="mt-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <summary className="cursor-pointer list-none text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">
           {copy.decisionDiagnostics || copy.governance || 'More Detail'}
         </summary>
@@ -259,7 +259,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
           </div>
 
           <div className="grid gap-3">
-            <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
               <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.strategyBundle}</div>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <SmallMetric label={copy.ruleBased} value={money(strategy.rule_based_dispatch?.net_revenue)} />
@@ -268,7 +268,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
               </div>
             </div>
 
-            <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
               <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.revenueAttribution}</div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <SmallMetric label={copy.grossEnergy} value={money(revenue.gross_energy_revenue)} />
@@ -283,7 +283,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
               </div>
             </div>
 
-            <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
               <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{locale === 'zh' ? '调度摘要' : 'Dispatch Summary'}</div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <SmallMetric label={chargeMwhLabel} value={`${dispatchSummary.total_charge_mwh ?? 0} MWh`} />
@@ -295,7 +295,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
               </div>
             </div>
 
-            <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
               <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.backtestSummary || 'Backtest Summary'}</div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <SmallMetric label={copy.timelinePoints || 'Timeline Points'} value={String(sourceBacktest.timeline_points ?? 0)} />
@@ -306,7 +306,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
             </div>
 
             {governance ? (
-              <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+              <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
                 <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.governance || 'Governance'}</div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <SmallMetric label={copy.freshness || 'Freshness'} value={governance.freshness?.status || copy.notAvailable} />
@@ -318,7 +318,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
             ) : null}
 
             {stochasticScenarios.length > 0 ? (
-              <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+              <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
                 <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{scenarioMatrixLabel}</div>
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-xs">
@@ -351,7 +351,7 @@ export default function P3BessDecisionPanel({ apiBase, year, region, params, req
       {payload.warnings?.length ? (
         <div className="mt-4 flex flex-wrap gap-2">
           {payload.warnings.map((warning) => (
-            <span key={warning} className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[10px] uppercase tracking-widest text-amber-700">
+            <span key={warning} className="inline-flex items-center rounded-full border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 px-3 py-1 text-[10px] uppercase tracking-widest text-[var(--color-status-timeout)]">
               {warning}
             </span>
           ))}

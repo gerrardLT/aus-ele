@@ -164,7 +164,7 @@ export default function FuelSensitivityTable({ config, lang = 'zh', region }) {
                 <tr
                   key={idx}
                   className={`border-b border-[var(--color-border)] ${
-                    isBase ? 'bg-blue-50 dark:bg-blue-950/20 font-bold' : ''
+                    isBase ? 'bg-[var(--color-primary)]/8 font-bold' : ''
                   }`}
                 >
                   <td className="py-2 px-2 font-mono text-xs">
@@ -186,8 +186,8 @@ export default function FuelSensitivityTable({ config, lang = 'zh', region }) {
                       : '—'}
                   </td>
                   <td className={`text-right py-2 px-2 font-mono text-xs font-bold ${
-                    isPositive ? 'text-green-800 dark:text-green-400' : ''
-                  }${isNegative ? 'text-red-800 dark:text-red-400' : ''}`}>
+                    isPositive ? 'text-[var(--color-status-success)]' : ''
+                  }${isNegative ? 'text-[var(--color-status-error)]' : ''}`}>
                     {scenario.revenue_change_pct != null
                       ? `${scenario.revenue_change_pct >= 0 ? '+' : ''}${scenario.revenue_change_pct.toFixed(1)}%`
                       : '—'}

@@ -205,7 +205,7 @@ export default function CoOptimizedBacktest({ config, lang = 'zh' }) {
 
       {/* Timeout warning */}
       {isFeasible && (
-        <div className="mb-4 p-3 border border-amber-400 bg-amber-50 rounded text-xs text-amber-900">
+        <div className="mb-4 p-3 border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 rounded text-xs text-[var(--color-status-timeout)]">
           ⚠️ {t.timeoutWarning} ({t.optimalityGap}: {((data.optimality_gap || 0) * 100).toFixed(1)}%)
         </div>
       )}

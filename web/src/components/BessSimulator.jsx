@@ -232,7 +232,7 @@ export default function BessSimulator({ year, region, apiBase, t, lang = 'en', n
                 <div className="grid grid-cols-3 gap-3 mb-6">
                   <div className={`border p-3 rounded ${annualEstimate.perMwh >= 0 ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
                     <div className="text-xs tracking-widest uppercase text-[var(--color-muted)] mb-1">{t.netPerMwh}</div>
-                    <div className={`text-2xl font-mono font-bold ${annualEstimate.perMwh >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                    <div className={`text-2xl font-mono font-bold ${annualEstimate.perMwh >= 0 ? 'text-[var(--color-status-success)]' : 'text-red-500'}`}>
                       ${annualEstimate.perMwh.toFixed(1)}
                     </div>
                   </div>

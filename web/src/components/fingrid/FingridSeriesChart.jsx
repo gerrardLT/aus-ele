@@ -32,7 +32,7 @@ export default function FingridSeriesChart({ payload, loading, error, copy }) {
   }
 
   if (error) {
-    return <section className="rounded border border-rose-200 bg-rose-50 p-6 text-rose-700">{error}</section>;
+    return <section className="rounded border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 p-6 text-[var(--color-status-error)]">{error}</section>;
   }
 
   const series = payload?.series || [];

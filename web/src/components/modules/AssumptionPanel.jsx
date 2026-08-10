@@ -224,7 +224,7 @@ export default function AssumptionPanel({ lang = 'zh', onRecalculate }) {
                     {t.categories[category] || category}
                   </span>
                   {modCount > 0 && (
-                    <span className="px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded">
+                    <span className="px-1.5 py-0.5 text-xs bg-[var(--color-status-timeout)]/10 text-[var(--color-status-timeout)] rounded">
                       {modCount} {t.modified}
                     </span>
                   )}
@@ -275,7 +275,7 @@ function AssumptionRow({ assumption, value, isModified, onChange, onBlur, lang, 
   const hasOptions = assumption.options && assumption.options.length > 0;
 
   return (
-    <div className={`px-4 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 border-b border-[var(--color-border)] last:border-b-0 ${isModified ? 'bg-amber-50/50 dark:bg-amber-950/20' : ''}`}>
+    <div className={`px-4 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 border-b border-[var(--color-border)] last:border-b-0 ${isModified ? 'bg-[var(--color-status-timeout)]/8' : ''}`}>
       {/* Label + Source */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">

@@ -154,7 +154,7 @@ export default function CycleCost({
       </div>
 
       {legacyFallback && (
-        <div className="mb-6 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+        <div className="mb-6 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 px-4 py-3 text-xs leading-5 text-[var(--color-status-timeout)]">
           {t.ccLegacyFallback}
         </div>
       )}
@@ -194,20 +194,20 @@ export default function CycleCost({
             </div>
 
             <div className="border border-green-500/30 bg-green-500/5 p-4 rounded">
-              <div className="text-xs tracking-widest uppercase font-bold text-green-800 mb-2">
+              <div className="text-xs tracking-widest uppercase font-bold text-[var(--color-status-success)] mb-2">
                 {t.ccProfitable}
               </div>
-              <div className="text-3xl font-mono font-bold text-green-800">{metrics.profitableDays}</div>
+              <div className="text-3xl font-mono font-bold text-[var(--color-status-success)]">{metrics.profitableDays}</div>
               <div className="text-xs text-[var(--color-muted)] mt-1">
                 {t.ccDays} ({metrics.profitableRatio.toFixed(1)}%)
               </div>
             </div>
 
             <div className="border border-red-500/30 bg-red-500/5 p-4 rounded">
-              <div className="text-xs tracking-widest uppercase font-bold text-red-800 mb-2">
+              <div className="text-xs tracking-widest uppercase font-bold text-[var(--color-status-error)] mb-2">
                 {t.ccNotWorth}
               </div>
-              <div className="text-3xl font-mono font-bold text-red-800">{metrics.unprofitableDays}</div>
+              <div className="text-3xl font-mono font-bold text-[var(--color-status-error)]">{metrics.unprofitableDays}</div>
               <div className="text-xs text-[var(--color-muted)] mt-1">
                 {t.ccDays} ({(100 - metrics.profitableRatio).toFixed(1)}%)
               </div>

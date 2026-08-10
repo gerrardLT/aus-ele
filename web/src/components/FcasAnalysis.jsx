@@ -22,21 +22,22 @@ import RegimeCompactInline from './RegimeCompactInline';
 
 const AGGREGATIONS = ['daily', 'weekly', 'monthly'];
 
+// 系列色整体提亮一档：原最暗档（#1d4ed8/#b91c1c）在暗色背景上不可辨（2026-08-10）
 const FCAS_COLORS = {
-  raise1sec: '#1d4ed8',
-  raise6sec: '#2563eb',
-  raise60sec: '#3b82f6',
-  raise5min: '#60a5fa',
-  raisereg: '#93c5fd',
-  lower1sec: '#b91c1c',
-  lower6sec: '#dc2626',
-  lower60sec: '#ef4444',
+  raise1sec: '#2563eb',
+  raise6sec: '#3b82f6',
+  raise60sec: '#60a5fa',
+  raise5min: '#93c5fd',
+  raisereg: '#bfdbfe',
+  lower1sec: '#dc2626',
+  lower6sec: '#ef4444',
+  lower60sec: '#f87171',
   lower5min: '#f87171',
   lowerreg: '#fca5a5',
-  regulation_raise: '#2563eb',
+  regulation_raise: '#3b82f6',
   contingency_raise: '#60a5fa',
-  rocof: '#7c3aed',
-  regulation_lower: '#dc2626',
+  rocof: '#8b5cf6',
+  regulation_lower: '#ef4444',
   contingency_lower: '#f87171',
 };
 
@@ -280,7 +281,7 @@ export default function FcasAnalysis({
           )}
 
           {isWemPreview && (
-            <div className="mb-6 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+            <div className="mb-6 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">
               <div className="mb-1 flex flex-wrap items-center gap-3">
                 <DataQualityBadge metadata={sectionMetadata} lang={lang} tags={sectionStatusTags} />
                 <div className="font-semibold tracking-wide">

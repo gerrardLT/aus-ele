@@ -52,7 +52,7 @@ export default function AnomalyBadge({ lang = 'zh', onNavigate }) {
       {/* Pulse badge */}
       <button
         onClick={() => setOpen(!open)}
-        className="relative flex items-center justify-center w-7 h-7 rounded-full border border-red-300/50 bg-red-500/10 hover:bg-red-500/20 transition-colors"
+        className="relative flex items-center justify-center w-7 h-7 rounded-full border border-[var(--color-status-error)]/50 bg-red-500/10 hover:bg-red-500/20 transition-colors"
         aria-label={`${anomalies.length} anomalies detected`}
       >
         <motion.span

@@ -282,7 +282,7 @@ export default function PeakAnalysis({
                       <td className="text-right py-2.5 px-2 font-mono text-xs font-bold">{fmt(row.spread_4h)}</td>
                       <td className="text-right py-2.5 px-2 font-mono text-xs font-bold">{fmt(row.spread_6h)}</td>
                       <td className={`text-right py-2.5 px-2 font-mono text-xs ${
-                        row.net_spread_4h !== null && row.net_spread_4h > 0 ? 'text-green-600' : 'text-red-500'
+                        row.net_spread_4h !== null && row.net_spread_4h > 0 ? 'text-[var(--color-status-success)]' : 'text-red-500'
                       }`}
                       >
                         {fmt(row.net_spread_4h)}

@@ -119,7 +119,7 @@ export default function ScenarioSplit({ lang = 'zh', region }) {
               <span className="font-mono text-[var(--color-text)]">
                 {pinned ? m.format(pinned[m.key]) : '--'}
               </span>
-              <span className={`text-center font-mono ${d == null ? 'text-[var(--color-muted)]' : d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              <span className={`text-center font-mono ${d == null ? 'text-[var(--color-muted)]' : d >= 0 ? 'text-[var(--color-positive)]' : 'text-[var(--color-negative)]'}`}>
                 {d == null ? '--' : `${d >= 0 ? '+' : ''}${d.toFixed(1)}%`}
               </span>
               <span className="font-mono text-[var(--color-text)] text-right">

@@ -195,7 +195,7 @@ export default function MarketPage({ market }) {
                   ${isActive
                     ? 'bg-[var(--color-primary)] text-white'
                     : visitedTabs.has(index)
-                      ? 'bg-green-100 text-green-700 border border-green-300'
+                      ? 'bg-[var(--color-status-success)]/10 text-[var(--color-status-success)] border border-[var(--color-status-success)]/40'
                       : 'bg-[var(--color-border)] text-[var(--color-muted)]'
                   }
                 `}>

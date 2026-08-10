@@ -56,9 +56,9 @@ const COPY = {
 };
 
 function toneClass(score) {
-  if (score >= 75) return 'text-emerald-700 bg-emerald-50 border-emerald-200';
-  if (score >= 55) return 'text-amber-700 bg-amber-50 border-amber-200';
-  return 'text-rose-700 bg-rose-50 border-rose-200';
+  if (score >= 75) return 'text-[var(--color-status-success)] bg-[var(--color-status-success)]/8 border-[var(--color-status-success)]/40';
+  if (score >= 55) return 'text-[var(--color-status-timeout)] bg-[var(--color-status-timeout)]/8 border-[var(--color-status-timeout)]/40';
+  return 'text-[var(--color-status-error)] bg-[var(--color-status-error)]/8 border-[var(--color-status-error)]/40';
 }
 
 function ScoreBar({ score }) {

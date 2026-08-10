@@ -200,9 +200,9 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
             <div className="lg:col-span-1 space-y-4">
               <div className={`rounded border p-4 ${
                 overlayNotice.variant === 'warning'
-                  ? 'border-amber-500/40 bg-amber-50 text-amber-900'
+                  ? 'border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 text-[var(--color-status-timeout)]'
                   : overlayNotice.variant === 'info'
-                    ? 'border-sky-500/30 bg-sky-50 text-sky-900'
+                    ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/8 text-[var(--color-primary)]'
                     : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]'
               }`}>
                 <div className="text-xs tracking-widest uppercase font-bold mb-2">
@@ -222,12 +222,12 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
               </div>
 
               <div className="border border-green-500/30 bg-green-500/5 p-4 rounded">
-              <div className="text-xs tracking-widest uppercase font-bold text-green-600 mb-3">
+              <div className="text-xs tracking-widest uppercase font-bold text-[var(--color-status-success)] mb-3">
                 {t.cwBestCharge}
               </div>
               <div className="flex flex-wrap gap-2">
                 {stats.bestCharge.map((hour) => (
-                  <div key={hour} className="px-3 py-1.5 bg-green-100 text-green-800 rounded font-mono text-sm font-bold">
+                  <div key={hour} className="px-3 py-1.5 bg-[var(--color-status-success)]/10 text-[var(--color-status-success)] rounded font-mono text-sm font-bold">
                     {hour.toString().padStart(2, '0')}:00
                   </div>
                 ))}
@@ -243,7 +243,7 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
               </div>
               <div className="flex flex-wrap gap-2">
                 {stats.bestDischarge.map((hour) => (
-                  <div key={hour} className="px-3 py-1.5 bg-red-100 text-red-800 rounded font-mono text-sm font-bold">
+                  <div key={hour} className="px-3 py-1.5 bg-[var(--color-status-error)]/10 text-[var(--color-status-error)] rounded font-mono text-sm font-bold">
                     {hour.toString().padStart(2, '0')}:00
                   </div>
                 ))}
@@ -265,7 +265,7 @@ export default function ChargingWindow({ year, region, lang = 'en', eventOverlay
                   .map((hour) => (
                     <div key={hour.hour} className="flex justify-between">
                       <span>{hour.hour.toString().padStart(2, '0')}:00</span>
-                      <span className="text-green-600 font-bold">{hour.neg_pct}% {t.cwNegativeSuffix}</span>
+                      <span className="text-[var(--color-status-success)] font-bold">{hour.neg_pct}% {t.cwNegativeSuffix}</span>
                     </div>
                   ))}
               </div>

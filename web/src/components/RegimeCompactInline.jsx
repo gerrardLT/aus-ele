@@ -84,7 +84,7 @@ export default function RegimeCompactInline({ compact, copy, className = '' }) {
       </div>
 
       {normalized.active_regimes.length ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-black/6 pt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-3">
           <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-muted)]">
             {labels.activeLabel}
           </span>

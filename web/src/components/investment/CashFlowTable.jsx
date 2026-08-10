@@ -55,11 +55,11 @@ export default function CashFlowTable({ cashFlows, copy, lang = 'zh' }) {
                 <td className="p-2 text-right">{fmt(row.revenue_fcas)}</td>
                 <td className="p-2 text-right">{fmt(row.revenue_capacity)}</td>
                 <td className="p-2 text-right text-[var(--color-primary)]">{fmt(row.revenue)}</td>
-                <td className="p-2 text-right text-[#b91c1c]">{fmt(row.opex)}</td>
-                <td className="p-2 text-right font-bold" style={{ color: row.net_cash_flow >= 0 ? '#15803d' : '#b91c1c' }}>
+                <td className="p-2 text-right text-[var(--color-negative)]">{fmt(row.opex)}</td>
+                <td className="p-2 text-right font-bold" style={{ color: row.net_cash_flow >= 0 ? 'var(--color-positive)' : 'var(--color-negative)' }}>
                   {fmt(row.net_cash_flow)}
                 </td>
-                <td className="p-2 text-right" style={{ color: row.cumulative >= 0 ? '#15803d' : '#b91c1c' }}>
+                <td className="p-2 text-right" style={{ color: row.cumulative >= 0 ? 'var(--color-positive)' : 'var(--color-negative)' }}>
                   {fmt(row.cumulative)}
                 </td>
                 <td className="p-2 text-right text-[var(--color-muted)]">

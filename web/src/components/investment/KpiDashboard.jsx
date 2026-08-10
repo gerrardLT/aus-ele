@@ -169,7 +169,7 @@ export default function KpiDashboard({
                     <td className="py-3 pr-3 text-right font-mono">{fmt(row.adjusted_npv)}</td>
                     <td
                       className="py-3 pr-3 text-right font-mono"
-                      style={{ color: (row.delta_npv ?? 0) >= 0 ? '#15803d' : '#b91c1c' }}
+                      style={{ color: (row.delta_npv ?? 0) >= 0 ? 'var(--color-positive)' : 'var(--color-negative)' }}
                     >
                       {fmt(row.delta_npv)}
                     </td>

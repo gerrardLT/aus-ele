@@ -161,7 +161,7 @@ export default function WemCsvUploader({ lang = 'zh' }) {
           value={dataType}
           onChange={(e) => setDataType(e.target.value)}
           disabled={uploading}
-          className="w-full rounded border border-[var(--color-border)] bg-white px-3 py-1.5 text-sm text-[var(--color-text)] focus:border-[var(--color-primary)] focus:outline-none"
+          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm text-[var(--color-text)] focus:border-[var(--color-primary)] focus:outline-none"
         >
           {DATA_TYPES.map((dt) => (
             <option key={dt.value} value={dt.value}>
@@ -207,7 +207,7 @@ export default function WemCsvUploader({ lang = 'zh' }) {
           </p>
         </div>
       ) : (
-        <div className="rounded-lg border border-[var(--color-border)] bg-white p-3">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
           <div className="flex items-center gap-2">
             <svg className="h-5 w-5 flex-shrink-0 text-[var(--color-muted)]" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
@@ -254,18 +254,18 @@ export default function WemCsvUploader({ lang = 'zh' }) {
 
       {/* Error */}
       {error && (
-        <div className="mt-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="mt-3 rounded border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 px-3 py-2 text-sm text-[var(--color-status-error)]">
           {error}
         </div>
       )}
 
       {/* Success result */}
       {result && (
-        <div className="mt-3 rounded border border-emerald-300 bg-emerald-50 px-3 py-2">
-          <p className="text-sm font-medium text-emerald-800">
+        <div className="mt-3 rounded border border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/8 px-3 py-2">
+          <p className="text-sm font-medium text-[var(--color-status-success)]">
             {zh ? '导入成功' : 'Import Successful'}
           </p>
-          <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-emerald-700">
+          <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-[var(--color-muted)]">
             <span>{zh ? '数据类型' : 'Data type'}:</span>
             <span className="font-medium">
               {result.data_type === 'trading_price' ? (zh ? '交易电价' : 'Trading Price') : (zh ? 'ESS 市场价' : 'ESS Market')}

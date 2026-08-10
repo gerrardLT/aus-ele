@@ -18,12 +18,13 @@ import { fetchJson } from '../../lib/apiClient';
 
 const AGGREGATIONS = ['daily', 'weekly', 'monthly'];
 
+// 暗蓝档提亮：#0047FF/#2563eb 在暗色背景上对比度不足（2026-08-10）
 const ESS_COLORS = {
-  regulation_raise: '#0047FF',
-  regulation_lower: '#2563eb',
+  regulation_raise: '#2563eb',
+  regulation_lower: '#3b82f6',
   contingency_raise: '#22C55E',
   contingency_lower: '#60a5fa',
-  rocof: '#7c3aed',
+  rocof: '#8b5cf6',
 };
 
 const ESS_LABELS = {
@@ -148,7 +149,7 @@ export default function WemEssAnalysis({
   // Error state
   if (error && !data) {
     return (
-      <div className="p-4 border border-red-300 bg-red-50 text-red-700 rounded">
+      <div className="p-4 border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 text-[var(--color-status-error)] rounded">
         <p className="font-semibold mb-1">
           {lang === 'zh' ? '无法加载 ESS 数据' : 'Failed to load ESS data'}
         </p>

@@ -13,10 +13,10 @@
 
 function statusToneClasses(status) {
   if (status === 'complete') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800';
+    return 'border-emerald-500/30 bg-emerald-500/10 text-[var(--color-status-success)]';
   }
   // "preview" — amber tone
-  return 'border-amber-500/30 bg-amber-500/10 text-amber-800';
+  return 'border-[var(--color-status-timeout)]/30 bg-amber-500/10 text-[var(--color-status-timeout)]';
 }
 
 function StatusIcon({ status }) {

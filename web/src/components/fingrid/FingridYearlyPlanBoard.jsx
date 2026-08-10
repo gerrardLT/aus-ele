@@ -132,7 +132,7 @@ export default function FingridYearlyPlanBoard({
               {copy.loadingChart}
             </section>
           ) : error ? (
-            <section className="rounded border border-rose-200 bg-rose-50 p-6 text-rose-700">{error}</section>
+            <section className="rounded border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 p-6 text-[var(--color-status-error)]">{error}</section>
           ) : series.length === 0 ? (
             <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-sm text-[var(--color-muted)]">
               {copy.yearlyPlanEmpty}

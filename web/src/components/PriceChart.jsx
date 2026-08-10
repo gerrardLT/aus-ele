@@ -19,12 +19,12 @@ function PriceChartTooltip({ active, payload, locale = 'en', eventContextLabel }
 
   const point = payload[0].payload;
   return (
-    <div className="bg-white border border-gray-200 p-3 shadow-md font-sans rounded-md">
-      <p className="text-xs text-gray-500 mb-1 tracking-wider uppercase">{formatPriceChartTime(point.time)}</p>
-      <p className="text-xl font-semibold"><span className="text-xs font-normal text-gray-400 mr-1">A$</span>{point.price}</p>
+    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] p-3 shadow-md font-sans rounded-md">
+      <p className="text-xs text-[var(--color-muted)] mb-1 tracking-wider uppercase">{formatPriceChartTime(point.time)}</p>
+      <p className="text-xl font-semibold text-[var(--color-text)]"><span className="text-xs font-normal text-[var(--color-muted)] mr-1">A$</span>{point.price}</p>
       {point.event_rollup?.top_states?.length > 0 && (
-        <div className="mt-3 border-t border-gray-100 pt-2">
-          <div className="text-[10px] tracking-widest uppercase text-gray-400">{eventContextLabel}</div>
+        <div className="mt-3 border-t border-[var(--color-border)] pt-2">
+          <div className="text-[10px] tracking-widest uppercase text-[var(--color-muted)]">{eventContextLabel}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {point.event_rollup.top_states.slice(0, 3).map((state) => {
               const meta = metaForState(state.key, locale);
@@ -109,7 +109,7 @@ const PriceChart = ({ data, t, overlay, locale = 'en', onWindowDataChange }) => 
     t?.resetRange || (locale === 'zh' ? '重置范围' : 'Reset Range');
 
   if (!safeData.length || !t) {
-    return <div className="h-full w-full flex items-center justify-center text-gray-300 font-sans">{t?.noRecords}</div>;
+    return <div className="h-full w-full flex items-center justify-center text-[var(--color-muted)] font-sans">{t?.noRecords}</div>;
   }
 
   return (
@@ -119,7 +119,7 @@ const PriceChart = ({ data, t, overlay, locale = 'en', onWindowDataChange }) => 
           <button
             type="button"
             onClick={() => setWindowRange({ startIndex: 0, endIndex: Math.max(0, decoratedData.length - 1) })}
-            className="absolute right-3 top-2 z-10 rounded-full border border-[var(--color-border)] bg-white/92 px-3 py-1 text-[11px] font-medium tracking-wide text-[var(--color-text)] shadow-sm transition-colors hover:bg-white"
+            className="absolute right-3 top-2 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-[11px] font-medium tracking-wide text-[var(--color-text)] shadow-sm transition-colors hover:bg-[var(--color-surface)]"
           >
             {resetRangeLabel}
           </button>
@@ -173,7 +173,7 @@ const PriceChart = ({ data, t, overlay, locale = 'en', onWindowDataChange }) => 
         </ResponsiveContainer>
       </div>
 
-      <div className="mt-2 h-12 rounded-md border border-[var(--color-border)] bg-white/70 px-2 pt-1">
+      <div className="mt-2 h-12 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 pt-1">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={decoratedData} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
             <Line

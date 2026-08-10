@@ -146,34 +146,34 @@ export default function MonteCarloPanel({ mc, decisionAdjustedMonteCarlo, copy, 
                 }}
               />
               <Bar dataKey="frequency" fill="var(--color-primary)" opacity={0.7} />
-              {/* P10 参考线 */}
+              {/* P10 参考线（主题 token，暗色下自动提亮） */}
               {mc.npv_p10 != null && (
                 <ReferenceLine
                   x={mc.npv_p10}
-                  stroke="#15803d"
+                  stroke="var(--color-positive)"
                   strokeWidth={2}
                   strokeDasharray="4 4"
-                  label={{ value: 'P10', position: 'top', fill: '#15803d', fontSize: 11 }}
+                  label={{ value: 'P10', position: 'top', fill: 'var(--color-positive)', fontSize: 11 }}
                 />
               )}
               {/* P50 参考线 */}
               {mc.npv_p50 != null && (
                 <ReferenceLine
                   x={mc.npv_p50}
-                  stroke="#0047FF"
+                  stroke="var(--color-primary)"
                   strokeWidth={2}
                   strokeDasharray="4 4"
-                  label={{ value: 'P50', position: 'top', fill: '#0047FF', fontSize: 11 }}
+                  label={{ value: 'P50', position: 'top', fill: 'var(--color-primary)', fontSize: 11 }}
                 />
               )}
               {/* P90 参考线 */}
               {mc.npv_p90 != null && (
                 <ReferenceLine
                   x={mc.npv_p90}
-                  stroke="#b91c1c"
+                  stroke="var(--color-negative)"
                   strokeWidth={2}
                   strokeDasharray="4 4"
-                  label={{ value: 'P90', position: 'top', fill: '#b91c1c', fontSize: 11 }}
+                  label={{ value: 'P90', position: 'top', fill: 'var(--color-negative)', fontSize: 11 }}
                 />
               )}
             </BarChart>

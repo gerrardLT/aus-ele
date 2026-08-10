@@ -3,11 +3,12 @@
  * 从 InvestmentAnalysis.jsx 提取
  */
 
+// 主题感知：暗色模式下自动提亮（原深绿/深红仅适配亮色背景，2026-08-10）
 const KPI_COLORS = {
-  good: '#15803d',
-  bad: '#b91c1c',
-  warn: '#b45309',
-  brand: '#0047FF',
+  good: 'var(--color-positive)',
+  bad: 'var(--color-negative)',
+  warn: 'var(--color-status-timeout)',
+  brand: 'var(--color-primary)',
 };
 
 export function KpiCard({ label, value, sub, tone }) {

@@ -346,10 +346,10 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
         <div className="mb-5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">{capitalViewScopeNote}</div>
       )}
       {previewCaveat && (
-        <div className="mb-5 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">{previewCaveat}</div>
+        <div className="mb-5 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">{previewCaveat}</div>
       )}
       {wemReadinessCaveat && (
-        <div className="mb-5 rounded border border-amber-500 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">{wemReadinessCaveat}</div>
+        <div className="mb-5 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">{wemReadinessCaveat}</div>
       )}
       {!result && !loading && (
         <div className="mb-6 rounded border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs leading-5 text-[var(--color-muted)]">{lazyLoadNote}</div>
@@ -378,7 +378,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
         {/* 右侧结果区域 */}
         <div className="col-span-12 lg:col-span-8">
           {error && (
-            <div className="mb-4 rounded border border-red-300 bg-red-50 p-4 text-red-700">{error}</div>
+            <div className="mb-4 rounded border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 p-4 text-[var(--color-status-error)]">{error}</div>
           )}
 
           {loading && !result && (
@@ -429,7 +429,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                     <SummaryBlock label={lang === 'zh' ? '漂移状态' : 'Drift'} value={p3Governance?.drift?.status || '-'} />
                     <SummaryBlock label={lang === 'zh' ? '预测增益' : 'Forecast Uplift'} value={fmt(p3Governance?.forecast_value_attribution?.net_uplift)} />
                   </div>
-                  <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  <div className="mt-3 rounded border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 px-3 py-2 text-xs text-[var(--color-status-timeout)]">
                     {p3Governance?.disclaimer?.investment_grade === false
                       ? (lang === 'zh' ? '当前输出为研究与运营辅助口径，不应直接视为投资级结论。' : 'Current output is for research and operational support only and should not be treated as an investment-grade conclusion.')
                       : '-'}
@@ -495,10 +495,10 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                       <SummaryBlock label={copy.sourceYears} value={backtestSourceYears} />
                     </div>
                     {backtest_fallback_used && (
-                      <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">{copy.statuses.legacyFallbackActive}</div>
+                      <div className="mt-3 rounded border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 px-3 py-2 text-xs text-[var(--color-status-timeout)]">{copy.statuses.legacyFallbackActive}</div>
                     )}
                     {noStandardizedBacktestCoverage && (
-                      <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      <div className="mt-3 rounded border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 px-3 py-2 text-xs text-[var(--color-status-timeout)]">
                         <div className="font-bold">{copy.noBacktestCoverageTitle}</div>
                         <div className="mt-1">{copy.noBacktestCoverageBody}</div>
                       </div>
@@ -514,15 +514,15 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                     <h4 className="text-sm font-bold uppercase tracking-wider">
                       {lang === 'zh' ? '可信度与可追溯' : 'Credibility & Traceability'}
                     </h4>
-                    {/* 口径徽章：税前/税后 */}
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${afterTaxPreferred ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+                    {/* 口径徽章：税前/税后（主题感知，暗色下不再出现亮色块） */}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${afterTaxPreferred ? 'bg-[var(--color-status-success)]/10 text-[var(--color-status-success)]' : 'bg-[var(--color-surface-hover)] text-[var(--color-muted)]'}`}>
                       {afterTaxPreferred
                         ? (lang === 'zh' ? '税后口径' : 'After-tax basis')
                         : (lang === 'zh' ? '税前口径' : 'Pre-tax basis')}
                     </span>
                     {/* 基线来源徽章 */}
                     {arbitrageBaselineSource && (
-                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-800">
+                      <span className="rounded-full bg-[var(--color-primary)]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[var(--color-primary)]">
                         {(lang === 'zh' ? '基线来源: ' : 'Baseline: ')}{arbitrageBaselineSource}
                       </span>
                     )}
@@ -570,12 +570,12 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
 
                   {/* 实测可达成口径（2026-08-05）：历史 pre-dispatch 闭环滚动回测实测 */}
                   {backtest_observed?.realized_efficiency_discount != null && (
-                    <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3">
+                    <div className="mt-3 rounded border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-900">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-status-timeout)]">
                           {lang === 'zh' ? '实测可达成口径（NEM 闭环回测）' : 'Realized achievable caliber (NEM closed-loop backtest)'}
                         </span>
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-mono text-amber-900">
+                        <span className="rounded-full bg-[var(--color-status-timeout)]/10 px-2 py-0.5 text-[10px] font-mono text-[var(--color-status-timeout)]">
                           {lang === 'zh' ? '区域实测效率 ' : 'regional efficiency '}{pct1(backtest_observed.realized_efficiency_discount)}
                         </span>
                       </div>
@@ -593,13 +593,13 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                           value={pct1(backtest_observed.realized_efficiency_discount)}
                         />
                       </div>
-                      <div className="mt-2 text-xs leading-5 text-amber-900">
+                      <div className="mt-2 text-xs leading-5 text-[var(--color-muted)]">
                         {lang === 'zh'
                           ? '用 AEMO 历史 pre-dispatch 真实预测驱动的闭环滚动回测实测：完美预见套利收入仅约 20%~45% 可在真实预测下达成，显著严于上方文献折扣。投资决策请以可达成口径为准。'
                           : 'Closed-loop rolling backtests driven by real historical AEMO pre-dispatch forecasts show only ~20–45% of perfect-foresight arbitrage is actually attainable — materially harsher than the literature haircut above. Prefer the achievable caliber for investment decisions.'}
                       </div>
                       {Array.isArray(backtest_observed.realized_efficiency_warnings) && backtest_observed.realized_efficiency_warnings.length > 0 && (
-                        <div className="mt-1 text-[10px] font-mono text-amber-800">
+                        <div className="mt-1 text-[10px] font-mono text-[var(--color-status-timeout)]">
                           {backtest_observed.realized_efficiency_warnings.join(' · ')}
                         </div>
                       )}
@@ -608,8 +608,8 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
 
                   {/* 税前/税后对照（有税务时） */}
                   {afterTaxMetrics && (
-                    <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 p-3">
-                      <div className="mb-2 text-[10px] uppercase tracking-widest text-emerald-800">
+                    <div className="mt-3 rounded border border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/8 p-3">
+                      <div className="mb-2 text-[10px] uppercase tracking-widest text-[var(--color-status-success)]">
                         {lang === 'zh' ? '税前 / 税后对照' : 'Pre-tax / After-tax comparison'}
                       </div>
                       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -629,12 +629,12 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
                           {lang === 'zh' ? '不确定性区间 (IRR)' : 'Uncertainty band (IRR)'}
                         </span>
                         {mc.seed != null && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-mono text-slate-700">
+                          <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] font-mono text-[var(--color-muted)]">
                             seed={mc.seed}
                           </span>
                         )}
                         {mc.iterations != null && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-mono text-slate-700">
+                          <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] font-mono text-[var(--color-muted)]">
                             {mc.iterations}{lang === 'zh' ? ' 次迭代' : ' iters'}
                           </span>
                         )}

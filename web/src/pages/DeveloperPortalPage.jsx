@@ -550,7 +550,7 @@ export default function DeveloperPortalPage() {
               </div>
             </div>
 
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="rounded-lg border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 p-4 text-sm text-[var(--color-status-timeout)]">
               <div className="text-xs font-semibold uppercase tracking-[0.12em]">
                 {copy.governanceDisclaimer}
               </div>

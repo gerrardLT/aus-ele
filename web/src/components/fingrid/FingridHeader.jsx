@@ -148,7 +148,7 @@ export default function FingridHeader({
               />
             </label>
             {validationMessage ? (
-              <div className="sm:col-span-2 text-sm text-rose-600">{validationMessage}</div>
+              <div className="sm:col-span-2 text-sm text-[var(--color-status-error)]">{validationMessage}</div>
             ) : null}
           </div>
         ) : null}
@@ -296,7 +296,7 @@ export default function FingridHeader({
                 />
               </label>
               {validationMessage && (
-                <div className="sm:col-span-2 text-sm text-rose-600">{validationMessage}</div>
+                <div className="sm:col-span-2 text-sm text-[var(--color-status-error)]">{validationMessage}</div>
               )}
             </div>
           )}

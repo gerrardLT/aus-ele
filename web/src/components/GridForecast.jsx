@@ -21,22 +21,23 @@ import DataQualityBadge from './DataQualityBadge';
 
 const HORIZONS = ['24h', '7d', '30d'];
 
+// 主题感知徽章：原亮色调色板在暗色模式下出现亮色块（2026-08-10）
 function sourceTone(status) {
   if (status === 'ok') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    return 'border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/10 text-[var(--color-status-success)]';
   }
   if (status === 'partial') {
-    return 'border-amber-200 bg-amber-50 text-amber-700';
+    return 'border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/10 text-[var(--color-status-timeout)]';
   }
   if (status === 'stale') {
-    return 'border-slate-300 bg-slate-100 text-slate-700';
+    return 'border-[var(--color-border)] bg-[var(--color-surface-hover)] text-[var(--color-muted)]';
   }
-  return 'border-slate-200 bg-slate-50 text-slate-600';
+  return 'border-[var(--color-border)] bg-[var(--color-surface-hover)] text-[var(--color-muted)]';
 }
 
 function DeskMetric({ label, value, emphasis = false }) {
   return (
-    <div className="rounded border border-[var(--color-border)] bg-white/60 px-2.5 py-2">
+    <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2">
       <div className="text-[10px] uppercase tracking-widest text-[var(--color-muted)]">{label}</div>
       <div className={`mt-0.5 break-words leading-5 ${emphasis ? 'text-[0.95rem] font-serif text-[var(--color-text)]' : 'text-sm text-[var(--color-text)]'}`}>
         {value}
@@ -47,7 +48,7 @@ function DeskMetric({ label, value, emphasis = false }) {
 
 function GovernanceMetric({ label, value }) {
   return (
-    <div className="rounded border border-[var(--color-border)] bg-white/60 px-3 py-2">
+    <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
       <div className="text-[10px] uppercase tracking-widest text-[var(--color-muted)]">{label}</div>
       <div className="mt-1 break-words text-sm text-[var(--color-text)]">{value || 'n/a'}</div>
     </div>
@@ -105,7 +106,7 @@ function ForecastDeskPanel({ payload, locale = 'en', sectionCopy, fallbackMarket
       </div>
 
       <div className="mt-3 border-t border-dashed border-[var(--color-border)] pt-2.5">
-        <div className="flex flex-wrap gap-2 rounded border border-[var(--color-border)] bg-white/60 p-1">
+        <div className="flex flex-wrap gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
           {tabItems.map((item) => (
             <button
               key={item.key}
@@ -128,7 +129,7 @@ function ForecastDeskPanel({ payload, locale = 'en', sectionCopy, fallbackMarket
               {statusItems.map((item) => (
                 <div
                   key={item.key}
-                  className="flex items-center justify-between gap-3 rounded border border-[var(--color-border)] bg-white/60 px-3 py-2"
+                  className="flex items-center justify-between gap-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
                 >
                   <div className="min-w-0 text-sm text-[var(--color-text)]">{item.label}</div>
                   <span
@@ -241,7 +242,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
           </div>
           <h2 className="mt-1 text-2xl font-serif text-[var(--color-text)] md:text-[1.75rem]">{sectionCopy.title}</h2>
           <p className="mt-1 text-xs leading-5 text-[var(--color-muted)] md:overflow-hidden md:text-ellipsis md:whitespace-nowrap">{sectionCopy.subtitle}</p>
-          <div className="mt-2 rounded border border-dashed border-[var(--color-border)] bg-white/50 px-3 py-2 text-xs leading-5 text-[var(--color-muted)]">
+          <div className="mt-2 rounded border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs leading-5 text-[var(--color-muted)]">
             {horizonNotes[horizon] || copy.generic.notAvailable}
           </div>
           {payload && (
@@ -266,7 +267,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
             </div>
           )}
           {isWemPreview && (
-            <div className="mt-3 rounded border border-amber-500 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+            <div className="mt-3 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 px-3 py-2 text-xs leading-5 text-[var(--color-muted)]">
               <div className="font-semibold">
                 {locale === 'zh' ? 'WEM 独立制度提醒' : 'WEM Market-Design Caveat'}
               </div>
@@ -276,7 +277,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
         </div>
 
         <div className="flex flex-col gap-3 xl:min-w-[280px] xl:items-end">
-          <div className="flex flex-wrap gap-2 rounded border border-[var(--color-border)] bg-white/60 p-1">
+          <div className="flex flex-wrap gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
             {HORIZONS.map((item) => (
               <button
                 key={item}
@@ -303,7 +304,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
       {loading ? (
         <div className="mt-6 text-sm text-[var(--color-muted)]">{sectionCopy.loading || copy.generic.notAvailable}</div>
       ) : error ? (
-        <div className="mt-6 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div className="mt-6 rounded border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 px-4 py-3 text-sm text-[var(--color-status-error)]">
           {sectionCopy.error || copy.generic.notAvailable}
         </div>
       ) : !payload ? (
@@ -334,7 +335,7 @@ export default function GridForecast({ apiBase, region, locale = 'en', t, regime
           </div>
 
           {governance && (
-            <div className="mt-3 rounded border border-[var(--color-border)] bg-white/50 p-3.5">
+            <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5">
               <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-muted)]">
                 {sectionCopy.governanceTitle}
               </div>

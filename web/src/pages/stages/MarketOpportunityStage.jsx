@@ -63,11 +63,11 @@ export default function MarketOpportunityStage({ config, conclusionData, isLoadi
         onVisible={onVisible}
         lang={lang}
       >
-        <div className="p-4 border border-red-300 bg-red-50 text-red-700 rounded">
+        <div className="p-4 border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 text-[var(--color-status-error)] rounded">
           <p>{lang === 'zh' ? '价格数据加载失败' : 'Failed to load price data'}: {error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="mt-2 px-4 py-1.5 text-xs border border-red-300 rounded hover:bg-red-100 transition-colors"
+            className="mt-2 px-4 py-1.5 text-xs border border-[var(--color-status-error)]/40 rounded hover:bg-[var(--color-status-error)]/10 transition-colors"
           >
             {lang === 'zh' ? '重试' : 'Retry'}
           </button>

@@ -131,8 +131,8 @@ export default function MerchantRiskQuantifier({ config, lang = 'en' }) {
 
       {/* Data warning */}
       {data.data_warning && (
-        <div className="mb-4 p-3 rounded border border-orange-400 bg-orange-50 dark:bg-orange-950/30">
-          <p className="text-sm font-sans text-orange-700 dark:text-orange-300">
+        <div className="mb-4 p-3 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8">
+          <p className="text-sm font-sans text-[var(--color-status-timeout)]">
             ⚠️ {t.dataWarning}: {data.data_warning}
           </p>
         </div>
@@ -252,7 +252,7 @@ export default function MerchantRiskQuantifier({ config, lang = 'en' }) {
             </div>
             <div className="flex justify-between text-xs font-sans">
               <span className="text-[var(--color-muted)]">{t.bankability}</span>
-              <span className={`font-mono font-bold ${data.bankability_met ? 'text-green-600' : 'text-red-500'}`}>
+              <span className={`font-mono font-bold ${data.bankability_met ? 'text-[var(--color-status-success)]' : 'text-red-500'}`}>
                 {data.bankability_met ? t.bankabilityMet : t.bankabilityNotMet}
               </span>
             </div>

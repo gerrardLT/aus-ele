@@ -27,12 +27,12 @@ export default function EventContextPanel({ overlay, title, compact = false, loc
         </div>
         <div className={`rounded px-3 py-1 text-[11px] font-bold uppercase tracking-widest ${
           coverageQuality === 'full'
-            ? 'bg-emerald-50 text-emerald-700'
+            ? 'bg-[var(--color-status-success)]/8 text-[var(--color-status-success)]'
             : coverageQuality === 'core_only'
-              ? 'bg-amber-50 text-amber-800'
+              ? 'bg-[var(--color-status-timeout)]/8 text-[var(--color-status-timeout)]'
               : coverageQuality === 'partial'
-                ? 'bg-sky-50 text-sky-700'
-                : 'bg-slate-100 text-slate-600'
+                ? 'bg-[var(--color-primary)]/8 text-[var(--color-primary)]'
+                : 'bg-[var(--color-surface-hover)] text-[var(--color-muted)]'
         }`}
         >
           {coverageText(coverageQuality, locale)}
@@ -53,7 +53,7 @@ export default function EventContextPanel({ overlay, title, compact = false, loc
             return (
               <article
                 key={event.event_id}
-                className="rounded border border-[var(--color-border)] bg-white/40 p-3"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="text-[10px] uppercase tracking-widest text-[var(--color-muted)]">
@@ -83,7 +83,7 @@ export default function EventContextPanel({ overlay, title, compact = false, loc
                 )}
 
                 {rendered.hasOfficialOriginal && (
-                  <details className="mt-3 rounded border border-slate-200 bg-slate-50/80 p-2">
+                  <details className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-hover)]/80 p-2">
                     <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-muted)]">
                       {copy.officialOriginalToggle}
                     </summary>

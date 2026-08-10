@@ -7,7 +7,7 @@ import {
 
 function MiniMetric({ label, value }) {
   return (
-    <div className="rounded border border-[var(--color-border)] bg-white/60 px-3 py-2">
+    <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
       <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted)]">{label}</div>
       <div className="mt-1 text-sm font-medium text-[var(--color-text)] break-words">{value}</div>
     </div>
@@ -15,9 +15,9 @@ function MiniMetric({ label, value }) {
 }
 
 function diagnosticTone(errorGrade) {
-  if (errorGrade === 'high_error') return 'border-rose-200 bg-rose-50/80';
-  if (errorGrade === 'moderate_error') return 'border-amber-200 bg-amber-50/80';
-  return 'border-emerald-200 bg-emerald-50/80';
+  if (errorGrade === 'high_error') return 'border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8';
+  if (errorGrade === 'moderate_error') return 'border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8';
+  return 'border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/8';
 }
 
 export default function GridForecastDiagnosticsPanel({ baselineForecast, locale = 'en' }) {
@@ -44,7 +44,7 @@ export default function GridForecastDiagnosticsPanel({ baselineForecast, locale 
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
         <div className="grid gap-3">
-          <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
             <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.quantileBand}</div>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
               <MiniMetric label={copy.p10} value={`${formatUnsigned(quantile.p10_price_aud_mwh, locale, 1)} AUD/MWh`} />
@@ -53,7 +53,7 @@ export default function GridForecastDiagnosticsPanel({ baselineForecast, locale 
             </div>
           </div>
 
-          <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
             <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">{copy.probabilities}</div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <MiniMetric label={copy.spikeProbability} value={formatForecastPercent(probabilities.price_spike, locale)} />
@@ -63,7 +63,7 @@ export default function GridForecastDiagnosticsPanel({ baselineForecast, locale 
             </div>
           </div>
 
-          <div className="rounded border border-[var(--color-border)] bg-white/50 p-3">
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
             <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">
               {copy.walkForward || 'Walk-forward'}
             </div>

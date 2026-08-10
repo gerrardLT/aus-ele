@@ -7,10 +7,10 @@ function HourlyDistributionTooltip({ active, payload, label, t }) {
   }
 
   return (
-    <div className="bg-white border border-gray-200 p-3 shadow-md font-sans rounded-md">
-      <p className="text-xs text-gray-500 mb-1 tracking-wider uppercase">{t.hourLabel} {label}:00</p>
-      <p className="text-xl font-semibold">
-        {payload[0].value} <span className="text-xs font-normal text-gray-400">{t.events}</span>
+    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] p-3 shadow-md font-sans rounded-md">
+      <p className="text-xs text-[var(--color-muted)] mb-1 tracking-wider uppercase">{t.hourLabel} {label}:00</p>
+      <p className="text-xl font-semibold text-[var(--color-text)]">
+        {payload[0].value} <span className="text-xs font-normal text-[var(--color-muted)]">{t.events}</span>
       </p>
     </div>
   );

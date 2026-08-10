@@ -115,7 +115,7 @@ export default function FiveMinSettlementImpact({ config, lang = 'en' }) {
 
       {/* Data mode badge */}
       <div className="mb-4">
-        <span className={`inline-block px-3 py-1 text-xs rounded-full border ${data.data_mode === 'actual' ? 'border-green-500 text-green-700 bg-green-50' : 'border-amber-400 text-amber-700 bg-amber-50'}`}>
+        <span className={`inline-block px-3 py-1 text-xs rounded-full border ${data.data_mode === 'actual' ? 'border-green-500 text-[var(--color-status-success)] bg-[var(--color-status-success)]/10' : 'border-[var(--color-status-timeout)]/50 text-[var(--color-status-timeout)] bg-[var(--color-status-timeout)]/8'}`}>
           {t.dataMode}: {modeLabel}
         </span>
       </div>
@@ -151,7 +151,7 @@ export default function FiveMinSettlementImpact({ config, lang = 'en' }) {
 
 function StatCard({ label, value, accent = false }) {
   return (
-    <div className={`border p-3 rounded ${accent ? 'border-green-500 bg-green-50' : 'border-[var(--color-border)]'}`}>
+    <div className={`border p-3 rounded ${accent ? 'border-green-500 bg-[var(--color-status-success)]/10' : 'border-[var(--color-border)]'}`}>
       <div className="text-xs tracking-widest uppercase mb-1 text-[var(--color-muted)]">{label}</div>
       <div className="text-lg font-mono font-bold">{value}</div>
     </div>

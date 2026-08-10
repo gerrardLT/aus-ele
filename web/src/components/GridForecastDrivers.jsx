@@ -6,12 +6,12 @@ import {
 
 function severityTone(severity) {
   if (severity === 'high') {
-    return 'border-rose-200 bg-rose-50 text-rose-700';
+    return 'border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/8 text-[var(--color-status-error)]';
   }
   if (severity === 'medium') {
-    return 'border-amber-200 bg-amber-50 text-amber-700';
+    return 'border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 text-[var(--color-status-timeout)]';
   }
-  return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  return 'border-[var(--color-status-success)]/40 bg-[var(--color-status-success)]/8 text-[var(--color-status-success)]';
 }
 
 export default function GridForecastDrivers({ drivers, metadata, t, locale = 'en' }) {
@@ -41,7 +41,7 @@ export default function GridForecastDrivers({ drivers, metadata, t, locale = 'en
           {warningKeys.map((warningKey) => (
             <div
               key={warningKey}
-              className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900"
+              className="rounded border border-[var(--color-status-timeout)]/40 bg-[var(--color-status-timeout)]/8 px-3 py-2 text-xs leading-5 text-[var(--color-status-timeout)]"
             >
               {t?.warnings?.[warningKey] || getForecastWarningCopy(warningKey, locale)}
             </div>
@@ -54,7 +54,7 @@ export default function GridForecastDrivers({ drivers, metadata, t, locale = 'en
           {localizedDrivers.map((driver, index) => (
             <article
               key={`${driver.driver_type}-${driver.effective_start || index}`}
-              className="rounded border border-[var(--color-border)] bg-white/50 p-4"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
             >
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0 flex-1">

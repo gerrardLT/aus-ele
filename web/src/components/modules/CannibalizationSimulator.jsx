@@ -115,7 +115,7 @@ export default function CannibalizationSimulator({ config, lang = 'en' }) {
 
       {/* Warning indicator when dilution > 50% */}
       {warningTriggered && (
-        <div className="mb-4 px-4 py-2 rounded border border-orange-400 bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-300 text-sm font-sans">
+        <div className="mb-4 px-4 py-2 rounded border border-[var(--color-status-timeout)]/50 bg-[var(--color-status-timeout)]/8 text-[var(--color-status-timeout)] text-sm font-sans">
           {t.warning}
         </div>
       )}

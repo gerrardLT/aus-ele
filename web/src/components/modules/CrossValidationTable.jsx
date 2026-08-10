@@ -147,7 +147,7 @@ export default function CrossValidationTable({ config, lang = 'zh', category: pr
                   <tr
                     key={`${entry.data_point}-${entry.source_name}-${idx}`}
                     className={`border-b border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] ${
-                      isHighDiscrepancy ? 'bg-red-50 dark:bg-red-950/20' : ''
+                      isHighDiscrepancy ? 'bg-[var(--color-status-error)]/8' : ''
                     }`}
                   >
                     <td className="py-2 px-2 font-mono text-xs">{entry.data_point}</td>
@@ -170,7 +170,7 @@ export default function CrossValidationTable({ config, lang = 'zh', category: pr
                     </td>
                     <td className="text-right py-2 px-2 font-mono text-xs">{entry.reported_value}</td>
                     <td className={`text-right py-2 px-2 font-mono text-xs font-bold ${
-                      isHighDiscrepancy ? 'text-red-800 dark:text-red-400' : ''
+                      isHighDiscrepancy ? 'text-[var(--color-status-error)]' : ''
                     }`}>
                       {entry.discrepancy_pct != null
                         ? `${entry.discrepancy_pct > 0 ? '+' : ''}${entry.discrepancy_pct.toFixed(1)}%`

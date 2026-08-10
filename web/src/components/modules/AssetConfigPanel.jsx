@@ -236,10 +236,10 @@ export default function AssetConfigPanel({ lang = 'zh', onConfigChange }) {
       <h3 className="text-xl font-serif font-bold mb-1">{t.title}</h3>
       <p className="text-xs text-[var(--color-muted)] font-sans mb-4">{t.subtitle}</p>
 
-      {/* Asset Label Preview */}
-      <div className="mb-4 p-3 rounded border border-blue-300 bg-blue-50 dark:bg-blue-950/30">
+      {/* Asset Label Preview（主题 token：dark: 变体不跟随应用主题开关，已废弃） */}
+      <div className="mb-4 p-3 rounded border border-[var(--color-primary)]/40 bg-[var(--color-primary)]/8">
         <p className="text-xs text-[var(--color-muted)] mb-1">{t.assetLabel}</p>
-        <p className="text-sm font-serif font-bold text-blue-700 dark:text-blue-300">
+        <p className="text-sm font-serif font-bold text-[var(--color-primary)]">
           {label}
         </p>
         <p className="text-xs text-[var(--color-muted)] mt-1">
@@ -396,10 +396,10 @@ export default function AssetConfigPanel({ lang = 'zh', onConfigChange }) {
           disabled={saving || hasErrors}
           className={`px-5 py-2 text-sm font-sans rounded transition-colors ${
             hasErrors
-              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              ? 'bg-[var(--color-surface-hover)] text-[var(--color-muted)] cursor-not-allowed'
               : saving
-                ? 'bg-blue-400 text-white cursor-wait'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
+                ? 'bg-[var(--color-primary)]/60 text-white cursor-wait'
+                : 'bg-[var(--color-primary)] text-white hover:opacity-90'
           }`}
         >
           {saving ? t.saving : t.save}
@@ -414,7 +414,7 @@ export default function AssetConfigPanel({ lang = 'zh', onConfigChange }) {
 
         {/* Save Status Feedback */}
         {saveStatus === 'saved' && (
-          <span className="text-xs text-green-600 font-sans">✓ {t.saved}</span>
+          <span className="text-xs text-[var(--color-status-success)] font-sans">✓ {t.saved}</span>
         )}
         {saveStatus === 'error' && (
           <span className="text-xs text-red-500 font-sans">✗ {t.saveError}</span>

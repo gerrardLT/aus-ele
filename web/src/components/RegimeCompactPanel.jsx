@@ -28,8 +28,8 @@ function StatusBadge({ availability, copy }) {
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold tracking-[0.16em] uppercase ${
         isAvailable
-          ? 'bg-[rgba(15,159,130,0.1)] text-[#0f9f82]'
-          : 'bg-[rgba(185,28,28,0.1)] text-[#b91c1c]'
+          ? 'bg-[rgba(15,159,130,0.1)] text-[var(--color-positive)]'
+          : 'bg-[rgba(185,28,28,0.1)] text-[var(--color-negative)]'
       }`}
     >
       {isAvailable ? copy.available : copy.unavailable}
@@ -112,7 +112,7 @@ function RegimeCompactPanel({ compact, t }) {
           <StatusBadge availability={normalized.availability_status} copy={copy} />
         </div>
 
-        <div className="mt-4 rounded-[22px] border border-black/6 bg-white/78 px-4 py-4">
+        <div className="mt-4 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-muted)]">
             {copy.primaryLabel}
           </div>
@@ -141,7 +141,7 @@ function RegimeCompactPanel({ compact, t }) {
         {normalized.availability_status === 'available' ? <ScoreStrip compact={normalized} copy={copy} /> : null}
 
         <div className="grid gap-4">
-          <div className="rounded-2xl border border-[var(--color-border)] bg-white/70 px-4 py-3">
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-muted)]">
               {copy.activeLabel}
             </div>
@@ -163,7 +163,7 @@ function RegimeCompactPanel({ compact, t }) {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[var(--color-border)] bg-white/70 px-4 py-3">
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-muted)]">
               {copy.driversLabel}
             </div>
@@ -180,7 +180,7 @@ function RegimeCompactPanel({ compact, t }) {
             )}
           </div>
 
-          <div className="rounded-2xl border border-[var(--color-border)] bg-white/70 px-4 py-3">
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-muted)]">
               {copy.transitionsLabel}
             </div>
