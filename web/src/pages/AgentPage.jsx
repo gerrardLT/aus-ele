@@ -801,6 +801,8 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
   const { answer, trace, status_line, error, report, streaming, answerDone, plan, charts, downloadLink } = message;
   const degraded = report && report.metadata && report.metadata.llm_degraded;
   const hasEvidence = (trace && trace.length > 0) || report || (charts && charts.length > 0) || downloadLink;
+  // 结论级 KPI：屏幕唯一展示位在左栏（报告内仅打印可见，去重，2026-08-10）
+  const kpis = report ? extractKpis(report) : [];
 
   return (
     <div className="flex flex-col gap-3">
@@ -818,9 +820,16 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
       {/* Plan view */}
       {plan && <PlanView plan={plan} />}
 
-      {/* 双栏：左=推理流，右=证据面板（窄屏自动堆叠，DESIGN.md Screen 1/6） */}
+      {/* 双栏：左=结论+推理，右=轨迹/报告（窄屏自动堆叠） */}
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(380px,460px)]">
         <div className="flex min-w-0 flex-col gap-3">
+          {kpis.length > 0 && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {kpis.map((k, i) => (
+                <KpiCard key={i} {...k} />
+              ))}
+            </div>
+          )}
           {answer && (
             <Collapsible
               title="推理过程"
@@ -869,17 +878,10 @@ function DegradedBanner({ reason }) {
   );
 }
 
-// ─── Evidence panel (四 Tab：轨迹/图表/报告/证据，DESIGN.md Screen 1) ────────────
-
-const EVIDENCE_TABS = [
-  { id: 'trace', label: '轨迹' },
-  { id: 'charts', label: '图表' },
-  { id: 'report', label: '报告' },
-  { id: 'evidence', label: '证据' },
-];
+// ─── Evidence panel（动态 Tab：轨迹/[图表]/报告；工具清单唯一展示位，2026-08-10 去重重构）───
 
 function EvidencePanel({ message, onCompare, onSuggest }) {
-  const { trace, report, charts, totalSteps } = message;
+  const { trace, report, charts, totalSteps, downloadLink } = message;
   const [tab, setTab] = useState('trace');
 
   // 报告生成后自动切换到报告 tab
@@ -887,18 +889,18 @@ function EvidencePanel({ message, onCompare, onSuggest }) {
     if (report) setTab('report');
   }, [report]);
 
-  const counts = {
-    trace: (trace && trace.length) || 0,
-    charts: (charts && charts.length) || 0,
-    report: report ? 1 : 0,
-    evidence: (trace && trace.length) || 0,
-  };
+  // 动态 Tab：图表仅在存在时展示；证据已并入轨迹（去重）
+  const tabs = [
+    { id: 'trace', label: '轨迹', count: (trace && trace.length) || 0 },
+    ...(charts && charts.length > 0 ? [{ id: 'charts', label: '图表', count: charts.length }] : []),
+    { id: 'report', label: '报告', count: report ? 1 : 0 },
+  ];
 
   return (
     <div className="flex min-w-0 flex-col self-start rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
       <div className="flex items-center gap-1 border-b border-[var(--color-border)] px-2 pt-2">
-        {EVIDENCE_TABS.map((t) => {
-          const disabled = counts[t.id] === 0;
+        {tabs.map((t) => {
+          const disabled = t.count === 0;
           const active = tab === t.id;
           return (
             <button
@@ -912,15 +914,17 @@ function EvidencePanel({ message, onCompare, onSuggest }) {
               }`}
             >
               {t.label}
-              {t.id !== 'report' && counts[t.id] > 0 && (
-                <span className="ml-1 font-mono tabular-nums text-[10px]">({counts[t.id]})</span>
+              {t.id !== 'report' && t.count > 0 && (
+                <span className="ml-1 font-mono tabular-nums text-[10px]">({t.count})</span>
               )}
             </button>
           );
         })}
       </div>
       <div className="max-h-[600px] overflow-y-auto p-3">
-        {tab === 'trace' && <ToolTrace trace={trace || []} totalSteps={totalSteps} />}
+        {tab === 'trace' && (
+          <ToolTrace trace={trace || []} totalSteps={totalSteps} downloadLink={downloadLink} />
+        )}
         {tab === 'charts' && (
           <div className="flex flex-col gap-3">
             {(charts || []).map((c, i) => (
@@ -930,52 +934,123 @@ function EvidencePanel({ message, onCompare, onSuggest }) {
         )}
         {tab === 'report' && report && (
           <div className="agent-report-print rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <ReportView report={report} trace={trace} onCompare={onCompare} onSuggest={onSuggest} />
+            <ReportView report={report} onCompare={onCompare} onSuggest={onSuggest} />
           </div>
         )}
-        {tab === 'evidence' && <EvidenceList trace={trace || []} downloadLink={message.downloadLink} />}
       </div>
     </div>
   );
 }
 
-// ─── Evidence list (工具级审计清单：参数/归因/重试/下载，DESIGN.md Trace item) ────────
+// ─── Evidence list 已并入 ToolTrace（2026-08-10 去重重构，工具清单唯一展示位）───
 
-function EvidenceList({ trace, downloadLink }) {
+// keyMetrics 展平：递归提取标量叶子（最多 max 个），snake_case → 空格分词
+function flattenKeyMetrics(obj, max = 6, prefix = '') {
+  const out = [];
+  if (!obj || typeof obj !== 'object') return out;
+  for (const [k, v] of Object.entries(obj)) {
+    if (out.length >= max) break;
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...flattenKeyMetrics(v, max - out.length, key));
+    } else if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') {
+      out.push({ k: key.replace(/_/g, ' '), v });
+    }
+  }
+  return out;
+}
+
+function fmtMetricValue(v) {
+  if (typeof v === 'number') {
+    const abs = Math.abs(v);
+    if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+    if (abs >= 1000) return v.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    if (Number.isInteger(v)) return String(v);
+    return v.toFixed(abs < 10 ? 2 : 1);
+  }
+  return String(v);
+}
+
+function ToolTrace({ trace, totalSteps, downloadLink }) {
+  const doneCount = trace.filter((t) => t.status !== 'running').length;
+  const total = totalSteps || trace.length;
+
   return (
     <div className="space-y-1.5">
+      {/* Progress bar */}
+      {total > 1 && (
+        <div className="mb-2 flex items-center gap-2">
+          <div className="h-1 flex-1 rounded-full bg-[var(--color-border)]">
+            <div
+              className="h-1 rounded-full bg-[var(--color-primary)] transition-all duration-300"
+              style={{ width: `${(doneCount / total) * 100}%` }}
+            />
+          </div>
+          <span className="text-[10px] tabular-nums text-[var(--color-muted)]">
+            {doneCount}/{total}
+          </span>
+        </div>
+      )}
       {trace.map((t, i) => {
+        const metrics = flattenKeyMetrics(t.keyMetrics);
         const attr = t.error ? attributeError(t.name, t.error) : null;
+        const hasArgs = t.arguments && Object.keys(t.arguments).length > 0;
         return (
           <div
             key={t.callId || `${t.name}_${i}`}
-            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[11px]"
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
           >
             <div className="flex items-center gap-2">
               <StatusIcon status={t.status} />
               <span className="font-mono text-[12px] text-[var(--color-text)]">{t.name}</span>
+              {typeof t.step === 'number' && (
+                <span className="text-[10px] text-[var(--color-muted)]">· 步骤 {t.step}</span>
+              )}
+              {t.status === 'running' && (
+                <span className="text-[10px] text-[var(--color-muted)]">执行中...</span>
+              )}
               {typeof t.durationMs === 'number' && t.durationMs > 0 && (
                 <span className="ml-auto font-mono text-[10px] tabular-nums text-[var(--color-muted)]">
                   {(t.durationMs / 1000).toFixed(1)}s
+                  {t.retryCount > 0 && <span className="ml-1 text-[var(--color-primary)]">重试×{t.retryCount}</span>}
                 </span>
               )}
             </div>
-            {t.arguments && Object.keys(t.arguments).length > 0 && (
+            {/* 调用参数（审计透明化，原证据 Tab 能力） */}
+            {hasArgs && (
               <div className="mt-1 truncate pl-6 font-mono text-[10px] text-[var(--color-muted)]" title={JSON.stringify(t.arguments)}>
                 args: {JSON.stringify(t.arguments)}
               </div>
             )}
-            {t.summary && (
-              <div className="mt-1 pl-6 leading-5 text-[var(--color-muted)]">{t.summary}</div>
-            )}
-            {t.error && attr && (
-              <div className="mt-1 pl-6 leading-5" style={{ color: 'var(--color-status-error)' }}>
-                {attr.text}
-                {attr.hint && <span className="ml-1 text-[var(--color-muted)]">· {attr.hint}</span>}
+            {/* 关键指标（富化：工具真实数据，解决“内容太少”） */}
+            {metrics.length > 0 && (
+              <div className="mt-1.5 ml-6 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-[var(--color-panel)] px-2.5 py-1.5">
+                {metrics.map((m) => (
+                  <div key={m.k} className="flex items-baseline justify-between gap-2 text-[10px]">
+                    <span className="truncate text-[var(--color-muted)]">{m.k}</span>
+                    <span
+                      className="shrink-0 font-semibold tabular-nums text-[var(--color-text)]"
+                      style={{ fontFamily: 'var(--font-mono-data)' }}
+                    >
+                      {fmtMetricValue(m.v)}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
-            {t.retryCount > 0 && (
-              <div className="pl-6 text-[10px] text-[var(--color-muted)]">重试 ×{t.retryCount}</div>
+            {t.summary && (
+              <div className="mt-1 pl-6 text-[11px] leading-5 text-[var(--color-muted)]">
+                {t.summary}
+              </div>
+            )}
+            {t.error && (
+              <div className="mt-1 pl-6 text-[11px] leading-5" style={{ color: 'var(--color-status-error)' }}>
+                {attr ? attr.text : t.error}
+                {attr && attr.hint && <span className="ml-1 text-[var(--color-muted)]">· {attr.hint}</span>}
+                {getErrorSuggestion(t.name, t.error) && (
+                  <span className="ml-1 text-[var(--color-muted)]">→ {getErrorSuggestion(t.name, t.error)}</span>
+                )}
+              </div>
             )}
           </div>
         );
@@ -1095,75 +1170,6 @@ function getErrorSuggestion(toolName, errorMsg) {
   return null;
 }
 
-// ─── Tool trace (ReAct live steps) ──────────────────────────────────────────
-
-function ToolTrace({ trace, totalSteps }) {
-  const doneCount = trace.filter((t) => t.status !== 'running').length;
-  const total = totalSteps || trace.length;
-
-  return (
-    <div className="space-y-1.5">
-      {/* Progress bar */}
-      {total > 1 && (
-        <div className="mb-2 flex items-center gap-2">
-          <div className="h-1 flex-1 rounded-full bg-[var(--color-border)]">
-            <div
-              className="h-1 rounded-full bg-[var(--color-primary)] transition-all duration-300"
-              style={{ width: `${(doneCount / total) * 100}%` }}
-            />
-          </div>
-          <span className="text-[10px] tabular-nums text-[var(--color-muted)]">
-            {doneCount}/{total}
-          </span>
-        </div>
-      )}
-      {trace.map((t, i) => (
-        <div
-          key={t.callId || `${t.name}_${i}`}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
-        >
-          <div className="flex items-center gap-2">
-            <StatusIcon status={t.status} />
-            <span className="font-mono text-[12px] text-[var(--color-text)]">{t.name}</span>
-            {typeof t.step === 'number' && (
-              <span className="text-[10px] text-[var(--color-muted)]">· 步骤 {t.step}</span>
-            )}
-            {t.status === 'running' && (
-              <span className="text-[10px] text-[var(--color-muted)]">执行中...</span>
-            )}
-            {typeof t.durationMs === 'number' && t.durationMs > 0 && (
-              <span className="ml-auto font-mono text-[10px] tabular-nums text-[var(--color-muted)]">
-                {t.durationMs.toFixed(0)}ms
-                {t.retryCount > 0 && <span className="ml-1 text-[var(--color-primary)]">重试×{t.retryCount}</span>}
-              </span>
-            )}
-          </div>
-          {t.summary && (
-            <div className="mt-1 pl-4 text-[11px] leading-5 text-[var(--color-muted)]">
-              {t.summary}
-            </div>
-          )}
-          {t.error && (
-            <div className="mt-1 pl-4 text-[11px] leading-5 text-[var(--color-error)]">
-              {t.error}
-              {attributeError(t.name, t.error).hint && (
-                <span className="ml-1 text-[var(--color-muted)]">
-                  → {attributeError(t.name, t.error).hint}
-                </span>
-              )}
-              {getErrorSuggestion(t.name, t.error) && (
-                <span className="ml-1 text-[var(--color-muted)]">
-                  → {getErrorSuggestion(t.name, t.error)}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Report View ──────────────────────────────────────────────────────────────
 
 // KPI 提取：仅取关键结论级指标（DESIGN.md：禁止逐数字全量徽章）
@@ -1213,35 +1219,9 @@ function KpiCard({ label, value, unit, fmt, source }) {
   );
 }
 
-// 部分成功逐项条（DESIGN.md Screen 5 Pattern A：不用二元失败横幅）
-function PartialSuccessStrip({ trace }) {
-  if (!trace || trace.length === 0) return null;
-  const done = trace.filter((t) => t.status !== 'running');
-  const ok = done.filter((t) => t.status === 'success').length;
-  const allDone = done.length === trace.length;
-  return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2">
-      <div className="mb-1.5 text-[11px] text-[var(--color-muted)]">
-        {allDone
-          ? `${ok}/${trace.length} 项分析完成${ok < trace.length ? '，未完成项已降低结论置信度' : ''}`
-          : `执行中 ${done.length}/${trace.length}…`}
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {trace.map((t, i) => (
-          <span key={t.callId || i} className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-muted)]">
-            <StatusIcon status={t.status} />
-            {t.name}
-            {typeof t.durationMs === 'number' && t.durationMs > 0 && (
-              <span className="tabular-nums">{(t.durationMs / 1000).toFixed(1)}s</span>
-            )}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
+// 部分成功信息已由轨迹 Tab 完整承载（2026-08-10 去重），PartialSuccessStrip 移除。
 
-function ReportView({ report, trace, onCompare, onSuggest }) {
+function ReportView({ report, onCompare, onSuggest }) {
   const status = STATUS_MAP[report.status] || STATUS_MAP.running;
   const kpis = extractKpis(report);
   const meta = report.metadata || {};
@@ -1290,12 +1270,9 @@ function ReportView({ report, trace, onCompare, onSuggest }) {
         </button>
       </div>
 
-      {/* 部分成功逐项条 */}
-      <PartialSuccessStrip trace={trace} />
-
-      {/* 关键 KPI 卡（等宽数字 + 负值三重编码 + 关键结论级溯源徽章） */}
+      {/* KPI 卡仅打印可见（屏幕上的唯一展示位在左栏结论区，去重；PDF 导出保持完整） */}
       {kpis.length > 0 && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="hidden grid-cols-2 gap-2 print:grid">
           {kpis.map((k, i) => (
             <KpiCard key={i} {...k} />
           ))}
@@ -1359,13 +1336,6 @@ function ReportView({ report, trace, onCompare, onSuggest }) {
             ))}
           </ul>
         </section>
-      )}
-
-      {/* 展开全部证据（报告级 tool_trace 披露，DESIGN.md Audit Trail） */}
-      {trace && trace.length > 0 && (
-        <Collapsible title={`展开全部证据 (${trace.length} 次工具调用)`}>
-          <EvidenceList trace={trace} />
-        </Collapsible>
       )}
 
       {/* Footer: base params + suggested follow-ups */}
