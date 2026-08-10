@@ -222,6 +222,126 @@ class ToolRegistry:
 # =============================================================================
 
 
+# =============================================================================
+# Chart builders（图表功能激活，2026-08-10）
+# 工具结果自动附带 chart 负载，编排器经 tool_result.chart 透传到前端
+# ChartRenderer（line/bar/scatter/area，≤200 点）。构建器均防御式：
+# 数据不足返回 None，绝不抛错，不影响工具主流程。
+# =============================================================================
+
+_CHART_MAX_POINTS = 200
+
+
+def _downsample_chart_points(points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """等间距降采样保序（与回测降采样同策略）。"""
+    if len(points) <= _CHART_MAX_POINTS:
+        return points
+    stride = math.ceil(len(points) / _CHART_MAX_POINTS)
+    return points[::stride]
+
+
+def _chart_price_trend(rows, region: str, year: int) -> Optional[Dict[str, Any]]:
+    """30 分钟价格 → 日均价折线图。rows: [(settlement_date, rrp_aud_mwh), ...]"""
+    if not rows:
+        return None
+    daily: Dict[str, list] = {}
+    for r in rows:
+        day = str(r[0])[:10]
+        try:
+            daily.setdefault(day, []).append(float(r[1] or 0.0))
+        except (TypeError, ValueError):
+            continue
+    points = [
+        {"x": day, "y": round(sum(v) / len(v), 2)}
+        for day, v in sorted(daily.items())
+    ]
+    points = _downsample_chart_points(points)
+    if len(points) < 2:
+        return None
+    return {
+        "type": "line",
+        "title": f"{region} {year} 日均价趋势",
+        "x_label": "日期",
+        "y_label": "AUD/MWh",
+        "data": points,
+    }
+
+
+def _chart_market_screening(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """区域筛选评分条形图（按得分降序取前 8）。"""
+    from agent.tool_contracts import SCREENING_ITEMS_KEY
+
+    items = payload.get(SCREENING_ITEMS_KEY) or []
+    rows = []
+    for it in items:
+        score = it.get("overall_score")
+        if score is None:
+            continue
+        label = str(it.get("label") or it.get("region") or "?")
+        rows.append({"x": label, "y": round(float(score), 1)})
+    rows.sort(key=lambda r: r["y"], reverse=True)
+    rows = rows[:8]
+    if len(rows) < 2:
+        return None
+    return {
+        "type": "bar",
+        "title": "区域投资筛选评分",
+        "x_label": "区域",
+        "y_label": "综合得分",
+        "data": rows,
+    }
+
+
+_FCAS_SERVICE_COLS = [
+    "raise1sec_rrp", "raise6sec_rrp", "raise60sec_rrp", "raise5min_rrp", "raisereg_rrp",
+    "lower1sec_rrp", "lower6sec_rrp", "lower60sec_rrp", "lower5min_rrp", "lowerreg_rrp",
+]
+
+
+def _chart_fcas_services(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """FCAS 各服务均价条形图（防御式：无有效列返回 None）。"""
+    if not rows:
+        return None
+    points = []
+    for col in _FCAS_SERVICE_COLS:
+        vals = [float(r.get(col) or 0.0) for r in rows if r.get(col) is not None]
+        if not vals:
+            continue
+        points.append({"x": col.replace("_rrp", ""), "y": round(sum(vals) / len(vals), 2)})
+    if not any(p["y"] != 0 for p in points):
+        return None
+    return {
+        "type": "bar",
+        "title": "FCAS 各服务均价",
+        "x_label": "服务",
+        "y_label": "AUD/MWh",
+        "data": points,
+    }
+
+
+def _chart_coopt_monthly(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """联合优化回测月度净收益条形图（month_index → M1..Mn）。"""
+    mb = payload.get("monthly_breakdown") or []
+    points = []
+    for m in mb:
+        total = m.get("total_net_revenue")
+        if total is None:
+            total = (m.get("energy_revenue") or 0.0) + (m.get("fcas_revenue") or 0.0)
+        try:
+            points.append({"x": f"M{m.get('month_index', len(points) + 1)}", "y": round(float(total), 0)})
+        except (TypeError, ValueError):
+            continue
+    if len(points) < 2:
+        return None
+    return {
+        "type": "bar",
+        "title": "联合优化回测月度净收益",
+        "x_label": "月份",
+        "y_label": "AUD",
+        "data": points,
+    }
+
+
 def _exec_market_screening(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Execute market screening across all regions."""
     from deps import get_db
@@ -229,7 +349,11 @@ def _exec_market_screening(params: Dict[str, Any], ctx: AgentContext) -> Dict[st
 
     db = get_db()
     year = params.get("year", ctx.effective_year)
-    return build_market_screening_payload(db, year=year)
+    payload = build_market_screening_payload(db, year=year)
+    chart = _chart_market_screening(payload)
+    if chart:
+        payload = {**payload, "chart": chart}
+    return payload
 
 
 def _exec_price_trend(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
@@ -269,7 +393,11 @@ def _exec_price_trend(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, An
         "negative_ratio_pct": round(sum(1 for p in prices if p < 0) / len(prices) * 100, 2),
         "total_points": len(prices),
     }
-    return {"region": region, "year": year, "stats": stats}
+    result = {"region": region, "year": year, "stats": stats}
+    chart = _chart_price_trend(rows, region, year)
+    if chart:
+        result["chart"] = chart
+    return result
 
 
 def _exec_regional_ranking(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
@@ -426,7 +554,11 @@ def _exec_fcas_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
 
     from fcas_opportunity import summarize_nem_fcas_opportunity
     result = summarize_nem_fcas_opportunity(rows, capacity_mw=capacity_mw, duration_hours=2.0)
-    return {"region": region, "year": year, "has_fcas_data": True, **result}
+    payload = {"region": region, "year": year, "has_fcas_data": True, **result}
+    chart = _chart_fcas_services(rows)
+    if chart:
+        payload["chart"] = chart
+    return payload
 
 
 def _exec_wem_ess_analysis(db, region: str, capacity_mw: float) -> Dict[str, Any]:
@@ -783,6 +915,9 @@ def _exec_co_optimized_backtest(params: Dict[str, Any], ctx: AgentContext) -> Di
             f"为控制求解器内存占用已降采样至 {len(rows)} 个区间"
             f"（stride={stride}，价格覆盖范围不变，时间分辨率下降）"
         )
+    chart = _chart_coopt_monthly(payload)
+    if chart:
+        payload["chart"] = chart
     return payload
 
 
