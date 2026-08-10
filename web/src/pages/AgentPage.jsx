@@ -360,7 +360,13 @@ export default function AgentPage() {
   }, []);
 
   const handleDeleteHistory = useCallback((id) => {
-    deleteExecution(id).then(() => refreshHistory()).catch(() => {});
+    // 乐观移除：立即从列表消失，不让后端补满窗口造成"删不掉"错觉（2026-08-11 修复）；
+    // 失败时回滚并提示（原先 .catch 静默吞错）。
+    setHistory((prev) => prev.filter((h) => h.id !== id));
+    deleteExecution(id).catch((e) => {
+      setError(`删除历史失败: ${e.message || e}`);
+      refreshHistory();
+    });
   }, [refreshHistory]);
 
   const handleLoadHistory = useCallback(
@@ -549,8 +555,10 @@ function AgentLayout({
                 </div>
                 <span
                   role="button"
+                  title="删除此记录"
                   onClick={(e) => { e.stopPropagation(); onDeleteHistory(item.id); }}
-                  className="absolute right-1 top-1 hidden h-4 w-4 items-center justify-center rounded text-[10px] text-white/30 hover:bg-white/10 hover:text-white/70 group-hover:flex"
+                  // 常显（低透明度）：原 group-hover 方案触屏设备不可见、桌面端难发现（2026-08-11 修复）
+                  className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded text-[10px] text-white/30 opacity-60 transition-opacity hover:bg-white/10 hover:text-white/70 hover:opacity-100"
                 >
                   ×
                 </span>
@@ -1450,12 +1458,45 @@ function ComparisonPanel({ reports, onClear }) {
       <div className={`grid gap-4 ${reports.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
         {reports.map((r, i) => {
           const p = r.metadata?.params || {};
-          const npv = r.stage_results?.find((s) => s.tool_name === 'investment_analysis');
+          const inv = (r.stage_results || []).find((s) => s.tool_name === 'investment_analysis');
+          const km = inv?.key_metrics?.results || {};
           return (
             <div key={i} className="rounded-lg border border-[var(--color-border)] p-3">
               <div className="mb-2 text-[11px] font-medium text-[var(--color-text)]">
                 {r.region} · {p.power_mw || '?'}MW/{p.duration_hours || '?'}h · CAPEX {p.capex_per_kwh || '?'}
               </div>
+              {/* 关键结论指标（2026-08-11 补全：对比的核心是这些数字） */}
+              {(km.npv_aud != null || km.irr_pct != null || km.payback_years != null) && (
+                <div className="mb-2 grid grid-cols-3 gap-2">
+                  {km.npv_aud != null && (
+                    <div>
+                      <div className="text-[9px] uppercase tracking-wider text-[var(--color-muted)]">NPV</div>
+                      <div
+                        className="text-[12px] font-semibold tabular-nums"
+                        style={{ fontFamily: 'var(--font-mono-data)', color: km.npv_aud >= 0 ? 'var(--color-positive)' : 'var(--color-negative)' }}
+                      >
+                        {formatSigned(km.npv_aud, (v) => Math.abs(v) >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v.toFixed(0))}
+                      </div>
+                    </div>
+                  )}
+                  {km.irr_pct != null && (
+                    <div>
+                      <div className="text-[9px] uppercase tracking-wider text-[var(--color-muted)]">IRR</div>
+                      <div className="text-[12px] font-semibold tabular-nums text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono-data)' }}>
+                        {km.irr_pct.toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
+                  {km.payback_years != null && (
+                    <div>
+                      <div className="text-[9px] uppercase tracking-wider text-[var(--color-muted)]">回收期</div>
+                      <div className="text-[12px] font-semibold tabular-nums text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono-data)' }}>
+                        {km.payback_years.toFixed(1)}年
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="space-y-1 text-[11px] text-[var(--color-muted)]">
                 <div>状态: {STATUS_MAP[r.status]?.label || r.status}</div>
                 <div>置信度: {r.confidence_level}</div>
