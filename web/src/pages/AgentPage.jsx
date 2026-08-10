@@ -12,7 +12,7 @@
  * 路由：/agent
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   streamAgentChat,
   listWorkflows,
@@ -350,6 +350,10 @@ export default function AgentPage() {
     setMessages([]);
     setError(null);
     setCompareList([]);
+    // 新对话 = 新会话（多轮持久化分组依赖，2026-08-11）
+    sessionIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `s_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   }, []);
 
   const handleCompare = useCallback((report) => {
@@ -359,11 +363,12 @@ export default function AgentPage() {
     });
   }, []);
 
-  const handleDeleteHistory = useCallback((id) => {
+  const handleDeleteHistory = useCallback((ids) => {
     // 乐观移除：立即从列表消失，不让后端补满窗口造成"删不掉"错觉（2026-08-11 修复）；
-    // 失败时回滚并提示（原先 .catch 静默吞错）。
-    setHistory((prev) => prev.filter((h) => h.id !== id));
-    deleteExecution(id).catch((e) => {
+    // 支持会话分组整组删除（ids 为数组）；失败时回滚并提示。
+    const idList = Array.isArray(ids) ? ids : [ids];
+    setHistory((prev) => prev.filter((h) => !idList.includes(h.id)));
+    Promise.all(idList.map((id) => deleteExecution(id))).catch((e) => {
       setError(`删除历史失败: ${e.message || e}`);
       refreshHistory();
     });
@@ -375,8 +380,21 @@ export default function AgentPage() {
       try {
         const detail = await getExecutionDetail(item.id);
         if (!detail || !detail.report) return;
-        const userMsg = { id: nextId(), role: 'user', content: detail.query || item.query };
-        const assistantMsg = {
+        // 多轮会话回载（2026-08-11）：history 为当轮之前的完整对话上下文，
+        // 逐轮还原 user/assistant 消息，再拼接当轮问答。
+        const msgs = [];
+        for (const turn of detail.history || []) {
+          if (turn.role === 'user') {
+            msgs.push({ id: nextId(), role: 'user', content: turn.content || '' });
+          } else {
+            msgs.push({
+              id: nextId(), role: 'assistant', answer: turn.content || '',
+              streaming: false, answerDone: true,
+            });
+          }
+        }
+        msgs.push({ id: nextId(), role: 'user', content: detail.query || item.query });
+        msgs.push({
           id: nextId(),
           role: 'assistant',
           answer: detail.report.executive_summary || '',
@@ -391,8 +409,10 @@ export default function AgentPage() {
           report: detail.report,
           streaming: false,
           answerDone: true,
-        };
-        setMessages([userMsg, assistantMsg]);
+        });
+        setMessages(msgs);
+        // 追问续接该会话（而非当前页面会话）
+        if (detail.session_id) sessionIdRef.current = detail.session_id;
       } catch {
         // silently ignore load failures
       }
@@ -409,6 +429,18 @@ export default function AgentPage() {
     [handleSend],
   );
 
+  // 会话分组（2026-08-11）：按 session_id 合并多轮记录为一条会话
+  // （history 按时间倒序，组内 [0] 为最新轮、末位为首轮；无 session 旧记录各自成组）
+  const historyGroups = useMemo(() => {
+    const map = new Map();
+    for (const item of history) {
+      const key = item.session_id || `single_${item.id}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(item);
+    }
+    return [...map.values()];
+  }, [history]);
+
   return (
     <AgentLayout
       market={market}
@@ -424,7 +456,7 @@ export default function AgentPage() {
       streaming={streaming}
       error={error}
       workflows={workflows}
-      history={history}
+      history={historyGroups}
       scrollRef={scrollRef}
       onSend={handleSend}
       onStop={handleStop}
@@ -534,36 +566,43 @@ function AgentLayout({
           {history.length === 0 && (
             <p className="px-1 text-[11px] text-white/30">暂无记录</p>
           )}
+          {/* 会话分组视图（2026-08-11）：每组=一次多轮会话，展示首轮问题+轮数；
+              点击回载最新轮（含完整对话上下文），× 整组删除 */}
           <div className="grid gap-1">
-            {history.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => onLoadHistory(item)}
-                className="group relative w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-flex w-3 shrink-0 justify-center text-[9px]" style={{ color: STATUS_MAP[item.status]?.color || '#6B7280' }}>
-                    {STATUS_MAP[item.status]?.icon || '●'}
-                  </span>
-                  <span className="truncate">{item.query}</span>
-                </div>
-                <div className="mt-0.5 pl-3 font-mono text-[10px] tabular-nums text-white/30">
-                  {item.market}/{item.region || '—'} ·{' '}
-                  {item.total_duration_ms
-                    ? `${(item.total_duration_ms / 1000).toFixed(1)}s`
-                    : '—'}
-                </div>
-                <span
-                  role="button"
-                  title="删除此记录"
-                  onClick={(e) => { e.stopPropagation(); onDeleteHistory(item.id); }}
-                  // 常显（低透明度）：原 group-hover 方案触屏设备不可见、桌面端难发现（2026-08-11 修复）
-                  className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded text-[10px] text-white/30 opacity-60 transition-opacity hover:bg-white/10 hover:text-white/70 hover:opacity-100"
+            {history.map((group) => {
+              const latest = group[0];
+              const first = group[group.length - 1];
+              return (
+                <button
+                  key={latest.id}
+                  onClick={() => onLoadHistory(latest)}
+                  className="group relative w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
                 >
-                  ×
-                </span>
-              </button>
-            ))}
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-flex w-3 shrink-0 justify-center text-[9px]" style={{ color: STATUS_MAP[latest.status]?.color || '#6B7280' }}>
+                      {STATUS_MAP[latest.status]?.icon || '●'}
+                    </span>
+                    <span className="truncate">{first.query}</span>
+                  </div>
+                  <div className="mt-0.5 pl-3 font-mono text-[10px] tabular-nums text-white/30">
+                    {latest.market}/{latest.region || '—'}
+                    {group.length > 1 && ` · ${group.length}轮`} ·{' '}
+                    {latest.total_duration_ms
+                      ? `${(latest.total_duration_ms / 1000).toFixed(1)}s`
+                      : '—'}
+                  </div>
+                  <span
+                    role="button"
+                    title="删除此会话"
+                    onClick={(e) => { e.stopPropagation(); onDeleteHistory(group.map((g) => g.id)); }}
+                    // 常显（低透明度）：原 group-hover 方案触屏设备不可见、桌面端难发现（2026-08-11 修复）
+                    className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded text-[10px] text-white/30 opacity-60 transition-opacity hover:bg-white/10 hover:text-white/70 hover:opacity-100"
+                  >
+                    ×
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </aside>

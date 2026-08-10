@@ -412,6 +412,10 @@ async def chat_stream(
         # Best-effort execution log, off the event loop.
         if final_report is not None:
             try:
+                # 注入会话上下文（私有键，落库前由 _log_execution_dict 取出）：
+                # history 为当轮之前的完整对话，用于历史回载时恢复多轮会话
+                final_report["_session_id"] = request.session_id
+                final_report["_history"] = history
                 await asyncio.get_running_loop().run_in_executor(
                     None, _log_execution_dict, final_report
                 )
@@ -540,7 +544,7 @@ def _fetch_history(limit: int) -> list:
         cursor = conn.cursor()
         cursor.execute(
             "SELECT id, query, market, region, workflow_type, status, "
-            "total_duration_ms, created_at "
+            "total_duration_ms, created_at, session_id, turn_count "
             "FROM agent_execution_log ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
@@ -558,7 +562,8 @@ def _fetch_execution_detail(execution_id: str) -> Optional[Dict]:
         _ensure_agent_log_table(cursor)
         cursor.execute(
             "SELECT id, query, market, region, workflow_type, status, "
-            "report_json, total_duration_ms, created_at "
+            "report_json, total_duration_ms, created_at, "
+            "session_id, history_json, turn_count "
             "FROM agent_execution_log WHERE id = ?",
             (execution_id,),
         )
@@ -574,6 +579,15 @@ def _fetch_execution_detail(execution_id: str) -> Optional[Dict]:
             except (json.JSONDecodeError, TypeError):
                 record["report"] = None
         del record["report_json"]
+        # Parse history_json（当轮之前的完整对话，多轮会话回载用）
+        if record.get("history_json"):
+            try:
+                record["history"] = json.loads(record["history_json"])
+            except (json.JSONDecodeError, TypeError):
+                record["history"] = []
+        else:
+            record["history"] = []
+        del record["history_json"]
         return record
 
 
@@ -628,6 +642,23 @@ def _ensure_agent_log_table(cursor) -> None:
             cursor.execute(
                 "ALTER TABLE agent_execution_log ADD COLUMN trajectory_json TEXT"
             )
+    except Exception:  # noqa: BLE001 - 列升级失败不阻断日志写入
+        pass
+    # 多轮会话持久化列（2026-08-11）：session_id 分组、history_json 存当轮之前
+    # 的完整对话上下文、turn_count 会话内轮次序号（旧表升级，已存在则跳过）
+    try:
+        for col, ddl in (
+            ("session_id", "ALTER TABLE agent_execution_log ADD COLUMN session_id TEXT"),
+            ("history_json", "ALTER TABLE agent_execution_log ADD COLUMN history_json TEXT"),
+            ("turn_count", "ALTER TABLE agent_execution_log ADD COLUMN turn_count INTEGER"),
+        ):
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'agent_execution_log' AND column_name = ?",
+                (col,),
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(ddl)
     except Exception:  # noqa: BLE001 - 列升级失败不阻断日志写入
         pass
     _agent_log_table_ready = True
@@ -695,8 +726,8 @@ def _log_execution(report) -> None:
             _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
-                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     report.id,
                     report.query,
@@ -716,6 +747,10 @@ def _log_execution(report) -> None:
                     ),
                     report.total_duration_ms,
                     json.dumps(_build_trajectory(report.steps), ensure_ascii=False),
+                    # /run 与 /run-async 为单轮路径，无会话上下文
+                    None,
+                    None,
+                    1,
                 ),
             )
             conn.commit()
@@ -728,9 +763,17 @@ def _log_execution_dict(report: dict) -> None:
 
     The streaming path produces ``report.model_dump(mode="json")`` dicts rather
     than :class:`AgentReport` objects, so we persist from the dict directly.
+
+    多轮会话持久化（2026-08-11）：chat-stream 在调用前向 dict 注入私有键
+    ``_session_id`` / ``_history``（当轮之前的完整对话上下文），此处取出后
+    落库（不混入 report_json）。
     """
     try:
         from deps import get_db
+
+        session_id = report.pop("_session_id", None)
+        history = report.pop("_history", None) or []
+        turn_count = len(history) + 1
 
         db = get_db()
         with db.get_connection() as conn:
@@ -738,8 +781,8 @@ def _log_execution_dict(report: dict) -> None:
             _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
-                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     report.get("id"),
                     report.get("query", ""),
@@ -755,6 +798,9 @@ def _log_execution_dict(report: dict) -> None:
                     ),
                     report.get("total_duration_ms", 0.0),
                     json.dumps(_build_trajectory(report.get("steps", [])), ensure_ascii=False),
+                    session_id,
+                    json.dumps(history, ensure_ascii=False, default=str),
+                    turn_count,
                 ),
             )
             conn.commit()
