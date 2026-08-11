@@ -390,6 +390,7 @@ async def chat_stream(
 
     async def event_generator():
         final_report = None
+        final_answer = ""
         saw_done = False
         async for item in _stream_with_keepalive(
             orchestrator.run_stream(
@@ -404,6 +405,7 @@ async def chat_stream(
                 continue
             if item.get("type") == "report":
                 final_report = item.get("report")
+                final_answer = item.get("answer") or ""
             if item.get("type") == "done":
                 saw_done = True
             yield f"data: {json.dumps(item, ensure_ascii=False, default=str)}\n\n"
@@ -414,9 +416,11 @@ async def chat_stream(
         if final_report is not None:
             try:
                 # 注入会话上下文（私有键，落库前由 _log_execution_dict 取出）：
-                # history 为当轮之前的完整对话，用于历史回载时恢复多轮会话
+                # history 为当轮之前的完整对话，answer 为当轮完整推理文本，
+                # 用于历史回载时恢复完整多轮会话与完整推理过程
                 final_report["_session_id"] = request.session_id
                 final_report["_history"] = history
+                final_report["_answer"] = final_answer
                 await asyncio.get_running_loop().run_in_executor(
                     None, _log_execution_dict, final_report
                 )
@@ -624,7 +628,7 @@ def _fetch_execution_detail(execution_id: str) -> Optional[Dict]:
         cursor.execute(
             "SELECT id, query, market, region, workflow_type, status, "
             "report_json, total_duration_ms, created_at, "
-            "session_id, history_json, turn_count "
+            "session_id, history_json, turn_count, answer_text "
             "FROM agent_execution_log WHERE id = ?",
             (execution_id,),
         )
@@ -649,6 +653,8 @@ def _fetch_execution_detail(execution_id: str) -> Optional[Dict]:
         else:
             record["history"] = []
         del record["history_json"]
+        # 完整推理文本（历史回载恢复完整推理过程；旧记录无此列为 None）
+        record["answer"] = record.pop("answer_text", None) or ""
         return record
 
 
@@ -688,11 +694,13 @@ _CREATE_AGENT_LOG_TABLE = """
 """
 
 # 列迁移清单（旧表升级）：trajectory_json（B2 可观测）+ 会话持久化三列（2026-08-11）
+# + answer_text（完整推理文本，历史回载恢复完整推理过程，2026-08-11）
 _AGENT_LOG_COLUMN_MIGRATIONS = (
     ("trajectory_json", "ALTER TABLE agent_execution_log ADD COLUMN trajectory_json TEXT"),
     ("session_id", "ALTER TABLE agent_execution_log ADD COLUMN session_id TEXT"),
     ("history_json", "ALTER TABLE agent_execution_log ADD COLUMN history_json TEXT"),
     ("turn_count", "ALTER TABLE agent_execution_log ADD COLUMN turn_count INTEGER"),
+    ("answer_text", "ALTER TABLE agent_execution_log ADD COLUMN answer_text TEXT"),
 )
 
 
@@ -838,6 +846,7 @@ def _log_execution_dict(report: dict) -> None:
 
         session_id = report.pop("_session_id", None)
         history = report.pop("_history", None) or []
+        answer_text = report.pop("_answer", None) or ""
         turn_count = len(history) + 1
 
         db = get_db()
@@ -846,8 +855,8 @@ def _log_execution_dict(report: dict) -> None:
             _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
-                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count, answer_text) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     report.get("id"),
                     report.get("query", ""),
@@ -866,6 +875,7 @@ def _log_execution_dict(report: dict) -> None:
                     session_id,
                     json.dumps(history, ensure_ascii=False, default=str),
                     turn_count,
+                    answer_text,
                 ),
             )
             conn.commit()

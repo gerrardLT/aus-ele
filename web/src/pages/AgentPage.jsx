@@ -408,7 +408,8 @@ export default function AgentPage() {
         msgs.push({
           id: nextId(),
           role: 'assistant',
-          answer: detail.report.executive_summary || '',
+          // 完整推理文本优先（answer_text 持久化，2026-08-11）；旧记录回退摘要
+          answer: detail.answer || detail.report.executive_summary || '',
           trace: (detail.report.stage_results || []).map((s, i) => ({
             callId: `hist_${i}`,
             name: s.tool_name,
@@ -602,11 +603,12 @@ function AgentLayout({
                   onClick={() => onLoadHistory(latest)}
                   className="group relative w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-flex w-3 shrink-0 justify-center text-[9px]" style={{ color: STATUS_MAP[latest.status]?.color || '#6B7280' }}>
+                  <div className="flex items-start gap-1.5">
+                    <span className="mt-0.5 inline-flex w-3 shrink-0 justify-center text-[9px]" style={{ color: STATUS_MAP[latest.status]?.color || '#6B7280' }}>
                       {STATUS_MAP[latest.status]?.icon || '●'}
                     </span>
-                    <span className="truncate">{first.query}</span>
+                    {/* 两行截断（原单行 truncate 导致用户看不到完整标题，2026-08-11） */}
+                    <span className="line-clamp-2 break-words">{first.query}</span>
                   </div>
                   <div className="mt-0.5 pl-3 font-mono text-[10px] tabular-nums text-white/30">
                     {latest.market}/{latest.region || '—'}
@@ -615,12 +617,12 @@ function AgentLayout({
                       ? `${(latest.total_duration_ms / 1000).toFixed(1)}s`
                       : '—'}
                   </div>
+                  {/* 删除按钮：常显且提高对比度（原 opacity 过低用户找不到，2026-08-11） */}
                   <span
                     role="button"
                     title="删除此会话"
                     onClick={(e) => { e.stopPropagation(); onDeleteHistory(group.map((g) => g.id)); }}
-                    // 常显（低透明度）：原 group-hover 方案触屏设备不可见、桌面端难发现（2026-08-11 修复）
-                    className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded text-[10px] text-white/30 opacity-60 transition-opacity hover:bg-white/10 hover:text-white/70 hover:opacity-100"
+                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-[12px] text-white/60 transition-colors hover:bg-white/15 hover:text-white"
                   >
                     ×
                   </span>
