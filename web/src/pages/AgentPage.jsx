@@ -19,6 +19,7 @@ import {
   getAgentHistory,
   getExecutionDetail,
   deleteExecution,
+  clearAllHistory,
 } from '../lib/agentApi.js';
 import ChartRenderer from '../components/ChartRenderer.jsx';
 
@@ -374,6 +375,16 @@ export default function AgentPage() {
     });
   }, [refreshHistory]);
 
+  const handleClearHistory = useCallback(() => {
+    // 清空全部（2026-08-11）：二次确认 + 乐观清空 + 失败回滚
+    if (!window.confirm('确定清空全部会话历史？此操作不可恢复。')) return;
+    setHistory([]);
+    clearAllHistory().catch((e) => {
+      setError(`清空历史失败: ${e.message || e}`);
+      refreshHistory();
+    });
+  }, [refreshHistory]);
+
   const handleLoadHistory = useCallback(
     async (item) => {
       if (streaming) return;
@@ -472,6 +483,7 @@ export default function AgentPage() {
       onCompare={handleCompare}
       onSuggest={(text) => setInput(text)}
       onDeleteHistory={handleDeleteHistory}
+      onClearHistory={handleClearHistory}
       onWorkflow={(wf) =>
         sendMessage({ text: input.trim() || `运行 ${wf.name} 工作流`, workflowId: wf.id })
       }
@@ -525,6 +537,7 @@ function AgentLayout({
   onCompare,
   onSuggest,
   onDeleteHistory,
+  onClearHistory,
 }) {
   return (
     <div className="flex min-h-screen">
@@ -560,8 +573,19 @@ function AgentLayout({
 
         {/* History */}
         <div className="relative mt-6 flex-1 overflow-y-auto border-t border-white/8 pt-4">
-          <div className="px-1 mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
-            执行历史
+          <div className="mb-2 flex items-center justify-between px-1">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
+              执行历史
+            </span>
+            {history.length > 0 && (
+              <button
+                onClick={onClearHistory}
+                title="清空全部会话历史"
+                className="rounded px-1.5 py-0.5 text-[10px] text-white/30 transition-colors hover:bg-white/10 hover:text-white/70"
+              >
+                清空
+              </button>
+            )}
           </div>
           {history.length === 0 && (
             <p className="px-1 text-[11px] text-white/30">暂无记录</p>

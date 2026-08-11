@@ -155,6 +155,19 @@ export async function deleteExecution(executionId) {
 }
 
 /**
+ * Clear ALL execution records (2026-08-11). UI 侧需二次确认。
+ * @returns {Promise<{deleted: boolean, count: number}>}
+ */
+export async function clearAllHistory() {
+  const response = await fetch(`${AGENT_BASE}/history`, {
+    method: 'DELETE',
+    headers: await authHeaders(),
+  });
+  if (!response.ok) throw new Error(`Failed to clear history: ${response.status}`);
+  return response.json();
+}
+
+/**
  * Poll an async task until completion.
  * @param {string} taskId
  * @param {Object} [options]

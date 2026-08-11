@@ -502,6 +502,30 @@ async def get_history(
         return AgentHistoryResponse(executions=[], total=0)
 
 
+@router.delete("/history")
+async def delete_all_history(principal: dict = Depends(get_current_principal)) -> Dict:
+    """清空全部执行记录（2026-08-11；前端需二次确认）。"""
+
+    def _delete_all() -> int:
+        from deps import get_db
+
+        _ensure_agent_log_table()
+        db = get_db()
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM agent_execution_log")
+            n = cursor.rowcount
+            conn.commit()
+            return n
+
+    try:
+        deleted = await asyncio.get_running_loop().run_in_executor(None, _delete_all)
+        return {"deleted": True, "count": deleted}
+    except Exception as exc:
+        logger.warning("Failed to clear agent history: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to clear history")
+
+
 @router.get("/history/_debug/schema")
 async def debug_log_schema() -> Dict:
     """诊断端点（2026-08-11）：返回 agent_execution_log 列清单与行数。
