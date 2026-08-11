@@ -637,38 +637,11 @@ function AgentLayout({
       </aside>
 
       {/* ─── Main Content: chat workbench ─── */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Header */}
-        <header className="border-b border-[var(--color-border)] px-8 py-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="font-serif text-2xl text-[var(--color-text)]">AI 编排分析</h1>
-              <p className="mt-1 text-xs text-[var(--color-muted)]">
-                自然语言驱动 · 多引擎串联 · 实时推理轨迹 · 多轮追问
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {messages.length > 0 && (
-                <button
-                  onClick={onReset}
-                  className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-muted)] transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
-                >
-                  新对话
-                </button>
-              )}
-              <a
-                href="/"
-                className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-muted)] transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
-              >
-                ← 返回市场
-              </a>
-            </div>
-          </div>
-        </header>
-
-        {/* Control bar: region(含市场语义) / workflow chips（2026-08-11 精简：
-            市场开关并入区域；工具子集下拉为内部 PoC 控件，撤出主栏） */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] px-8 py-3">
+      <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Top bar: 标题 + 区域 + 工作流 + 操作，合并为单行（2026-08-11 精简） */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-6 py-2.5">
+          <h1 className="font-serif text-base font-semibold text-[var(--color-text)]">AI 编排分析</h1>
+          <span className="h-4 w-px bg-[var(--color-border)]" />
           <select
             value={region}
             onChange={(e) => {
@@ -678,7 +651,7 @@ function AgentLayout({
             }}
             disabled={streaming}
             title="分析区域（选 WEM 自动切换西澳市场语义）"
-            className="rounded border border-[var(--color-border)] bg-transparent px-3 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] disabled:opacity-40"
+            className="rounded border border-[var(--color-border)] bg-transparent px-2.5 py-1 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] disabled:opacity-40"
           >
             {regions.map((r) => (
               <option key={r} value={r}>
@@ -689,9 +662,6 @@ function AgentLayout({
 
           {workflows.length > 0 && (
             <div className="flex flex-1 flex-wrap items-center gap-1.5">
-              <span className="text-[10px] uppercase tracking-[0.1em] text-[var(--color-muted)]">
-                快捷工作流
-              </span>
               {workflows.map((wf) => (
                 <button
                   key={wf.id}
@@ -706,11 +676,10 @@ function AgentLayout({
             </div>
           )}
 
-          {/* Params toggle */}
           <button
             onClick={() => setShowParams((v) => !v)}
             disabled={streaming}
-            className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+            className={`rounded border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-40 ${
               showParams
                 ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
                 : 'border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-text)]'
@@ -718,6 +687,22 @@ function AgentLayout({
           >
             BESS 参数
           </button>
+          <div className="flex items-center gap-2">
+            {messages.length > 0 && (
+              <button
+                onClick={onReset}
+                className="rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-muted)] transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
+              >
+                新对话
+              </button>
+            )}
+            <a
+              href="/"
+              className="rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-muted)] transition-colors hover:bg-[var(--color-inverted)] hover:text-[var(--color-inverted-text)]"
+            >
+              ← 返回市场
+            </a>
+          </div>
         </div>
 
         {/* Expandable BESS parameter panel */}
@@ -770,42 +755,44 @@ function AgentLayout({
           )}
         </div>
 
-        {/* Composer */}
-        <div className="border-t border-[var(--color-border)] px-8 py-4">
+        {/* Composer：固定首屏底部，发送按钮内嵌输入框右下角（2026-08-11） */}
+        <div className="border-t border-[var(--color-border)] px-8 py-3">
           <div className="mx-auto max-w-[880px]">
             {error && (
               <div className="mb-2 rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2 text-xs text-[var(--color-error)]">
                 {error}
               </div>
             )}
-            <div className="flex items-end gap-3">
+            <div className="relative">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder={`向分析引擎提问或追问...\n例如：对 ${region} 做一次完整投资可行性分析`}
+                placeholder={`向分析引擎提问或追问... 例如：对 ${region} 做一次完整投资可行性分析（Ctrl+Enter 发送）`}
                 rows={2}
-                className="min-h-[52px] flex-1 resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/50 outline-none transition-colors focus:border-[var(--color-primary)]"
+                className="min-h-[52px] w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-3 pl-4 pr-12 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/50 outline-none transition-colors focus:border-[var(--color-primary)]"
               />
               {streaming ? (
                 <button
                   onClick={onStop}
-                  className="h-[52px] shrink-0 rounded-lg border border-[var(--color-error)]/40 px-5 text-sm font-semibold text-[var(--color-error)] transition-colors hover:bg-[var(--color-error)]/10"
+                  title="停止"
+                  className="absolute bottom-2.5 right-2.5 flex h-7 w-7 items-center justify-center rounded-md border border-[var(--color-error)]/40 text-[10px] text-[var(--color-error)] transition-colors hover:bg-[var(--color-error)]/10"
                 >
-                  停止
+                  ■
                 </button>
               ) : (
                 <button
                   onClick={onSend}
                   disabled={!input.trim()}
-                  className="h-[52px] shrink-0 rounded-lg bg-[var(--color-inverted)] px-6 text-sm font-semibold text-[var(--color-inverted-text)] transition-opacity disabled:opacity-40"
+                  title="发送（Ctrl+Enter）"
+                  className="absolute bottom-2.5 right-2.5 flex h-7 w-7 items-center justify-center rounded-md bg-[var(--color-inverted)] text-[var(--color-inverted-text)] transition-opacity hover:opacity-90 disabled:opacity-40"
                 >
-                  发送
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 19V5" />
+                    <path d="m5 12 7-7 7 7" />
+                  </svg>
                 </button>
               )}
-            </div>
-            <div className="mt-1 text-[10px] text-[var(--color-muted)]">
-              Ctrl+Enter 发送 · 后端无状态，完整对话上下文由前端维护并逐轮回传
             </div>
           </div>
         </div>
