@@ -22,6 +22,7 @@ import {
   clearAllHistory,
 } from '../lib/agentApi.js';
 import ChartRenderer from '../components/ChartRenderer.jsx';
+import ExportPreviewModal from '../components/ExportPreviewModal.jsx';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1007,7 +1008,7 @@ function EvidencePanel({ message, onCompare, onSuggest }) {
         )}
         {tab === 'report' && report && (
           <div className="agent-report-print rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <ReportView report={report} onCompare={onCompare} onSuggest={onSuggest} />
+            <ReportView report={report} answer={message.answer} trace={trace} onCompare={onCompare} onSuggest={onSuggest} />
           </div>
         )}
       </div>
@@ -1294,15 +1295,14 @@ function KpiCard({ label, value, unit, fmt, source }) {
 
 // 部分成功信息已由轨迹 Tab 完整承载（2026-08-10 去重），PartialSuccessStrip 移除。
 
-function ReportView({ report, onCompare, onSuggest }) {
+function ReportView({ report, answer, trace, onCompare, onSuggest }) {
   const status = STATUS_MAP[report.status] || STATUS_MAP.running;
   const kpis = extractKpis(report);
   const meta = report.metadata || {};
   const usage = meta.llm_usage;
-
-  const handleExportPDF = () => {
-    window.print();
-  };
+  // PDF 导出（2026-08-11 改造）：预览弹窗 → 确认 → html2pdf 生成下载，
+  // 不再直接 window.print 跳转浏览器打印页
+  const [exportOpen, setExportOpen] = useState(false);
 
   return (
     <div className="space-y-5">
@@ -1336,12 +1336,21 @@ function ReportView({ report, onCompare, onSuggest }) {
           </span>
         )}
         <button
-          onClick={handleExportPDF}
+          onClick={() => setExportOpen(true)}
           className="ml-auto rounded border border-[var(--color-border)] px-2.5 py-1 text-[10px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-text)] hover:text-[var(--color-text)] print:hidden"
         >
           导出 PDF
         </button>
       </div>
+      {exportOpen && (
+        <ExportPreviewModal
+          report={report}
+          answer={answer}
+          trace={trace}
+          kpis={kpis}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
 
       {/* KPI 卡仅打印可见（屏幕上的唯一展示位在左栏结论区，去重；PDF 导出保持完整） */}
       {kpis.length > 0 && (
