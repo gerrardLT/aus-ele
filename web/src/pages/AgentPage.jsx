@@ -160,7 +160,9 @@ export default function AgentPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  const regions = market === 'NEM' ? REGIONS_NEM : REGIONS_WEM;
+  // 区域合并市场语义（2026-08-11 精简）：WEM 作为区域选项，市场由区域推导，
+  // 移除独立的 NEM/WEM 开关（原双控件互为冗余）
+  const regions = [...REGIONS_NEM, ...REGIONS_WEM];
 
   const refreshHistory = useCallback(() => {
     getAgentHistory(10)
@@ -664,49 +666,23 @@ function AgentLayout({
           </div>
         </header>
 
-        {/* Control bar: market / region / workflow chips */}
+        {/* Control bar: region(含市场语义) / workflow chips（2026-08-11 精简：
+            市场开关并入区域；工具子集下拉为内部 PoC 控件，撤出主栏） */}
         <div className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] px-8 py-3">
-          <div className="flex items-center gap-1">
-            {MARKETS.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => {
-                  setMarket(m.id);
-                  setRegion(m.id === 'NEM' ? 'NSW1' : 'WEM');
-                }}
-                disabled={streaming}
-                className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
-                  market === m.id
-                    ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
-                    : 'border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-text)]'
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
           <select
             value={region}
-            onChange={(e) => setRegion(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setRegion(v);
+              setMarket(v === 'WEM' ? 'WEM' : 'NEM');
+            }}
             disabled={streaming}
+            title="分析区域（选 WEM 自动切换西澳市场语义）"
             className="rounded border border-[var(--color-border)] bg-transparent px-3 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] disabled:opacity-40"
           >
             {regions.map((r) => (
               <option key={r} value={r}>
                 {r}
-              </option>
-            ))}
-          </select>
-          <select
-            value={toolMode}
-            onChange={(e) => setToolMode(e.target.value)}
-            disabled={streaming}
-            title="分析模式：工具子集暴露灰度（PoC）——子集模式更省 token 且限制探索范围；深度/不确定问题用全量"
-            className="rounded border border-[var(--color-border)] bg-transparent px-3 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] disabled:opacity-40"
-          >
-            {TOOL_MODES.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
               </option>
             ))}
           </select>
