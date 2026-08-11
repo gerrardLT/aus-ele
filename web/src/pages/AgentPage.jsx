@@ -860,8 +860,9 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
       {/* 双栏：左=结论+推理，右=轨迹/报告（窄屏自动堆叠） */}
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(380px,460px)]">
         <div className="flex min-w-0 flex-col gap-3">
+          {/* 左栏窄，2 列布局避免卡片文字截断（2026-08-11 用户反馈） */}
           {kpis.length > 0 && (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2">
               {kpis.map((k, i) => (
                 <KpiCard key={i} {...k} />
               ))}
@@ -1216,7 +1217,12 @@ function extractKpis(report) {
     const km = s.key_metrics || {};
     if (s.tool_name === 'investment_analysis' && km.results) {
       const r = km.results;
-      if (r.npv_aud != null) kpis.push({ label: 'NPV', value: r.npv_aud, unit: 'AUD', source: s.tool_name });
+      // NPV 用紧凑格式（≥1M 显示为 x.xM），避免长数字在窄卡片内被截断（2026-08-11）
+      if (r.npv_aud != null)
+        kpis.push({
+          label: 'NPV', value: r.npv_aud, unit: 'AUD', source: s.tool_name,
+          fmt: (v) => (Math.abs(v) >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v.toLocaleString('en-US', { maximumFractionDigits: 0 })),
+        });
       if (r.irr_pct != null) kpis.push({ label: 'IRR', value: r.irr_pct, unit: '%', fmt: (v) => v.toFixed(1), source: s.tool_name });
       if (r.payback_years != null) kpis.push({ label: '回收期', value: r.payback_years, unit: '年', fmt: (v) => v.toFixed(1), source: s.tool_name });
     }
@@ -1234,20 +1240,21 @@ function extractKpis(report) {
 
 function KpiCard({ label, value, unit, fmt, source }) {
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2.5">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-muted)]">
+    <div className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2.5">
+      <div className="truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-muted)]" title={label}>
         {label}
       </div>
+      {/* 数值+单位允许换行，长内容不再溢出截断（2026-08-11） */}
       <div
-        className="mt-1 text-xl font-semibold tabular-nums text-[var(--color-text)]"
+        className="mt-1 flex flex-wrap items-baseline gap-x-1 text-lg font-semibold tabular-nums text-[var(--color-text)]"
         style={{ fontFamily: 'var(--font-mono-data)' }}
       >
-        {formatSigned(value, fmt)}
-        {unit && <span className="ml-1 text-[10px] font-normal text-[var(--color-muted)]">{unit}</span>}
+        <span>{formatSigned(value, fmt)}</span>
+        {unit && <span className="text-[10px] font-normal text-[var(--color-muted)]">{unit}</span>}
       </div>
       {/* 溯源徽章：诚实语义——该数值出现在来源工具的结果中（非因果验证承诺） */}
       <span
-        className="mt-1.5 inline-flex items-center gap-1 rounded bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--color-primary)]"
+        className="mt-1.5 block max-w-full truncate rounded bg-[var(--color-surface-hover)] px-1.5 py-0.5 text-[9px] text-[var(--color-primary)]"
         title={`该数值出现在 ${source} 的工具结果中`}
       >
         来源: {source}
