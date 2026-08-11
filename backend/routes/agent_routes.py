@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Optional
@@ -420,7 +421,7 @@ async def chat_stream(
                     None, _log_execution_dict, final_report
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.debug("chat-stream log failed: %s", exc)
+                logger.error("chat-stream log failed: %s", exc, exc_info=True)
 
     return StreamingResponse(
         event_generator(),
@@ -501,6 +502,40 @@ async def get_history(
         return AgentHistoryResponse(executions=[], total=0)
 
 
+@router.get("/history/_debug/schema")
+async def debug_log_schema() -> Dict:
+    """诊断端点（2026-08-11）：返回 agent_execution_log 列清单与行数。
+
+    用于定位生产"历史为空"问题（迁移/写入静默失败排查）。无敏感数据，
+    仍要求鉴权（路由级 Bearer）。问题定位后可移除。
+    注意：必须注册在 /history/{execution_id} 之前，否则被路径参数吞掉。
+    """
+    def _inspect() -> Dict:
+        from deps import get_db
+
+        db = get_db()
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            _ensure_agent_log_table(cursor)
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'agent_execution_log' ORDER BY ordinal_position"
+            )
+            cols = [r[0] for r in cursor.fetchall()]
+            try:
+                cursor.execute("SELECT COUNT(*) FROM agent_execution_log")
+                count = cursor.fetchone()[0]
+            except Exception as exc:  # noqa: BLE001
+                count = f"error: {exc}"
+            conn.commit()
+            return {"columns": cols, "row_count": count}
+
+    try:
+        return await asyncio.get_running_loop().run_in_executor(None, _inspect)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"schema inspect failed: {exc}")
+
+
 @router.get("/history/{execution_id}")
 async def get_execution_detail(execution_id: str) -> Dict:
     """Get full report for a specific execution by ID."""
@@ -539,6 +574,7 @@ def _fetch_history(limit: int) -> list:
     """Synchronous history query (runs in a thread pool executor)."""
     from deps import get_db
 
+    _ensure_agent_log_table()  # 读取路径自愈：确保迁移列存在（独立提交）
     db = get_db()
     with db.get_connection() as conn:
         cursor = conn.cursor()
@@ -556,6 +592,7 @@ def _fetch_execution_detail(execution_id: str) -> Optional[Dict]:
     """Fetch full execution record including report_json."""
     from deps import get_db
 
+    _ensure_agent_log_table()  # 读取路径自愈：确保迁移列存在（独立提交）
     db = get_db()
     with db.get_connection() as conn:
         cursor = conn.cursor()
@@ -609,6 +646,7 @@ def _delete_execution(execution_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _agent_log_table_ready = False
+_migration_lock = threading.Lock()
 
 _CREATE_AGENT_LOG_TABLE = """
     CREATE TABLE IF NOT EXISTS agent_execution_log (
@@ -625,43 +663,46 @@ _CREATE_AGENT_LOG_TABLE = """
     )
 """
 
+# 列迁移清单（旧表升级）：trajectory_json（B2 可观测）+ 会话持久化三列（2026-08-11）
+_AGENT_LOG_COLUMN_MIGRATIONS = (
+    ("trajectory_json", "ALTER TABLE agent_execution_log ADD COLUMN trajectory_json TEXT"),
+    ("session_id", "ALTER TABLE agent_execution_log ADD COLUMN session_id TEXT"),
+    ("history_json", "ALTER TABLE agent_execution_log ADD COLUMN history_json TEXT"),
+    ("turn_count", "ALTER TABLE agent_execution_log ADD COLUMN turn_count INTEGER"),
+)
 
-def _ensure_agent_log_table(cursor) -> None:
-    """Create the agent_execution_log table once per process lifetime."""
+
+def _ensure_agent_log_table(cursor=None) -> None:
+    """确保 agent_execution_log 表与全部迁移列存在（每进程一次）。
+
+    关键修复（2026-08-11 生产"历史为空"根因）：PostgreSQL 的 DDL 是事务性的，
+    此前迁移 DDL 搭载在调用方业务事务上，一旦该事务回滚（如 INSERT 失败），
+    列变更一并丢失，而全局标志已置 True 导致迁移永不重试——此后所有
+    读写静默失败。现改为**独立连接 + 显式提交**执行迁移，提交成功后才置位
+    标志；调用方 cursor 仅用于后续业务语句。
+    """
     global _agent_log_table_ready
     if _agent_log_table_ready:
         return
-    cursor.execute(_CREATE_AGENT_LOG_TABLE)
-    # B2: 轨迹级可观测列（旧表升级，已存在则跳过）
-    try:
-        cursor.execute(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = 'agent_execution_log' AND column_name = 'trajectory_json'"
-        )
-        if cursor.fetchone() is None:
-            cursor.execute(
-                "ALTER TABLE agent_execution_log ADD COLUMN trajectory_json TEXT"
-            )
-    except Exception:  # noqa: BLE001 - 列升级失败不阻断日志写入
-        pass
-    # 多轮会话持久化列（2026-08-11）：session_id 分组、history_json 存当轮之前
-    # 的完整对话上下文、turn_count 会话内轮次序号（旧表升级，已存在则跳过）
-    try:
-        for col, ddl in (
-            ("session_id", "ALTER TABLE agent_execution_log ADD COLUMN session_id TEXT"),
-            ("history_json", "ALTER TABLE agent_execution_log ADD COLUMN history_json TEXT"),
-            ("turn_count", "ALTER TABLE agent_execution_log ADD COLUMN turn_count INTEGER"),
-        ):
-            cursor.execute(
-                "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = 'agent_execution_log' AND column_name = ?",
-                (col,),
-            )
-            if cursor.fetchone() is None:
-                cursor.execute(ddl)
-    except Exception:  # noqa: BLE001 - 列升级失败不阻断日志写入
-        pass
-    _agent_log_table_ready = True
+    with _migration_lock:
+        if _agent_log_table_ready:
+            return
+        from deps import get_db
+
+        db = get_db()
+        with db.get_connection() as mconn:
+            mcur = mconn.cursor()
+            mcur.execute(_CREATE_AGENT_LOG_TABLE)
+            for col, ddl in _AGENT_LOG_COLUMN_MIGRATIONS:
+                mcur.execute(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'agent_execution_log' AND column_name = ?",
+                    (col,),
+                )
+                if mcur.fetchone() is None:
+                    mcur.execute(ddl)
+            mconn.commit()  # DDL 独立提交，绝不随业务事务回滚
+        _agent_log_table_ready = True
 
 
 # ---------------------------------------------------------------------------
@@ -755,7 +796,7 @@ def _log_execution(report) -> None:
             )
             conn.commit()
     except Exception as exc:
-        logger.debug("Failed to log agent execution: %s", exc)
+        logger.error("Failed to log agent execution: %s", exc, exc_info=True)
 
 
 def _log_execution_dict(report: dict) -> None:
@@ -805,4 +846,4 @@ def _log_execution_dict(report: dict) -> None:
             )
             conn.commit()
     except Exception as exc:
-        logger.debug("Failed to log agent execution (dict): %s", exc)
+        logger.error("Failed to log agent execution (dict): %s", exc, exc_info=True)
