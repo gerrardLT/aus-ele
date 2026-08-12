@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "updated_at": "2026-08-12",
+    "note": "合约型收益锚点配置（CIS floor / WEM BRCP）。低频数据，人工年度更新，不建爬虫。数值为示例锚点，实际投标/容量年以官方结果替换。",
+    "sources": [
+      "CIS: https://www.dcceew.gov.au/energy/renewable/capacity-investment-scheme",
+      "BRCP: https://www.erawa.com.au/markets/wholesale-electricity-market/price-setting/benchmark-reserve-capacity-prices"
+    ]
+  },
+  "cis": {
+    "scheme": "Capacity Investment Scheme (CIS)",
+    "mechanism": "政府收入下限（floor）兜底下行风险；2025-08 起单阶段投标",
+    "term_years": 10,
+    "default_floor_aud_per_mw_year": 75000,
+    "region_overrides": {}
+  },
+  "wem_brcp": {
+    "mechanism": "ERA Benchmark Reserve Capacity Price，以 200MW/1200MWh 电池为新进入者基准，年度定价",
+    "reference_battery": {"power_mw": 200, "energy_mwh": 1200},
+    "capacity_years": {
+      "2026/27": {"brcp_aud_per_mw_year": 11500, "status": "illustrative_placeholder"}
+    }
+  }
+}

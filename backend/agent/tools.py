@@ -996,6 +996,9 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     baseline_arbitrage = spread * power_mw * duration_hours * annual_cycles * rte
 
     # FCAS 基线：用目标年真实 reg FCAS 均价估算（WEM 无此列时为 0）
+    # Phase 2（2026-08-12）：显式下调 FCAS 默认权重——调研事实：NEM BESS
+    # 收入中 FCAS 占比已降至约 3%（同比 -43%），不再隐含全额计入。
+    FCAS_COMPRESSION_FACTOR = 0.3
     baseline_fcas = 0.0
     try:
         with db.get_connection() as conn:
@@ -1008,7 +1011,9 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
             fcas_row = cursor.fetchone()
             if fcas_row and fcas_row[0]:
                 avg_fcas_price = (float(fcas_row[0] or 0) + float(fcas_row[1] or 0)) / 2
-                baseline_fcas = avg_fcas_price * (power_mw * 0.3) * (6 * 365) * 0.5
+                baseline_fcas = (
+                    avg_fcas_price * (power_mw * 0.3) * (6 * 365) * 0.5
+                ) * FCAS_COMPRESSION_FACTOR
     except Exception:
         pass
 
@@ -1027,6 +1032,46 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
             params_invest, scenario, baseline_arbitrage, baseline_fcas,
             annual_cycles_history, dod_severity_history,
         )
+
+        # Phase 3（2026-08-12）：CIS floor 价值流（include_cis=true 时生效）
+        # floor 高于 merchant 基线时把套利桶抬升至 floor 重算，产出前后 NPV 对照
+        cis_block: Dict[str, Any] = {"included": False}
+        if bool(params.get("include_cis", False)) and region != "WEM":
+            try:
+                from services.contract_revenue import get_cis_floor_params
+
+                cis = get_cis_floor_params(region)
+                if cis.get("available"):
+                    floor_revenue = float(cis["floor_aud_per_mw_year"]) * power_mw
+                    total_baseline = baseline_arbitrage + baseline_fcas
+                    if floor_revenue > total_baseline:
+                        lifted_arbitrage = baseline_arbitrage + (floor_revenue - total_baseline)
+                        result_cis = FinancialModel.run_scenario(
+                            params_invest, scenario, lifted_arbitrage, baseline_fcas,
+                            annual_cycles_history, dod_severity_history,
+                        )
+                        cis_block = {
+                            "included": True,
+                            "binding": True,
+                            "npv_before_cis_aud": round(result.metrics.npv, 0),
+                            "npv_with_cis_floor_aud": round(result_cis.metrics.npv, 0),
+                            "floor_aud_per_mw_year": cis["floor_aud_per_mw_year"],
+                            "term_years": cis.get("term_years"),
+                            "uplift_aud_yr": round(floor_revenue - total_baseline, 0),
+                            "caveat": cis.get("caveat"),
+                        }
+                    else:
+                        cis_block = {
+                            "included": True,
+                            "binding": False,
+                            "note": "merchant 基线已高于 CIS floor，floor 不构成抬升",
+                            "floor_aud_per_mw_year": cis["floor_aud_per_mw_year"],
+                            "caveat": cis.get("caveat"),
+                        }
+                else:
+                    cis_block = {"included": False, "note": "CIS 配置不可用"}
+            except Exception as cis_exc:  # noqa: BLE001 — best-effort 降级
+                cis_block = {"included": False, "note": f"CIS 计算失败: {cis_exc}"}
 
         # P1: use tool_contracts constants for drift-prone output keys so the
         # producer and consumers (synthesizer) share a single source of truth.
@@ -1055,13 +1100,16 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
                 INVEST_PAYBACK_KEY: round(result.metrics.payback_years, 1) if result.metrics.payback_years else None,
                 "baseline_arbitrage_aud_yr": round(baseline_arbitrage, 0),
                 "baseline_fcas_aud_yr": round(baseline_fcas, 0),
+                "fcas_compression_factor": FCAS_COMPRESSION_FACTOR,
                 "avg_spread_aud_mwh": round(spread, 2),
                 "model_type": "financial_model_pipeline",
                 "note": (
                     "财务计算由主管线 FinancialModel.run_scenario 完成（含退化/增强/费用）；"
-                    "收入底座为目标年真实价格的简化窗口估算，非完整回测，方向参考级"
+                    "收入底座为目标年真实价格的简化窗口估算，非完整回测，方向参考级；"
+                    "FCAS 基线已按压缩因子 0.3 显式下调（FCAS 占 BESS 收入约 3%，持续压缩）"
                 ),
             },
+            "cis_floor": cis_block,
         }
 
     except Exception as e:
@@ -1557,6 +1605,45 @@ def _exec_narrative_attribution(params: Dict[str, Any], ctx: AgentContext) -> Di
 # =============================================================================
 
 
+def _exec_bess_revenue_benchmark(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Execute NEM BESS revenue benchmark (rolling monthly index).
+
+    Phase 1（2026-08-12）：对标 Modo 指数的内部 derived 基准，
+    复用 benchmark_engine 与 /api/benchmark 同一计算入口。
+    """
+    from deps import get_db
+    from engines.benchmark_engine import (
+        NEM_BENCHMARK_REGIONS,
+        build_nem_bess_benchmark,
+    )
+
+    region = (params.get("region") or ctx.effective_region or "NSW1").upper()
+    if region not in NEM_BENCHMARK_REGIONS:
+        return {
+            "region": region,
+            "status": "unsupported_region",
+            "note": f"Benchmark 仅覆盖 NEM 大陆区域 {NEM_BENCHMARK_REGIONS}",
+        }
+    try:
+        months = int(params.get("months", 12))
+    except (TypeError, ValueError):
+        months = 12
+    months = max(1, min(months, 24))
+
+    result = build_nem_bess_benchmark(get_db(), region, months)
+    summary = result.get("summary", {})
+    if summary.get("latest_month"):
+        result["headline"] = (
+            f"{region} 最近完整月 {summary.get('latest_month')} 基准收益 "
+            f"{summary.get('latest_index_k_aud_per_mw_year')} kAUD/MW/年"
+            f"（滚动均值 {summary.get('avg_index_k_aud_per_mw_year')}，"
+            f"偏离 {summary.get('latest_vs_avg_pct')}%）"
+        )
+    else:
+        result["headline"] = f"{region} 窗口内无结算数据，无法计算基准收益"
+    return result
+
+
 def build_tool_registry() -> ToolRegistry:
     """Build and populate the complete tool registry."""
     registry = ToolRegistry()
@@ -1610,6 +1697,28 @@ def build_tool_registry() -> ToolRegistry:
     )
 
     # --- Stage 2: Revenue Deep Dive ---
+    registry.register(
+        ToolDefinition(
+            name="bess_revenue_benchmark",
+            description=(
+                "NEM BESS revenue benchmark: rolling monthly index in kAUD/MW/year for a "
+                "reference 100MW/200MWh battery (RTE 0.85). Derived ideal-discharge caliber — "
+                "FCAS/capacity not included, not directly comparable to third-party indices "
+                "(e.g. Modo). Use to anchor market-entry and revenue expectations."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string", "description": "NEM mainland region (NSW1, QLD1, SA1, VIC1)"},
+                    "months": {"type": "integer", "description": "Rolling window size in months (1-24, default 12)"},
+                },
+                "required": ["region"],
+            },
+            stage="Stage 2 - Revenue Deep Dive",
+        ),
+        _exec_bess_revenue_benchmark,
+    )
+
     registry.register(
         ToolDefinition(
             name="spike_profit_analysis",
@@ -1793,7 +1902,12 @@ def build_tool_registry() -> ToolRegistry:
     registry.register(
         ToolDefinition(
             name="investment_analysis",
-            description="Run BESS investment NPV/IRR analysis with given parameters. Returns capex, annual revenue, NPV, and payback period.",
+            description=(
+                "Run BESS investment NPV/IRR analysis with given parameters. Returns capex, "
+                "annual revenue, NPV, and payback period. FCAS baseline is explicitly "
+                "compressed (factor 0.3). Set include_cis=true to add the CIS revenue-floor "
+                "value stream and get before/after-floor NPV comparison (NEM only)."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -1803,6 +1917,7 @@ def build_tool_registry() -> ToolRegistry:
                     "duration_hours": {"type": "number", "description": "BESS duration (hours)"},
                     "capex_per_kwh": {"type": "number", "description": "CAPEX per kWh (AUD)"},
                     "discount_rate": {"type": "number", "description": "Discount rate (e.g. 0.08)"},
+                    "include_cis": {"type": "boolean", "description": "Include CIS revenue-floor value stream with before/after NPV comparison (NEM only, default false)"},
                 },
                 "required": ["region"],
             },

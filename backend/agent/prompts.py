@@ -164,6 +164,7 @@ TOOL_STAGE_LABELS = {
     "spike_profit_analysis": "极端价格利润分析",
     "peak_analysis": "峰谷价差分析",
     "fcas_analysis": "FCAS 辅助服务分析",
+    "bess_revenue_benchmark": "BESS 收益基准指数",
     "saturation_check": "BESS 饱和检查",
     "cannibalization_forecast": "收入稀释预测",
     "fcas_collapse_forecast": "FCAS 崩塌预测",

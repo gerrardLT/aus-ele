@@ -1484,6 +1484,35 @@ class AgentOrchestrator:
                     parts.append(f"- IRR: {self._fmt(res.get('irr_pct'), '{:.1f}')}%\n")
                     parts.append(f"- 简单回收期: {res.get('simple_payback_years', '?')} 年\n")
                     parts.append(f"- 年均净收入: {self._fmt(res.get('annual_net_revenue_aud'))} AUD\n")
+                    if res.get("fcas_compression_factor"):
+                        parts.append(
+                            "- FCAS 基线已按压缩因子 "
+                            f"{res.get('fcas_compression_factor')} 下调（FCAS 收益持续压缩）\n"
+                        )
+                cis = data.get("cis_floor", {})
+                if cis.get("included"):
+                    if cis.get("binding"):
+                        parts.append(
+                            f"- CIS floor 抬升: NPV {self._fmt(cis.get('npv_before_cis_aud'))} → "
+                            f"**{self._fmt(cis.get('npv_with_cis_floor_aud'))} AUD**"
+                            f"（floor {self._fmt(cis.get('floor_aud_per_mw_year'))} AUD/MW/年，配置锚点）\n"
+                        )
+                    else:
+                        parts.append("- CIS floor 不构成抬升（merchant 基线已高于 floor）\n")
+            elif r.tool_name == "bess_revenue_benchmark":
+                summary = data.get("summary", {})
+                if summary:
+                    parts.append(
+                        f"- 最近完整月({summary.get('latest_month', '?')})基准收益: "
+                        f"**{summary.get('latest_index_k_aud_per_mw_year', '?')} kAUD/MW/年**\n"
+                    )
+                    parts.append(
+                        f"- 滚动均值: {summary.get('avg_index_k_aud_per_mw_year', '?')} kAUD/MW/年"
+                        f"（偏离 {summary.get('latest_vs_avg_pct', '?')}%）\n"
+                    )
+                    parts.append("- 口径: derived 理想放电，FCAS/容量不含，不与第三方指数绝对值对比\n")
+                if data.get("headline"):
+                    parts.append(f"- {data['headline']}\n")
             elif r.tool_name == "fcas_analysis":
                 summary = data.get("summary", {})
                 if summary:

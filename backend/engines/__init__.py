@@ -7,6 +7,10 @@ from .financial_model import FinancialModel
 from .exceptions import DimensionMismatchError
 from .price_analysis_engine import PriceAnalysisEngine, PriceAnalysisResult, AnalysisMetadata
 from .revenue_analysis_engine import RevenueAnalysisEngine, RevenueAnalysisResult
+from .benchmark_engine import (
+    build_nem_bess_benchmark,
+    build_nem_bess_region_compare,
+)
 from .degradation_model import DegradationModel
 from .bess_backtest_v2 import (
     BacktestConstraints,
@@ -28,6 +32,8 @@ __all__ = [
     "AnalysisMetadata",
     "RevenueAnalysisEngine",
     "RevenueAnalysisResult",
+    "build_nem_bess_benchmark",
+    "build_nem_bess_region_compare",
     "DegradationModel",
     "BacktestConstraints",
     "BacktestV2Params",

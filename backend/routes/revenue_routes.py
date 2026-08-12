@@ -310,6 +310,16 @@ def get_revenue_analysis(
             response = _attach_regime_layer(
                 response, market="WEM" if region == "WEM" else "NEM", region=region
             )
+            # Phase 2（2026-08-12）：FCAS 收益压缩风险标签（best-effort，失败降级）
+            try:
+                from services.fcas_compression import get_fcas_compression_label
+
+                response["fcas_compression"] = get_fcas_compression_label()
+            except Exception:  # noqa: BLE001
+                response["fcas_compression"] = {
+                    "available": False,
+                    "risk_label": "fcas_revenue_compression",
+                }
             return _store_response_cache(
                 REVENUE_ANALYSIS_RESPONSE_CACHE_SCOPE, cache_payload,
                 response, DEFAULT_RESPONSE_CACHE_TTL_SECONDS,

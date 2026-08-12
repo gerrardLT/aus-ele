@@ -40,6 +40,7 @@ ROUTE_MODULES = [
     "routes.outlook_routes",
     "routes.cost_structure_routes",
     "routes.forward_price_routes",
+    "routes.benchmark_routes",
     "routes.narrative_routes",
     "routes.agent_routes",
     "routes.anomaly_routes",

@@ -485,6 +485,16 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
             )
             response = _enrich_with_financial_accuracy_modules(response, params, base_result)
             response = _enrich_with_degradation_model(response, params)
+            # Phase 2（2026-08-12）：FCAS 收益压缩风险标签（best-effort，失败降级）
+            try:
+                from services.fcas_compression import get_fcas_compression_label
+
+                response["fcas_compression"] = get_fcas_compression_label()
+            except Exception:  # noqa: BLE001
+                response["fcas_compression"] = {
+                    "available": False,
+                    "risk_label": "fcas_revenue_compression",
+                }
             inflight_entry["response"] = response
             return response
         except Exception as exc:

@@ -30,6 +30,8 @@ TOOL_PROFILES = {
     "stage2_revenue": [
         "spike_profit_analysis", "peak_analysis", "fcas_analysis",
         "price_trend_analysis",
+        # Phase 1（2026-08-12）：收益基准锚定，回答“市场基准收益多少”类问题
+        "bess_revenue_benchmark",
         # G06 教训（扩样本 A/B 2026-08-07）：收入类问题需附风险边界，
         # 缺失崩塌/饱和工具时实验组回答被 judge 判负；对齐 fcas_opportunity 模板
         "fcas_collapse_forecast", "saturation_check", "cannibalization_forecast",
@@ -51,6 +53,8 @@ TOOL_PROFILES = {
         "investment_analysis", "risk_stratification", "cross_validation",
         "narrative_attribution", "compare_regions", "scenario_simulation",
         "portfolio_analysis", "generate_report",
+        # Phase 1（2026-08-12）：投资测算需市场基准锚定对照
+        "bess_revenue_benchmark",
     ],
     "data_exploration": [
         "data_query", "timeseries_analysis", "export_data",
@@ -128,7 +132,7 @@ _ROUTING_RULES = [
     ]),
     ("stage2_revenue", [
         "fcas", "辅助服务", "ess", "价差套利", "收入结构", "尖峰利润",
-        "收入潜力", "套利收入",
+        "收入潜力", "套利收入", "基准收益", "收益基准", "benchmark",
     ]),
     ("stage1_screening", [
         "负电价", "负价", "价格趋势", "价格结构", "市场概览", "筛选",

@@ -1230,6 +1230,15 @@ function extractKpis(report) {
       if (km.stats.avg_price != null) kpis.push({ label: '均价', value: km.stats.avg_price, unit: 'AUD/MWh', fmt: (v) => v.toFixed(1), source: s.tool_name });
       if (km.stats.negative_ratio_pct != null) kpis.push({ label: '负价比例', value: km.stats.negative_ratio_pct, unit: '%', fmt: (v) => v.toFixed(1), source: s.tool_name });
     }
+    if (s.tool_name === 'bess_revenue_benchmark' && km.summary && km.summary.latest_index_k_aud_per_mw_year != null) {
+      kpis.push({
+        label: `基准收益${km.summary.latest_month ? ' ' + km.summary.latest_month : ''}`,
+        value: km.summary.latest_index_k_aud_per_mw_year,
+        unit: 'kAUD/MW/年',
+        fmt: (v) => v.toFixed(1),
+        source: s.tool_name,
+      });
+    }
     if (s.tool_name === 'market_screening' && Array.isArray(km.items) && km.items[0]) {
       const top = km.items[0];
       if (top.overall_score != null) kpis.push({ label: '最优区域评分', value: top.overall_score, unit: `(${top.label || ''})`, fmt: (v) => v.toFixed(1), source: s.tool_name });
