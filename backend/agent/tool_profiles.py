@@ -28,6 +28,8 @@ TOOL_PROFILES = {
         "timeseries_analysis", "market_pulse",
         # 规则知识库（2026-08-12）：常识/机制类问题的兜底入口
         "grid_knowledge_lookup",
+        # 知识库健康检查（2026-08-13）："有什么待维护"类问题
+        "knowledge_health_check",
     ],
     "stage2_revenue": [
         "spike_profit_analysis", "peak_analysis", "fcas_analysis",
@@ -151,7 +153,7 @@ _ROUTING_RULES = [
     ("stage1_screening", [
         "负电价", "负价", "价格趋势", "价格结构", "市场概览", "筛选",
         "充电策略", "什么是", "规则", "机制", "政策", "制度", "常识",
-        "大停电", "黑系统", "煤电退役", "历史上",
+        "大停电", "黑系统", "煤电退役", "历史上", "维护", "到期", "健康检查",
     ]),
 ]
 

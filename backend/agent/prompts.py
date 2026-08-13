@@ -168,6 +168,7 @@ TOOL_STAGE_LABELS = {
     "grid_knowledge_lookup": "电网规则知识检索",
     "market_event_lookup": "市场事件案例检索",
     "asset_pipeline_lookup": "资产管线档案检索",
+    "knowledge_health_check": "知识库健康检查",
     "saturation_check": "BESS 饱和检查",
     "cannibalization_forecast": "收入稀释预测",
     "fcas_collapse_forecast": "FCAS 崩塌预测",

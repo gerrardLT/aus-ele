@@ -1704,6 +1704,17 @@ def _exec_asset_pipeline_lookup(params: Dict[str, Any], ctx: AgentContext) -> Di
     return summarize_pipeline(region=region)
 
 
+def _exec_knowledge_health_check(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """知识库健康检查：回答"知识库有什么待维护"类问题。
+
+    运营节奏自动化（2026-08-13）：体检管线新鲜度/规则复核期/
+    benchmark 校准节奏/事件案例补录，返回状态与 SOP 指引。
+    """
+    from services.knowledge_health import build_health_report
+
+    return build_health_report()
+
+
 def build_tool_registry() -> ToolRegistry:
     """Build and populate the complete tool registry."""
     registry = ToolRegistry()
@@ -1920,6 +1931,21 @@ def build_tool_registry() -> ToolRegistry:
             stage="Stage 3 - Saturation & Competition",
         ),
         _exec_asset_pipeline_lookup,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="knowledge_health_check",
+            description=(
+                "Run the knowledge base health check: reports maintenance status of all "
+                "knowledge bases (pipeline freshness, rule review dates, benchmark calibration "
+                "cadence, event case backlog) as ok / due_soon / overdue / informational, each "
+                "with an SOP reference. Use when asked what knowledge maintenance is pending."
+            ),
+            parameters={"type": "object", "properties": {}},
+            stage="Global - Knowledge",
+        ),
+        _exec_knowledge_health_check,
     )
 
     # --- Stage 4: Investment Outlook ---

@@ -2208,6 +2208,46 @@ class JobWorkerService:
                 logger.error("Job worker loop error: %s", exc)
                 self.stop_event.wait(_job_worker_poll_seconds())
 
+def run_knowledge_health_check() -> dict:
+    """知识库健康周检（2026-08-13）：体检全部知识库，逾期项打日志告警。
+
+    best-effort：任何异常只记录不阻断；不自动修复（维护动作必须人审）。
+    参照 docs/deployment/运营节奏清单.md。
+    """
+    try:
+        from services.knowledge_health import build_health_report
+
+        report = build_health_report()
+        summary = report.get("summary", {})
+        logger.info(
+            "Knowledge health check: overdue=%s due_soon=%s ok=%s informational=%s",
+            summary.get("overdue", 0), summary.get("due_soon", 0),
+            summary.get("ok", 0), summary.get("informational", 0),
+        )
+        for item in report.get("items", []):
+            if item.get("status") == "overdue":
+                logger.warning(
+                    "知识库维护逾期 [%s] %s: %s（SOP: %s）",
+                    item.get("id"), item.get("name"), item.get("detail"), item.get("sop_ref"),
+                )
+            elif item.get("status") == "due_soon":
+                logger.info(
+                    "知识库维护临期 [%s] %s: %s",
+                    item.get("id"), item.get("name"), item.get("detail"),
+                )
+        try:
+            db.set_system_status(
+                "knowledge_health:last_report",
+                json.dumps({"generated_at": report.get("generated_at"), "summary": summary}, ensure_ascii=False),
+            )
+        except Exception:  # noqa: BLE001 — system_status 为可选增强
+            pass
+        return report
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        logger.warning("Knowledge health check failed: %s", exc)
+        return {"healthy": False, "error": str(exc)}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup actions
@@ -2247,6 +2287,21 @@ async def lifespan(app: FastAPI):
             max_instances=1,
             coalesce=True,
             misfire_grace_time=60 * 60,
+        )
+        # 知识库健康周检（2026-08-13）：默认每周一 02:30，env 可调
+        knowledge_health_dow = os.environ.get("AUS_ELE_KNOWLEDGE_HEALTH_DAY_OF_WEEK", "mon")
+        knowledge_health_hour = _scheduler_cron_hour("AUS_ELE_KNOWLEDGE_HEALTH_HOUR", 2)
+        knowledge_health_minute = _scheduler_cron_minute("AUS_ELE_KNOWLEDGE_HEALTH_MINUTE", 30)
+        scheduler.add_job(
+            run_knowledge_health_check,
+            'cron',
+            day_of_week=knowledge_health_dow,
+            hour=knowledge_health_hour,
+            minute=knowledge_health_minute,
+            id="knowledge-health-weekly",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=6 * 60 * 60,
         )
         scheduler.start()
         app.state.scheduler = scheduler

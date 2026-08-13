@@ -1545,6 +1545,17 @@ class AgentOrchestrator:
                         parts.append("- ⚠ 管线数据已超 120 天未更新，需走季度更新流程\n")
                 elif data.get("matches") is not None:
                     parts.append(f"- 项目检索命中 {data.get('total_after_filter', 0)} 个\n")
+            elif r.tool_name == "knowledge_health_check":
+                summary = data.get("summary", {})
+                if summary:
+                    parts.append(
+                        f"- 知识库体检：逾期 {summary.get('overdue', 0)} 项、"
+                        f"临期 {summary.get('due_soon', 0)} 项、正常 {summary.get('ok', 0)} 项\n"
+                    )
+                for it in data.get("items", []):
+                    if it.get("status") in ("overdue", "due_soon"):
+                        mark = "⚠逾期" if it["status"] == "overdue" else "临期"
+                        parts.append(f"- [{mark}] {it.get('name')}: {it.get('detail')}\n")
             elif r.tool_name == "fcas_analysis":
                 summary = data.get("summary", {})
                 if summary:
