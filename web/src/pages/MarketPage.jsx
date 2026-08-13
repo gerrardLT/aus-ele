@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import PageShell from '../components/PageShell';
 import DynamicStage from '../components/funnel/DynamicStage';
-import { getMarketConfig, buildSectionLinks, DEFAULT_BESS_PARAMS } from '../lib/marketConfig';
+import { getMarketConfig, DEFAULT_BESS_PARAMS } from '../lib/marketConfig';
 import { useFilters } from '../contexts/FilterContext';
 import { useStageSummaries } from '../hooks/useStageSummaries';
 import AnomalyBadge from '../components/AnomalyBadge';
@@ -83,20 +83,11 @@ export default function MarketPage({ market }) {
     setActiveTabIndex(0);
   }, [market]);
 
-  // Section links for sidebar (still useful for context)
-  const sectionLinks = buildSectionLinks(lang, config.id);
-
   // Tab click handler
   const handleTabClick = useCallback((index) => {
     setActiveTabIndex(index);
   }, []);
-
-  // Sidebar section click → switch to that tab
-  const handleSectionClick = useCallback((stageId) => {
-    const index = config.stages.findIndex(s => s.id === stageId);
-    if (index >= 0) setActiveTabIndex(index);
-  }, [config.stages]);
-
+  
   // Language toggle
   const handleLangToggle = useCallback(() => {
     setLang(prev => prev === 'zh' ? 'en' : 'zh');
@@ -142,14 +133,10 @@ export default function MarketPage({ market }) {
 
   // Current active stage
   const activeStage = config.stages[activeTabIndex];
-  const activeSection = activeStage?.id || '';
 
   return (
     <PageShell
       config={config}
-      sectionLinks={sectionLinks}
-      activeSection={activeSection}
-      onSectionClick={handleSectionClick}
       lang={lang}
       onLangToggle={handleLangToggle}
       years={marketYears}

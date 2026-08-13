@@ -14,9 +14,6 @@ import { Sun, Moon } from 'lucide-react';
 
 export default function PageShell({
   config,
-  sectionLinks,
-  activeSection,
-  onSectionClick,
   lang,
   onLangToggle,
   years,
@@ -30,9 +27,6 @@ export default function PageShell({
       <div className="mx-auto flex min-h-screen w-full gap-0 max-[1100px]:block">
         <SidebarNavigation
           activePage={activePage}
-          sectionLinks={sectionLinks}
-          activeSection={activeSection}
-          onSectionClick={onSectionClick}
           lang={lang}
         />
 

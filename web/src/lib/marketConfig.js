@@ -65,7 +65,7 @@ export const MARKET_CONFIGS = {
     stages: [
       {
         id: 'market-screening',
-        title: { zh: '市场筛选', en: 'Market Screening' },
+        title: { zh: '市场现状', en: 'Market Status' },
         coreQuestion: { zh: '哪个区域最值得深入分析？', en: 'Which region deserves deeper analysis?' },
         modules: [
           { component: 'PriceChart', dataDependencies: ['/api/price-trend'], loadPriority: 1, enabled: true },
@@ -76,7 +76,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'revenue-deep-dive',
-        title: { zh: '收入深潜', en: 'Revenue Deep Dive' },
+        title: { zh: '收益分析', en: 'Revenue Analysis' },
         coreQuestion: { zh: '收入来源的结构和集中度如何？', en: "What's the revenue structure and concentration?" },
         modules: [
           { component: 'SpikeProfitAnalysis', dataDependencies: ['/api/v1/nem/spike-profit'], loadPriority: 1, enabled: true },
@@ -87,7 +87,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'saturation-competition',
-        title: { zh: '饱和与竞争', en: 'Saturation & Competition' },
+        title: { zh: '竞争格局', en: 'Competitive Landscape' },
         coreQuestion: { zh: '市场饱和风险有多大？', en: 'How significant is market saturation risk?' },
         modules: [
           { component: 'SaturationTracker', dataDependencies: ['/api/v1/saturation'], loadPriority: 1, enabled: true },
@@ -95,7 +95,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'investment-outlook',
-        title: { zh: '投资前景情景', en: 'Investment Outlook Scenarios' },
+        title: { zh: '风险前瞻', en: 'Risk Outlook' },
         coreQuestion: { zh: '未来投资环境如何变化？', en: 'How will the investment landscape evolve?' },
         modules: [
           { component: 'ForwardSpreadCurve', dataDependencies: ['/api/v1/narrative/forward-spread'], loadPriority: 1, enabled: true },
@@ -109,7 +109,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'co-optimized-backtest',
-        title: { zh: '联合优化回测', en: 'Co-Optimized Backtest' },
+        title: { zh: '调度回测', en: 'Dispatch Backtest' },
         coreQuestion: { zh: '联合优化后的真实收入是多少？', en: "What's the real revenue after co-optimization?" },
         modules: [
           { component: 'CoOptimizedBacktest', dataDependencies: ['/api/v1/co-optimization/backtest'], loadPriority: 1, enabled: true },
@@ -117,7 +117,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'financial-modeling',
-        title: { zh: '财务建模', en: 'Financial Modeling' },
+        title: { zh: '投资回报', en: 'Investment Return' },
         coreQuestion: { zh: '项目财务指标是否达标？', en: 'Do financial metrics meet thresholds?' },
         modules: [
           { component: 'InvestmentAnalysis', dataDependencies: ['/api/investment-analysis'], loadPriority: 1, enabled: true },
@@ -131,7 +131,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'investment-decision',
-        title: { zh: '投资决策', en: 'Investment Decision' },
+        title: { zh: '决策建议', en: 'Decision Recommendation' },
         coreQuestion: { zh: '最终投资建议是什么？', en: "What's the final investment recommendation?" },
         modules: [
           { component: 'DecisionTerminal', dataDependencies: ['/api/investment-analysis'], loadPriority: 1, enabled: true },
@@ -161,7 +161,7 @@ export const MARKET_CONFIGS = {
     stages: [
       {
         id: 'market-screening',
-        title: { zh: '市场筛选', en: 'Market Screening' },
+        title: { zh: '市场现状', en: 'Market Status' },
         coreQuestion: { zh: 'WEM 市场整体机会如何？', en: "What's the overall WEM market opportunity?" },
         modules: [
           { component: 'PriceChart', dataDependencies: ['/api/price-trend'], loadPriority: 1, enabled: true },
@@ -172,7 +172,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'revenue-deep-dive',
-        title: { zh: '收入深潜', en: 'Revenue Deep Dive' },
+        title: { zh: '收益分析', en: 'Revenue Analysis' },
         coreQuestion: { zh: '容量信用和能量市场收入潜力？', en: 'Capacity credit and energy market revenue potential?' },
         modules: [
           { component: 'CapacityCreditsAnalysis', dataDependencies: ['/api/v1/wem/capacity-credits'], loadPriority: 1, enabled: true },
@@ -182,7 +182,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'saturation-competition',
-        title: { zh: '饱和与竞争', en: 'Saturation & Competition' },
+        title: { zh: '竞争格局', en: 'Competitive Landscape' },
         coreQuestion: { zh: 'WEM 饱和风险和容量信用压力？', en: 'WEM saturation risk and capacity credit pressure?' },
         modules: [
           { component: 'SaturationTracker', dataDependencies: ['/api/v1/saturation'], loadPriority: 1, enabled: true },
@@ -190,7 +190,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'co-optimized-backtest',
-        title: { zh: '联合优化回测', en: 'Co-Optimized Backtest' },
+        title: { zh: '调度回测', en: 'Dispatch Backtest' },
         coreQuestion: { zh: '联合优化后的 WEM 收入？', en: 'WEM revenue after co-optimization?' },
         modules: [
           { component: 'CoOptimizedBacktest', dataDependencies: ['/api/v1/co-optimization/backtest'], loadPriority: 1, enabled: true },
@@ -198,7 +198,7 @@ export const MARKET_CONFIGS = {
       },
       {
         id: 'investment-decision',
-        title: { zh: '投资决策', en: 'Investment Decision' },
+        title: { zh: '决策建议', en: 'Decision Recommendation' },
         coreQuestion: { zh: 'WEM 投资是否可行？', en: 'Is WEM investment viable?' },
         modules: [
           { component: 'InvestmentAnalysis', dataDependencies: ['/api/investment-analysis'], loadPriority: 1, enabled: true },
@@ -275,13 +275,6 @@ export const DEFAULT_BESS_PARAMS = {
 };
 
 // --- Helper Functions ---
-
-export function buildSectionLinks(lang, marketId) {
-  const stages = marketId ? getStageDefinitions(marketId) : STAGE_DEFINITIONS;
-  return [
-    ...stages.map(s => ({ id: s.id, label: s.title[lang] || s.title.zh })),
-  ];
-}
 
 /**
  * getStageById(marketId, stageId) — 按 ID 查找阶段定义

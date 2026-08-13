@@ -353,6 +353,11 @@ export default function FinlandPage() {
               <span>{copy.meta.scope}</span>
               <span className="h-1 w-1 rounded-full bg-[var(--color-muted)]/60" />
               <span>{loading ? copy.status.loading : error ? copy.status.error : copy.status.ready}</span>
+              {/* Finland 合并入口（2026-08-13）：侧边栏单入口指向本页，页内导航至 Fingrid 原始数据 */}
+              <span className="h-1 w-1 rounded-full bg-[var(--color-muted)]/60" />
+              <a href="/fingrid" className="underline decoration-dotted underline-offset-2 hover:text-[var(--color-text)]">
+                {lang === 'zh' ? 'Fingrid 原始数据 →' : 'Fingrid Raw Data →'}
+              </a>
             </>
           )}
         />

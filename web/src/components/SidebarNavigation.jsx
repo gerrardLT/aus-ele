@@ -1,18 +1,14 @@
 import { motion, useReducedMotion } from 'framer-motion';
 
 /**
- * SidebarNavigation — 侧边栏导航
+ * SidebarNavigation — 侧边栏导航（2026-08-13 重排）
  *
- * 结构清晰的三层导航：
- * 1. 市场切换（NEM / WEM）— 当前市场高亮，非当前弱化
- * 2. 阶段导航 — 仅显示当前市场的分析阶段，带编号
- * 3. 其他入口 — 研究工具 + 系统
+ * 页面级导航，四组：市场 / 智能分析 / 其他市场 / 系统。
+ * 阶段切换由页面顶部 Tab 负责（不再在侧边栏重复展示）；
+ * Finland 合并为单入口（/finland），页内导航至 Fingrid 原始数据。
  */
 export default function SidebarNavigation({
   activePage,
-  sectionLinks = [],
-  activeSection,
-  onSectionClick,
   lang = 'zh',
 }) {
   const prefersReducedMotion = useReducedMotion();
@@ -22,11 +18,20 @@ export default function SidebarNavigation({
     { id: 'wem', label: 'WEM', sub: lang === 'zh' ? '西澳电力市场' : 'Wholesale Electricity Market', path: '/wem' },
   ];
 
-  const otherLinks = [
-    { id: 'agent', label: lang === 'zh' ? 'AI 编排分析' : 'AI Agent', path: '/agent' },
-    { id: 'finland', label: lang === 'zh' ? 'Finland 市场' : 'Finland', path: '/finland' },
-    { id: 'fingrid', label: 'Fingrid', path: '/fingrid' },
-    { id: 'developer', label: lang === 'zh' ? '开发者门户' : 'Developer', path: '/developer' },
+  // 四组结构：市场 / 智能分析 / 其他市场 / 系统（2026-08-13 用户确认）
+  const groups = [
+    {
+      title: lang === 'zh' ? '智能分析' : 'INTELLIGENCE',
+      links: [{ id: 'agent', label: lang === 'zh' ? 'AI 编排分析' : 'AI Agent', path: '/agent' }],
+    },
+    {
+      title: lang === 'zh' ? '其他市场' : 'OTHER MARKETS',
+      links: [{ id: 'finland', label: lang === 'zh' ? 'Finland 市场' : 'Finland', path: '/finland' }],
+    },
+    {
+      title: lang === 'zh' ? '系统' : 'SYSTEM',
+      links: [{ id: 'developer', label: lang === 'zh' ? '开发者门户' : 'Developer', path: '/developer' }],
+    },
   ];
 
   return (
@@ -72,64 +77,33 @@ export default function SidebarNavigation({
         </div>
       </div>
 
-      {/* ─── 阶段导航（当前市场） ─── */}
-      {sectionLinks.length > 0 && (
-        <div className="relative mt-4 border-t border-white/8 pt-3">
+      {/* ─── 其他分组（智能分析 / 其他市场 / 系统） ─── */}
+      {groups.map((group) => (
+        <div key={group.title} className="relative mt-4 border-t border-white/8 pt-3">
           <div className="px-1 mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
-            {lang === 'zh' ? '分析阶段' : 'STAGES'}
+            {group.title}
           </div>
           <div className="grid gap-0.5">
-            {sectionLinks.map((item, index) => {
-              const isActive = activeSection === item.id;
+            {group.links.map((item) => {
+              const isActive = activePage === item.id;
               return (
-                <motion.button
+                <motion.a
                   key={item.id}
-                  onClick={() => onSectionClick(item.id)}
+                  href={item.path}
                   whileHover={prefersReducedMotion ? undefined : { x: 2 }}
-                  className={`relative flex items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] transition-all ${
+                  className={`flex items-center rounded-md px-3 py-1.5 text-xs transition-all ${
                     isActive
                       ? 'bg-white/8 text-white font-medium'
-                      : 'text-white/60 hover:text-white hover:bg-white/4'
+                      : 'text-white/60 hover:text-white/70 hover:bg-white/4'
                   }`}
                 >
-                  <span className={`w-4 h-4 flex items-center justify-center rounded text-[10px] font-bold ${
-                    isActive ? 'bg-[#8AB7FF] text-[#13161A]' : 'bg-white/10 text-white/60'
-                  }`}>
-                    {index + 1}
-                  </span>
-                  <span className="truncate">{item.label}</span>
-                </motion.button>
+                  {item.label}
+                </motion.a>
               );
             })}
           </div>
         </div>
-      )}
-
-      {/* ─── 其他入口 ─── */}
-      <div className="relative mt-4 border-t border-white/8 pt-3">
-        <div className="px-1 mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
-          {lang === 'zh' ? '其他' : 'OTHER'}
-        </div>
-        <div className="grid gap-0.5">
-          {otherLinks.map((item) => {
-            const isActive = activePage === item.id;
-            return (
-              <motion.a
-                key={item.id}
-                href={item.path}
-                whileHover={prefersReducedMotion ? undefined : { x: 2 }}
-                className={`flex items-center rounded-md px-3 py-1.5 text-xs transition-all ${
-                  isActive
-                    ? 'bg-white/8 text-white font-medium'
-                    : 'text-white/60 hover:text-white/70 hover:bg-white/4'
-                }`}
-              >
-                {item.label}
-              </motion.a>
-            );
-          })}
-        </div>
-      </div>
+      ))}
     </aside>
   );
 }
