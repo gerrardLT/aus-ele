@@ -97,6 +97,11 @@ def _tool_results_with_price(price: float = 100.0):
 
 
 class SynthesizerInjectionTests(unittest.TestCase):
+    def tearDown(self):
+        # asyncio.run() 结束后会把线程当前循环置空，会污染后续旧式
+        # get_event_loop() 用例（仓内惯例，见 test_agent_golden_trajectories）
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     def test_repair_feedback_appended_to_prompt(self):
         from agent.synthesizer import synthesize_report
 
@@ -130,6 +135,10 @@ _GOOD_REPORT = "均价 100 AUD/MWh，负价比例 5%。"
 
 
 class OrchestratorRepairLoopTests(unittest.TestCase):
+    def tearDown(self):
+        # 同上：避免 asyncio.run() 置空事件循环污染后续测试
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     def _make_orchestrator(self, responses):
         from agent.orchestrator import AgentOrchestrator
         from agent.tools import get_tool_registry
@@ -155,6 +164,15 @@ class OrchestratorRepairLoopTests(unittest.TestCase):
         )
         self.assertFalse(repair_info["attempted"])
         self.assertIn("均价 100", full)
+
+    def test_repair_disabled_via_enable_repair_flag(self):
+        # react_stream 路径：回答已流式输出，重合成无法改写，关闭修复环
+        orch = self._make_orchestrator([_BAD_REPORT])
+        _, _, _, _, repair_info = asyncio.run(
+            orch._synthesize("test", _tool_results_with_price(), AgentContext(),
+                             enable_repair=False)
+        )
+        self.assertFalse(repair_info["attempted"])
 
     def test_env_flag_disables_repair(self):
         orch = self._make_orchestrator([_BAD_REPORT])

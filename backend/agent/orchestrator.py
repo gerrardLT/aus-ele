@@ -678,8 +678,10 @@ class AgentOrchestrator:
         # Build the structured report card (synthesizer may call the LLM).
         yield {"type": "status", "message": "正在生成结构化报告..."}
         try:
+            # enable_repair=False：react_stream 的回答已流式输出，重合成无法改写
+            # 实际展示内容，关闭修复环避免白耗一次 LLM 合成（代码审查 2026-08-13）
             executive_summary, recommendation, confidence, full_analysis, grounding_repair = await self._synthesize(
-                query, tool_results, context
+                query, tool_results, context, enable_repair=False
             )
         except Exception as exc:  # noqa: BLE001 - synthesis is best-effort
             logger.warning("Synthesis failed in stream: %s", exc)
@@ -1270,6 +1272,7 @@ class AgentOrchestrator:
         query: str,
         tool_results: List[ToolResult],
         context: AgentContext,
+        enable_repair: bool = True,
     ) -> tuple[str, str, ConfidenceLevel, str, dict]:
         """Synthesize tool results into executive summary and recommendation.
 
@@ -1277,6 +1280,8 @@ class AgentOrchestrator:
         首次合成后做数值溯源检查，超阈值时带修复指令重合成一次，
         取两次中 ungrounded_ratio 更低者（绝不劣化）。修复环自身异常
         只降级不阻断；规则合成路径（LLM 不可用）不触发。
+        enable_repair=False：回答已流式输出无法改写的路径（react_stream），
+        关闭修复环避免白耗一次合成（代码审查 2026-08-13）。
 
         Returns:
             Tuple of (executive_summary, recommendation, confidence_level,
@@ -1300,7 +1305,11 @@ class AgentOrchestrator:
                 should_repair,
             )
 
-            if os.environ.get("AUS_ELE_AGENT_GROUNDING_REPAIR", "1") not in ("0", "false", ""):
+            repair_enabled = (
+                enable_repair
+                and os.environ.get("AUS_ELE_AGENT_GROUNDING_REPAIR", "1") not in ("0", "false", "")
+            )
+            if repair_enabled:
                 check = check_numeric_grounding(result[3] or "", tool_results)
                 if should_repair(check) and self.llm.is_available():
                     feedback = build_repair_feedback(check["ungrounded_samples"])

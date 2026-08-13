@@ -2240,8 +2240,8 @@ def run_knowledge_health_check() -> dict:
                 "knowledge_health:last_report",
                 json.dumps({"generated_at": report.get("generated_at"), "summary": summary}, ensure_ascii=False),
             )
-        except Exception:  # noqa: BLE001 — system_status 为可选增强
-            pass
+        except Exception as exc:  # noqa: BLE001 — system_status 为可选增强，但留日志线索
+            logger.debug("Failed to persist knowledge health status: %s", exc)
         return report
     except Exception as exc:  # noqa: BLE001 — best-effort
         logger.warning("Knowledge health check failed: %s", exc)
@@ -2289,7 +2289,14 @@ async def lifespan(app: FastAPI):
             misfire_grace_time=60 * 60,
         )
         # 知识库健康周检（2026-08-13）：默认每周一 02:30，env 可调
-        knowledge_health_dow = os.environ.get("AUS_ELE_KNOWLEDGE_HEALTH_DAY_OF_WEEK", "mon")
+        _DOW_VALID = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+        knowledge_health_dow = os.environ.get("AUS_ELE_KNOWLEDGE_HEALTH_DAY_OF_WEEK", "mon").strip().lower()[:3]
+        if knowledge_health_dow not in _DOW_VALID:
+            logger.warning(
+                "Invalid AUS_ELE_KNOWLEDGE_HEALTH_DAY_OF_WEEK, fallback to 'mon': %r",
+                os.environ.get("AUS_ELE_KNOWLEDGE_HEALTH_DAY_OF_WEEK"),
+            )
+            knowledge_health_dow = "mon"
         knowledge_health_hour = _scheduler_cron_hour("AUS_ELE_KNOWLEDGE_HEALTH_HOUR", 2)
         knowledge_health_minute = _scheduler_cron_minute("AUS_ELE_KNOWLEDGE_HEALTH_MINUTE", 30)
         scheduler.add_job(
