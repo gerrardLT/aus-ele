@@ -21,6 +21,8 @@ export default function PriceChartModule({ config, lang = 'zh' }) {
 
   const region = filters.region;
   const year = filters.year;
+  const quarter = filters.quarter;
+  const dayType = filters.dayType;
   const t = (translations[lang] || translations.zh).price_chart;
 
   useEffect(() => {
@@ -31,13 +33,16 @@ export default function PriceChartModule({ config, lang = 'zh' }) {
       region,
       interval_minutes: String(config?.settlementIntervalMinutes || 5),
     });
+    // 修复（2026-08-13）：季度/日类型筛选此前未传入，图表不随筛选变化
+    if (quarter && quarter !== 'ALL') params.set('quarter', quarter);
+    if (dayType && dayType !== 'ALL') params.set('day_type', dayType);
     fetchJson(`${API_BASE}/price-trend?${params}`)
       .then((res) => {
         setChartData(res);
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [region, year, config?.settlementIntervalMinutes]);
+  }, [region, year, quarter, dayType, config?.settlementIntervalMinutes]);
 
   if (loading) {
     return <div className="h-64 flex items-center justify-center text-[var(--color-muted)] font-serif">{lang === 'zh' ? '加载价格数据...' : 'Loading price data...'}</div>;
