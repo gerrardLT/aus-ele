@@ -15,7 +15,30 @@
     "default_floor_aud_per_mw_year": 75000,
     "region_overrides": {},
     "status": "illustrative_placeholder",
-    "note": "中标 floor 非公开，此值为量级示意；拿到实际投标结果后替换并移除 placeholder 状态"
+    "note": "中标 floor 非公开，此值为量级示意；拿到实际投标结果后替换并移除 placeholder 状态",
+    "acquisition_channels": {
+      "conclusion": "逐项目中标 floor 为 commercial-in-confidence，官方不公开（2026-08-13 四轮调研核实）；合约结构参数公开；可用以下五条替代渠道校准",
+      "contract_structure_public": {
+        "shortfall_payment_rate": 0.9,
+        "upside_share_rate": 0.5,
+        "annual_payment_cap": "投标变量（逐年可变，示例 $15M）",
+        "max_support_term_years": 15,
+        "source": "Baringa CIS storage tenders 分析 + ASL tender guidelines + WEM CIS design paper"
+      },
+      "channels": [
+        {"id": "official_project_lists", "what": "中标项目清单（名称/容量/时长/开发商，无 floor 值）", "where": "DCCEEW closed-cis-tenders 页 + asl.org.au 各 tender 页 + 部长媒体通稿", "cadence": "每轮开标后"},
+        {"id": "baringa_subsidy_analysis", "what": "竞争烈度与补贴水平模拟分析（第三方最接近 floor 量级的公开估算）", "where": "Baringa CIS Tender 3 report 等系列（部分付费）", "cadence": "主要轮次后"},
+        {"id": "budget_docs", "what": "CIS 财政承诺总量与中标容量汇总（无单价）", "where": "Budget Paper No.1 Statement 9（budget.gov.au）", "cadence": "年度/半年"},
+        {"id": "foi_parliament", "what": "参议院质询/FOI 申请可能迫使披露汇总值（未验证，概率渠道）", "where": "Senate estimates / FOI", "cadence": "机会驱动"},
+        {"id": "own_bidding", "what": "若自行参与 CIS 投标，投标流程中可获得市场指引（最直接）", "where": "ASL 投标流程", "cadence": "投标时"}
+      ],
+      "sources": [
+        "https://www.dcceew.gov.au/energy/renewable/capacity-investment-scheme/closed-cis-tenders",
+        "https://www.baringa.com/en/insights/low-carbon-capital/australia-cis-storage-tenders/",
+        "https://budget.gov.au/content/bp1/download/bp1_bs-9.pdf",
+        "https://asl.org.au/tenders/cis-tender-1-generation-nem"
+      ]
+    }
   },
   "wem_brcp": {
     "mechanism": "ERA Benchmark Reserve Capacity Price，按新进入者基准资产年度定价，提前约 2 年确定（T 年定价适用于 T+2 容量年）",

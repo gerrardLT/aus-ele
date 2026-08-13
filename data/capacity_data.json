@@ -370,7 +370,7 @@
       "to_region": "NSW1",
       "capacity_mw": 800,
       "expected_date": "2026-12-01",
-      "convergence_factor": 0.20,
+      "convergence_factor": 0.2,
       "confidence": "confirmed",
       "description": "SA-NSW interconnector via Broken Hill and Wagga Wagga"
     },
@@ -380,7 +380,7 @@
       "to_region": "VIC1",
       "capacity_mw": 1500,
       "expected_date": "2030-01-01",
-      "convergence_factor": 0.10,
+      "convergence_factor": 0.1,
       "confidence": "announced",
       "description": "Second Bass Strait interconnector linking Tasmania to Victoria"
     },
@@ -394,5 +394,47 @@
       "confidence": "speculated",
       "description": "Enhanced QLD-NSW transfer capacity for renewable energy export"
     }
-  ]
+  ],
+  "market_pipeline_anchors": {
+    "updated_at": "2026-08-13",
+    "source": "2026-08-12 竞品调研（AEMO 官方新闻稿/新闻汇总）",
+    "anchors": [
+      {
+        "metric": "nem_bess_pipeline_gw",
+        "value": 67.3,
+        "as_of": "2026-Q1",
+        "note": "NEM 电池管线总量，同比 +33%（50.5GW@2025Q1）",
+        "source": "AEMO Q1 2026 connections pipeline 报道"
+      },
+      {
+        "metric": "nem_bess_pipeline_alt_gw",
+        "value": 33.2,
+        "as_of": "2026-Q1",
+        "note": "另一口径（在建+部分状态）同比 +62%",
+        "source": "OtterGrid 引 AEMO Q1 2026"
+      },
+      {
+        "metric": "nem_connection_approvals_gw",
+        "value": 1.4,
+        "as_of": "2026-03 季度",
+        "note": "8 项目获申请批准",
+        "source": "AEMO media release"
+      },
+      {
+        "metric": "nem_registrations_gw",
+        "value": 1.5,
+        "as_of": "2026-03 季度",
+        "note": "8 项目完成注册",
+        "source": "AEMO media release"
+      },
+      {
+        "metric": "household_batteries_count",
+        "value": 600000,
+        "as_of": "2026-06",
+        "note": "户用电池约 60 万台（AEMO ISP）",
+        "source": "ABC 引 AEMO 2026 ISP"
+      }
+    ],
+    "caveat": "各锚点口径不同（管线/在建/申请），引用时必须带 as_of 与口径说明"
+  }
 }

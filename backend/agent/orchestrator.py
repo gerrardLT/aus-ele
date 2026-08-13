@@ -1533,6 +1533,18 @@ class AgentOrchestrator:
                         )
                 else:
                     parts.append("- 案例库未命中相关事件\n")
+            elif r.tool_name == "asset_pipeline_lookup":
+                if data.get("by_status"):
+                    parts.append(
+                        f"- 管线汇总({data.get('region', 'ALL')})：活跃供给 "
+                        f"**{data.get('active_supply_mw', '?')} MW**"
+                        f"（registered/committed/construction）\n"
+                    )
+                    fresh = data.get("freshness", {})
+                    if fresh.get("stale"):
+                        parts.append("- ⚠ 管线数据已超 120 天未更新，需走季度更新流程\n")
+                elif data.get("matches") is not None:
+                    parts.append(f"- 项目检索命中 {data.get('total_after_filter', 0)} 个\n")
             elif r.tool_name == "fcas_analysis":
                 summary = data.get("summary", {})
                 if summary:

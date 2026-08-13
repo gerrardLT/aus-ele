@@ -1684,6 +1684,26 @@ def _exec_market_event_lookup(params: Dict[str, Any], ctx: AgentContext) -> Dict
     )
 
 
+def _exec_asset_pipeline_lookup(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """检索资产与管线知识库（项目级档案 + 市场级管线锚点）。
+
+    管线知识库（2026-08-13）：饱和/蚕食/崩塌判断的供给端事实基础，
+    支持区域汇总与项目级检索；数据陈旧时自动提示季度更新。
+    """
+    from services.pipeline_knowledge import search_projects, summarize_pipeline
+
+    region = params.get("region")
+    mode = params.get("mode", "summary")
+    if mode == "projects":
+        return search_projects(
+            region=region,
+            status=params.get("status"),
+            name_contains=params.get("name_contains"),
+            limit=int(params.get("limit", 20)),
+        )
+    return summarize_pipeline(region=region)
+
+
 def build_tool_registry() -> ToolRegistry:
     """Build and populate the complete tool registry."""
     registry = ToolRegistry()
@@ -1874,6 +1894,32 @@ def build_tool_registry() -> ToolRegistry:
             stage="Stage 3 - Saturation & Competition",
         ),
         _exec_saturation_check,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="asset_pipeline_lookup",
+            description=(
+                "Look up the BESS asset & pipeline knowledge base: region-level pipeline "
+                "summary by status (registered/committed/construction/planning, active supply MW) "
+                "plus market-level AEMO pipeline anchors, or project-level search "
+                "(name/region/status). Use for saturation, cannibalization and competition "
+                "reasoning. Note: project archive is a maintained sample, market totals come "
+                "from official anchors — do not mix the two calibers."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "description": "'summary' (default, region aggregation + market anchors) or 'projects' (project-level search)"},
+                    "region": {"type": "string", "description": "Optional region filter (NSW1, QLD1, VIC1, SA1, TAS1, WEM)"},
+                    "status": {"type": "string", "description": "projects mode only: status filter (registered, committed, construction, planning)"},
+                    "name_contains": {"type": "string", "description": "projects mode only: project name substring"},
+                    "limit": {"type": "integer", "description": "projects mode only: max results (default 20)"},
+                },
+            },
+            stage="Stage 3 - Saturation & Competition",
+        ),
+        _exec_asset_pipeline_lookup,
     )
 
     # --- Stage 4: Investment Outlook ---

@@ -45,6 +45,7 @@ _KNOWN_TOOLS = [
     "portfolio_analysis", "generate_report", "multi_market_analysis",
     "data_query", "timeseries_analysis", "export_data", "generate_chart",
     "market_pulse", "read_artifact", "weather_correlation", "generation_analysis",
+    "asset_pipeline_lookup",
 ]
 
 

@@ -44,6 +44,8 @@ TOOL_PROFILES = {
     ],
     "stage3_saturation": [
         "saturation_check", "cannibalization_forecast",
+        # 管线知识库（2026-08-13）：饱和/竞争判断的供给端事实基础
+        "asset_pipeline_lookup",
     ],
     "stage4_outlook": [
         "cannibalization_forecast", "fcas_collapse_forecast",
@@ -53,6 +55,8 @@ TOOL_PROFILES = {
         "risk_stratification",
         # 事件案例库（2026-08-13）：崩塌/退役/负价等情景的历史案例支撑
         "market_event_lookup",
+        # 管线知识库（2026-08-13）：前瞻风险需管线供给事实
+        "asset_pipeline_lookup",
     ],
     "stage5_backtest": [
         "co_optimized_backtest", "price_trend_analysis", "fcas_analysis",
@@ -138,7 +142,7 @@ _ROUTING_RULES = [
     ]),
     ("stage4_outlook", [
         "风险评估", "蒙特卡洛", "崩塌", "蚕食", "饱和", "前瞻",
-        "商户风险",
+        "商户风险", "管线", "在建项目", "并网",
     ]),
     ("stage2_revenue", [
         "fcas", "辅助服务", "ess", "价差套利", "收入结构", "尖峰利润",
