@@ -998,7 +998,12 @@ def _exec_investment_analysis(params: Dict[str, Any], ctx: AgentContext) -> Dict
     # FCAS 基线：用目标年真实 reg FCAS 均价估算（WEM 无此列时为 0）
     # Phase 2（2026-08-12）：显式下调 FCAS 默认权重——调研事实：NEM BESS
     # 收入中 FCAS 占比已降至约 3%（同比 -43%），不再隐含全额计入。
-    FCAS_COMPRESSION_FACTOR = 0.3
+    # 压缩因子从假设登记库读取（fallback 0.3），变更历史见 data/assumptions_registry.json
+    from services.assumptions_registry import get_assumption_value
+
+    FCAS_COMPRESSION_FACTOR = float(
+        get_assumption_value("fcas_compression_factor", default=0.3)
+    )
     baseline_fcas = 0.0
     try:
         with db.get_connection() as conn:
@@ -1644,6 +1649,41 @@ def _exec_bess_revenue_benchmark(params: Dict[str, Any], ctx: AgentContext) -> D
     return result
 
 
+def _exec_grid_knowledge_lookup(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """检索电网规则与制度知识库（规则卡片 + 政策时间线）。
+
+    规则知识库（2026-08-12）：常识/规则类问题从 LLM 裸答升级为
+    知识库检索 + 来源引用（source_url / effective_date / confidence）。
+    """
+    from services.grid_knowledge import get_timeline, search_rules
+
+    query = (params.get("query") or "").strip() or None
+    market = params.get("market")
+    include_timeline = bool(params.get("timeline", False)) or not query
+
+    result = search_rules(query=query, market=market, limit=5)
+    if include_timeline:
+        result["timeline"] = get_timeline(10)
+    return result
+
+
+def _exec_market_event_lookup(params: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """检索市场事件案例库（重大事件因果卡片）。
+
+    事件案例库（2026-08-13）：归因叙事与"历史相似情景"引用从
+    即兴描述升级为案例库检索 + 来源引用。
+    """
+    from services.market_events import search_events
+
+    query = (params.get("query") or "").strip() or None
+    return search_events(
+        query=query,
+        market=params.get("market"),
+        category=params.get("category"),
+        limit=5,
+    )
+
+
 def build_tool_registry() -> ToolRegistry:
     """Build and populate the complete tool registry."""
     registry = ToolRegistry()
@@ -1694,6 +1734,52 @@ def build_tool_registry() -> ToolRegistry:
             stage="Stage 1 - Market Screening",
         ),
         _exec_regional_ranking,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="grid_knowledge_lookup",
+            description=(
+                "Search the curated grid rules & market-design knowledge base (NEM/WEM): "
+                "5-minute settlement, IESS registration, price bounds (MPC/CPT), FCAS services, "
+                "PFR obligation, WEM RCM/BRCP & ESS services, plus a policy timeline. Returns "
+                "rule cards with source_url, effective_date and confidence — cite them when "
+                "answering rule/mechanism/concept questions instead of relying on generic knowledge."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword query, e.g. 'FCAS', '价格上限', 'IESS 注册', '容量机制'"},
+                    "market": {"type": "string", "description": "Optional market filter (NEM or WEM)"},
+                    "timeline": {"type": "boolean", "description": "Include policy timeline (default true when query is empty)"},
+                },
+            },
+            stage="Global - Knowledge",
+        ),
+        _exec_grid_knowledge_lookup,
+    )
+
+    registry.register(
+        ToolDefinition(
+            name="market_event_lookup",
+            description=(
+                "Search the curated market event case library (NEM/WEM): SA black system 2016, "
+                "Liddell coal retirement, negative price wave 2025Q4-2026, FCAS collapse 2024-2026, "
+                "BESS revenue record lows 2026. Returns causal case cards (event -> price/FCAS/BESS "
+                "impact -> lessons) with source_url — cite them when explaining market moves or "
+                "reasoning about similar historical scenarios."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword query, e.g. '大停电', '负价', 'FCAS 崩塌', '收益新低', '煤电退役'"},
+                    "market": {"type": "string", "description": "Optional market filter (NEM or WEM)"},
+                    "category": {"type": "string", "description": "Optional category filter (black_system, coal_retirement, negative_price_wave, fcas_collapse, revenue_compression)"},
+                },
+            },
+            stage="Global - Knowledge",
+        ),
+        _exec_market_event_lookup,
     )
 
     # --- Stage 2: Revenue Deep Dive ---

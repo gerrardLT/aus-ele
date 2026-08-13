@@ -26,12 +26,18 @@ TOOL_PROFILES = {
     "stage1_screening": [
         "market_screening", "price_trend_analysis", "regional_ranking",
         "timeseries_analysis", "market_pulse",
+        # 规则知识库（2026-08-12）：常识/机制类问题的兜底入口
+        "grid_knowledge_lookup",
     ],
     "stage2_revenue": [
         "spike_profit_analysis", "peak_analysis", "fcas_analysis",
         "price_trend_analysis",
         # Phase 1（2026-08-12）：收益基准锚定，回答“市场基准收益多少”类问题
         "bess_revenue_benchmark",
+        # 规则知识库（2026-08-12）：FCAS/容量等机制解释带来源引用
+        "grid_knowledge_lookup",
+        # 事件案例库（2026-08-13）：收益异动归因的历史案例引用
+        "market_event_lookup",
         # G06 教训（扩样本 A/B 2026-08-07）：收入类问题需附风险边界，
         # 缺失崩塌/饱和工具时实验组回答被 judge 判负；对齐 fcas_opportunity 模板
         "fcas_collapse_forecast", "saturation_check", "cannibalization_forecast",
@@ -45,6 +51,8 @@ TOOL_PROFILES = {
         "forward_spread_projection", "saturation_check",
         # 覆盖审计（§10.4-2）：G04 风险评估需 risk_stratification，对齐 risk_assessment 模板
         "risk_stratification",
+        # 事件案例库（2026-08-13）：崩塌/退役/负价等情景的历史案例支撑
+        "market_event_lookup",
     ],
     "stage5_backtest": [
         "co_optimized_backtest", "price_trend_analysis", "fcas_analysis",
@@ -55,6 +63,8 @@ TOOL_PROFILES = {
         "portfolio_analysis", "generate_report",
         # Phase 1（2026-08-12）：投资测算需市场基准锚定对照
         "bess_revenue_benchmark",
+        # 规则知识库（2026-08-12）：CIS/PFR/注册等制度语境支撑投资结论
+        "grid_knowledge_lookup",
     ],
     "data_exploration": [
         "data_query", "timeseries_analysis", "export_data",
@@ -136,7 +146,8 @@ _ROUTING_RULES = [
     ]),
     ("stage1_screening", [
         "负电价", "负价", "价格趋势", "价格结构", "市场概览", "筛选",
-        "充电策略",
+        "充电策略", "什么是", "规则", "机制", "政策", "制度", "常识",
+        "大停电", "黑系统", "煤电退役", "历史上",
     ]),
 ]
 

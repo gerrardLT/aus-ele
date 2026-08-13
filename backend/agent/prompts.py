@@ -165,6 +165,8 @@ TOOL_STAGE_LABELS = {
     "peak_analysis": "峰谷价差分析",
     "fcas_analysis": "FCAS 辅助服务分析",
     "bess_revenue_benchmark": "BESS 收益基准指数",
+    "grid_knowledge_lookup": "电网规则知识检索",
+    "market_event_lookup": "市场事件案例检索",
     "saturation_check": "BESS 饱和检查",
     "cannibalization_forecast": "收入稀释预测",
     "fcas_collapse_forecast": "FCAS 崩塌预测",

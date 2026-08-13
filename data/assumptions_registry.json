@@ -1,0 +1,126 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "updated_at": "2026-08-12",
+    "purpose": "统一参数与假设登记库（Assumptions Registry）：记录系统内所有影响分析结论的关键假设，支撑可审计性与快速调参。",
+    "hard_rule": "参数变更必须同步更新本登记表并记录 modified_by / last_calibrated（AGENTS.md 硬性规则）",
+    "status_legend": {
+      "wired": "代码已接入登记表读取（fallback 到代码默认值）",
+      "audit_only": "登记先行，代码尚未接入（后续迁移）",
+      "pointer": "参数存放在独立配置文件中，此处仅做索引"
+    }
+  },
+  "assumptions": [
+    {
+      "id": "fcas_compression_factor",
+      "name": "FCAS 收益压缩因子",
+      "value": 0.3,
+      "unit": "multiplier（乘在 FCAS 基线收入上）",
+      "category": "revenue_model",
+      "status": "wired",
+      "consumed_by": ["backend/agent/tools.py::_exec_investment_analysis"],
+      "source": "2026-08-12 竞品调研：NEM BESS 收入中 FCAS 占比约 3%（同比 -43%），套利占约 97%",
+      "rationale": "FCAS 供需比恶化（10/10 服务 collapsed），不再隐含全额计入 FCAS 基线",
+      "boundary": "仅作用于 Agent 投资工具的 FCAS 基线下调；输出随 fcas_compression_factor 字段暴露",
+      "last_calibrated": "2026-08-12",
+      "modified_by": "agent-team"
+    },
+    {
+      "id": "benchmark_reference_battery",
+      "name": "Benchmark 参考电池参数",
+      "value": {
+        "power_mw": 100.0,
+        "energy_mwh": 200.0,
+        "round_trip_efficiency": 0.85
+      },
+      "unit": "MW / MWh / ratio",
+      "category": "benchmark",
+      "status": "wired",
+      "consumed_by": [
+        "backend/engines/benchmark_engine.py",
+        "backend/routes/benchmark_routes.py"
+      ],
+      "source": "与 Modo ME BESS AUS NEM Index 参考资产同量级的 2h 电网级储能",
+      "rationale": "统一基准口径，避免各端点各自假设",
+      "boundary": "仅用于 derived 基准指数；不用于投资测算",
+      "last_calibrated": "2026-08-12",
+      "modified_by": "agent-team"
+    },
+    {
+      "id": "merchant_risk_defaults",
+      "name": "蒙特卡洛商户风险默认参数",
+      "value": {
+        "round_trip_efficiency": 0.87,
+        "annual_debt_service_per_mw": 80000.0,
+        "n_simulations": 1000
+      },
+      "unit": "ratio / AUD/MW/年 / 次",
+      "category": "risk_model",
+      "status": "audit_only",
+      "consumed_by": ["backend/engines/merchant_risk_engine.py"],
+      "source": "约 $1.5M/MW capex、70% 债务、20 年期、~6% 利率的偿债近似",
+      "boundary": "银行性分析（DSCR/LLCR 覆盖）的默认偿债线",
+      "last_calibrated": "2026-08-12",
+      "modified_by": "agent-team"
+    },
+    {
+      "id": "cannibalization_base_revenues",
+      "name": "蚕食模型区域基础收入",
+      "value": "见 backend/engines/cannibalization_engine.py::DEFAULT_BASE_REVENUES（fallback 150,000 AUD/MW/年）",
+      "unit": "AUD/MW/年",
+      "category": "revenue_model",
+      "status": "audit_only",
+      "consumed_by": ["backend/engines/cannibalization_engine.py"],
+      "source": "AEMO 报告的历史 BESS 收入数据（建库时点）",
+      "boundary": "收入稀释预测的起点基线；2026 年实际收入已远低于该基线，解释预测结果时需注意",
+      "last_calibrated": "2026-08-12",
+      "modified_by": "agent-team"
+    },
+    {
+      "id": "investment_agent_baseline_params",
+      "name": "Agent 投资工具收入底座参数",
+      "value": {
+        "annual_cycles": 350.0,
+        "rte": 0.87,
+        "fcas_capacity_share": 0.3,
+        "fcas_hours_per_day": 6,
+        "fcas_enablement": 0.5
+      },
+      "unit": "次/年 / ratio / 比例 / 小时 / 概率",
+      "category": "revenue_model",
+      "status": "audit_only",
+      "consumed_by": ["backend/agent/tools.py::_exec_investment_analysis"],
+      "source": "简化窗口估算的工程近似（非回测）",
+      "boundary": "方向参考级；正式投资分析走 /api/investment 主管线",
+      "last_calibrated": "2026-08-12",
+      "modified_by": "agent-team"
+    },
+    {
+      "id": "network_fee_defaults",
+      "name": "区域网络费默认值",
+      "location": "data/regional_fee_defaults.json",
+      "category": "cost_model",
+      "status": "pointer",
+      "consumed_by": ["backend/network_fees.py", "backend/routes/revenue_routes.py"],
+      "source": "区域费默认配置（启动时加载，6 区域）",
+      "last_calibrated": "2026-08-12",
+      "modified_by": "agent-team"
+    },
+    {
+      "id": "contract_revenue_anchors",
+      "name": "合约型收益锚点（CIS floor / WEM BRCP）",
+      "location": "data/contract_revenue_defaults.json",
+      "category": "contract_revenue",
+      "status": "pointer",
+      "consumed_by": [
+        "backend/services/contract_revenue.py",
+        "backend/agent/tools.py（include_cis）",
+        "backend/routes/benchmark_routes.py（wem-brcp-anchor）"
+      ],
+      "source": "占位锚点：CIS floor 75,000 AUD/MW/年、BRCP 2026/27 = 11,500 AUD/MW/年",
+      "boundary": "示例值，待官方投标结果/容量年定价替换；输出一律带 caveat",
+      "last_calibrated": "2026-08-12",
+      "modified_by": "agent-team"
+    }
+  ]
+}

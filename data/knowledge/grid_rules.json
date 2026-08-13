@@ -1,0 +1,184 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "updated_at": "2026-08-12",
+    "purpose": "电网规则与制度知识库（机器可读）：供 Agent grid_knowledge_lookup 工具检索，回答规则/机制/常识类问题时带来源引用。",
+    "four_elements": "每条知识必含 source_url / effective_date / confidence / review_date",
+    "human_readable_version": "docs/_references/电网规则知识卡片-2026-08.md",
+    "maintenance": "季度评审 + 重大规则变更即时更新；confidence=medium 的条目优先复核"
+  },
+  "rules": [
+    {
+      "id": "nem_5_minute_settlement",
+      "market": "NEM",
+      "category": "market_design",
+      "title": "5 分钟结算（5MS）",
+      "summary": "NEM 自 2021-05-01 起交易结算间隔从 30 分钟缩短为 5 分钟，调度指令同为 5 分钟级。快速响应资产（BESS）的瞬时价差捕获价值制度化。",
+      "key_points": [
+        "结算与调度同频 5 分钟",
+        "BESS 可捕获 5 分钟级尖峰，套利价值提升",
+        "投标策略需适应 5 分钟滚动窗口"
+      ],
+      "affected_value_streams": ["energy_arbitrage"],
+      "affected_modules": ["benchmark_engine（库内价格可达 5 分钟粒度）", "agent 投资工具收入底座"],
+      "effective_date": "2021-05-01",
+      "source_url": "https://aemo.com.au/energy-systems/major-publications/five-minute-settlement",
+      "confidence": "high",
+      "review_date": "2026-11-12"
+    },
+    {
+      "id": "nem_iess_rule",
+      "market": "NEM",
+      "category": "registration",
+      "title": "IESS 集成储能系统规则",
+      "summary": "AEMC 将储能与双向资源制度化：2021-12-02 最终规则确立 IESS 注册类别；2025-03-04 发布实施最终规则，明确电网级电池、小型电池聚合商等新注册路径。",
+      "key_points": [
+        "储能不再按'发电机+负荷'粗糙叠加，而是独立注册类别",
+        "聚合商（VPP）路径制度化",
+        "注册模式决定可参与的价值流（bidirectional / PFR / FCAS）"
+      ],
+      "affected_value_streams": ["registration_access", "bidirectional"],
+      "affected_modules": ["investment 字段 resource_role / registration_mode / bidirectional_status"],
+      "effective_date": "2025-03-04",
+      "source_url": "https://www.aemc.gov.au/rule-changes/implementing-integrated-energy-storage-systems",
+      "confidence": "high",
+      "review_date": "2026-11-12"
+    },
+    {
+      "id": "nem_price_bounds",
+      "market": "NEM",
+      "category": "market_design",
+      "title": "价格上下限与 MPC/CPT",
+      "summary": "NEM 设市场价格下限（market floor，-$1,000/MWh）与上限（每年由 AEMO 调整，2025 年约 $17,500/MWh）。市场定价上限（MPC）与累积价格阈值（CPT）2025-02-27 更新 2025-26 年取值，触发行政定价机制。",
+      "key_points": [
+        "负价下限 -$1,000/MWh 是负价分析的结构边界",
+        "价格上限逐年调整，引用时必须标注年份",
+        "CPT 触发后进入行政定价，尖峰收入存在制度天花板"
+      ],
+      "affected_value_streams": ["energy_arbitrage", "spike_revenue"],
+      "affected_modules": ["spike_profit_analysis", "price_trend_analysis", "benchmark 口径说明"],
+      "effective_date": "2025-02-27",
+      "source_url": "https://www.aemc.gov.au/rule-changes/administered-pricing",
+      "confidence": "high",
+      "review_date": "2026-11-12"
+    },
+    {
+      "id": "nem_fcas_services",
+      "market": "NEM",
+      "category": "ancillary_services",
+      "title": "FCAS 服务集（10 服务）与压缩现状",
+      "summary": "NEM 提供 10 种 FCAS：raise/lower × 1sec/6sec/60sec/5min/reg，与能量协同出清。2024-2026 年 BESS 供给激增导致供需比恶化，系统 fcas_collapse_engine 判定 10/10 服务 collapsed，FCAS 占 BESS 收入已降至约 3%。",
+      "key_points": [
+        "reg 类（raisereg/lowerreg）为持续服务，其余为应急启用型",
+        "FCAS 收入 = 价格 × 容量 × 启用概率，启用率低决定天花板",
+        "2026 年现状：价格崩塌 + 占比 3%，投资测算须显式下调"
+      ],
+      "affected_value_streams": ["fcas"],
+      "affected_modules": ["fcas_analysis", "fcas_collapse_forecast", "investment_analysis（压缩因子 0.3）"],
+      "effective_date": "2026-08-12",
+      "source_url": "https://aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/ancillary-services",
+      "confidence": "high",
+      "review_date": "2026-11-12"
+    },
+    {
+      "id": "nem_pfr_obligation",
+      "market": "NEM",
+      "category": "obligation",
+      "title": "PFR 一次调频义务",
+      "summary": "AEMC 规则要求新接入的发电/储能类机组具备一次调频（PFR）能力并按要求启用；BESS 通过逆变器能力满足。PFR 是义务而非收益项，但影响注册与运行成本结构。",
+      "key_points": [
+        "PFR 属义务性质，不同于 FCAS 商业化收入",
+        "BESS 提供 PFR 的机会成本（容量占用）需纳入调度考量",
+        "具体适用范围以 AEMO 注册指南为准"
+      ],
+      "affected_value_streams": ["pfr_obligation"],
+      "affected_modules": ["investment 字段 pfr_obligation_flag"],
+      "effective_date": "2021-07-01",
+      "source_url": "https://www.aemc.gov.au/rule-changes/mandatory-provision-primary-frequency-response",
+      "confidence": "medium",
+      "review_date": "2026-09-12"
+    },
+    {
+      "id": "nem_operating_reserve",
+      "market": "NEM",
+      "category": "reform_in_progress",
+      "title": "Operating Reserve 规则改革（进行中）",
+      "summary": "AEMC 正在推进运行备用（Operating Reserve）规则变更，拟为系统备用充足性建立显式价值流。若落地，BESS 可能获得新的容量型收益桶——当前为进行中改革，不得计入基准测算。",
+      "key_points": [
+        "状态：改革进行中，参数未定",
+        "潜在影响：新增备用容量收益桶，与 FCAS 部分重叠",
+        "处理原则：只作情景提示，不入任何基线"
+      ],
+      "affected_value_streams": ["operating_reserve（潜在）"],
+      "affected_modules": ["forward_spread_projection 情景叙事"],
+      "effective_date": null,
+      "source_url": "https://www.aemc.gov.au/rule-changes/operating-reserve",
+      "confidence": "medium",
+      "review_date": "2026-09-12"
+    },
+    {
+      "id": "wem_realtime_coopt",
+      "market": "WEM",
+      "category": "market_design",
+      "title": "WEM 实时市场：能量 + ESS 协同优化",
+      "summary": "WEM 自 2023-10-01 运行实时市场（co-optimised Energy + ESS），5 分钟调度。WEM 不是 NEM 的轻量镜像：容量机制、ESS 服务集、信息边界均不同，产品逻辑必须分开。",
+      "key_points": [
+        "实时市场协同优化能量与 ESS 服务",
+        "Reference Trading Price 为 30 分钟结算价",
+        "WEM 收益口径不能硬套 NEM"
+      ],
+      "affected_value_streams": ["energy_arbitrage", "ess_services", "capacity"],
+      "affected_modules": ["wem_modules_routes", "MarketPage market=WEM"],
+      "effective_date": "2023-10-01",
+      "source_url": "https://www.aemo.com.au/energy-systems/electricity/wholesale-electricity-market-wem",
+      "confidence": "high",
+      "review_date": "2026-11-12"
+    },
+    {
+      "id": "wem_rcm_brcp",
+      "market": "WEM",
+      "category": "capacity_mechanism",
+      "title": "RCM 容量机制与 BRCP 基准容量价",
+      "summary": "WEM 通过 Reserve Capacity Mechanism 保障 SWIS 容量充足；ERA 每年以 200MW/1200MWh 电池为新进入者基准定价 BRCP。容量收益是 WEM BESS 的核心收益桶之一；Supplementary Capacity 连续多年触发。",
+      "key_points": [
+        "BRCP 是官方容量价锚点（系统已配置化：contract_revenue_defaults.json）",
+        "实际容量收益需折算认证容量信用，不可当全额收入",
+        "2026/27 容量缺口估计需新增 >1,460MW（多为公用级电池）"
+      ],
+      "affected_value_streams": ["capacity"],
+      "affected_modules": ["/api/benchmark/wem-brcp-anchor", "WEM 投资口径"],
+      "effective_date": "2026-08-12",
+      "source_url": "https://www.erawa.com.au/markets/wholesale-electricity-market/price-setting/benchmark-reserve-capacity-prices",
+      "confidence": "high",
+      "review_date": "2026-11-12"
+    },
+    {
+      "id": "wem_ess_services",
+      "market": "WEM",
+      "category": "ancillary_services",
+      "title": "WEM ESS 服务集（5 服务）",
+      "summary": "WEM 提供 5 种 ESS 服务：regulation raise/lower、contingency raise/lower、ROCOF。系统已接入真实数据（价格、可用量、在服量、需求量、缺口、出清量、封顶标记）。",
+      "key_points": [
+        "与 NEM 的 10 服务不同，WEM 为 5 服务集",
+        "约束紧张度（binding/near-binding）与缺口分析已入库",
+        "历史深度不及 NEM，长周期分析受限"
+      ],
+      "affected_value_streams": ["ess_services"],
+      "affected_modules": ["wem_ess_price 表", "FCAS/ESS 分析模块（preview→真实数据）"],
+      "effective_date": "2023-10-01",
+      "source_url": "https://www.aemo.com.au/energy-systems/electricity/wholesale-electricity-market-wem/wa-essential-system-services",
+      "confidence": "high",
+      "review_date": "2026-11-12"
+    }
+  ],
+  "timeline": [
+    {"date": "2021-05-01", "market": "NEM", "event": "5 分钟结算（5MS）生效", "impact": "BESS 快速响应价值制度化"},
+    {"date": "2021-12-02", "market": "NEM", "event": "AEMC IESS 最终规则", "impact": "储能/双向资源注册类别确立"},
+    {"date": "2023-10-01", "market": "WEM", "event": "WEM 实时市场启动（Energy+ESS 协同优化）", "impact": "WEM 与 NEM 产品逻辑分叉"},
+    {"date": "2024-06-26", "market": "NEM", "event": "AEMO 2024 ISP 发布", "impact": "储能被定位为系统转型核心资产"},
+    {"date": "2025-02-27", "market": "NEM", "event": "2025-26 MPC/CPT 更新", "impact": "行政定价参数调整，尖峰收入天花板变化"},
+    {"date": "2025-03-04", "market": "NEM", "event": "IESS 实施最终规则", "impact": "电网级电池/聚合商注册路径明确"},
+    {"date": "2025-06-18", "market": "NEM", "event": "CIS 宣布简化为单阶段投标", "impact": "容量合约获取流程缩短（2025-08 生效）"},
+    {"date": "2026-07-06", "market": "NEM", "event": "CIS Tender 9（5GW 发电）注册截止", "impact": "下一轮 CIS 容量合约窗口关闭"}
+  ]
+}

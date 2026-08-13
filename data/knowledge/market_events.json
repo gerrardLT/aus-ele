@@ -1,0 +1,127 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "updated_at": "2026-08-13",
+    "purpose": "市场事件案例库（机器可读）：重大事件的因果卡片，供 Agent market_event_lookup 工具检索，支撑归因叙事与'历史相似情景'引用。",
+    "card_schema": "每张卡含 summary / impact{price,fcas,bess} / lessons[] / source_url / confidence / recorded_at",
+    "human_readable_version": "docs/_references/市场事件案例卡片-2026-08.md",
+    "maintenance": "事件驱动（发生即录），季度整理归档"
+  },
+  "events": [
+    {
+      "id": "sa_black_system_2016",
+      "market": "NEM",
+      "category": "black_system",
+      "title": "SA 全州大停电（黑系统事件）",
+      "period": "2016-09-28",
+      "summary": "风暴摧毁输电线路导致南澳全州停电（black system），恢复历时约一天。事件后 NEM 强化了频率标准与系统强度要求，并触发行政定价机制。",
+      "impact": {
+        "price": "恢复期价格尖峰与行政定价（administered pricing）触发",
+        "fcas": "频率控制需求激增，凸显快速响应资产价值",
+        "bess": "催生 SA 大规模电池部署（含 Tesla Hornsdale），系统强度与黑启动价值进入视野"
+      },
+      "duration": "约 24 小时恢复",
+      "lessons": [
+        "黑系统风险是真实的尾部事件，电网薄弱区域尤甚",
+        "事件后制度收紧（频率标准/系统强度）直接创造 BESS 新价值流",
+        "极端事件的收益尖峰不可作为基线收入假设"
+      ],
+      "source_url": "https://www.aemo.com.au/-/media/files/major-publications/major-incident-reports/2016/2016-sa-black-system-report.pdf",
+      "confidence": "high",
+      "recorded_at": "2026-08-13",
+      "related_modules": ["grid_events", "narrative_attribution"]
+    },
+    {
+      "id": "liddell_retirement_2025",
+      "market": "NEM",
+      "category": "coal_retirement",
+      "title": "Liddell 煤电退役（NSW 基荷缺口）",
+      "period": "2025-04 ~ 2025-06",
+      "summary": "AGL Liddell 电站（约 2GW，NSW 主力基荷）2025 年上半年分阶段退役。NSW 失去大块可调度基荷，供给结构向可再生能源+储能迁移，价差波动结构性抬升。",
+      "impact": {
+        "price": "NSW 基荷缺口推升峰时价格与波动，尖峰更依赖快速响应资源",
+        "fcas": "惯量下降，频率服务需求结构变化",
+        "bess": "套利空间长期结构性改善；但短期供给缺口风险需关注行政定价触发"
+      },
+      "duration": "长期结构性影响（20 年前瞻情景关键变量）",
+      "lessons": [
+        "煤电退役节点是价差结构突变的可预测驱动因素，应纳入前瞻情景",
+        "退役前 1-2 年市场会提前定价，进入时机判断需看管线而非只看当前价差",
+        "单一电站退役对区域的影响远大于对全网的影响"
+      ],
+      "source_url": "https://www.aemo.com.au/energy-systems/major-publications/integrated-system-plan-isp",
+      "confidence": "high",
+      "recorded_at": "2026-08-13",
+      "related_modules": ["forward_spread_projection", "regional_timing_score"]
+    },
+    {
+      "id": "negative_price_wave_2025q4",
+      "market": "NEM",
+      "category": "negative_price_wave",
+      "title": "负价潮（2025 Q4 创纪录延续至 2026）",
+      "period": "2025-10 ~ 2026-02",
+      "summary": "2025 Q4 负价时段占比达 31%（创纪录，动能延续至 2026），驱动因素为光伏大发叠加低需求。负价常态化重塑日内价格结构。",
+      "impact": {
+        "price": "日内价格结构两极化：午间深负价 + 傍晚尖峰",
+        "fcas": "无直接影响",
+        "bess": "充电窗口充裕（低成本充电）但整体价差收益被压缩；负价时段充电策略价值上升"
+      },
+      "duration": "持续中（结构性，随光伏渗透率提升而加深）",
+      "lessons": [
+        "负价比例是判断光伏蚕食深度的先行指标",
+        "BESS 收益越来越依赖'抓傍晚尖峰'而非全天套利",
+        "负价不等于充电机会无限——需看负价深度与持续时长的组合"
+      ],
+      "source_url": "https://arena.gov.au/knowledge-bank/genops-three-negative-pricing-and-bidding-behaviour-on-the-nem/",
+      "confidence": "high",
+      "recorded_at": "2026-08-13",
+      "related_modules": ["cannibalization_forecast", "price_trend_analysis", "benchmark_engine"]
+    },
+    {
+      "id": "fcas_collapse_2024_2026",
+      "market": "NEM",
+      "category": "fcas_collapse",
+      "title": "FCAS 价格崩塌（10 服务全 collapsed）",
+      "period": "2024 ~ 2026",
+      "summary": "BESS 注册容量激增导致 FCAS 供需比恶化，价格按供需比模型崩塌；至 2026 年系统判定 10/10 服务 collapsed，FCAS 占 BESS 收入降至约 3%（同比 -43%），能量套利占约 97%。",
+      "impact": {
+        "price": "无直接影响",
+        "fcas": "价格天花板趋近于零；启用型服务收入趋零",
+        "bess": "收益结构单极化（套利为王）；投资测算中 FCAS 假设必须显式下调"
+      },
+      "duration": "持续中（随供给增长难以逆转，除非新增需求侧价值流）",
+      "lessons": [
+        "辅助服务市场容量有限，'人人都做 FCAS'本身就是崩塌原因",
+        "收入叠加叙事必须以最新供需比为准，历史 FCAS 高收入不可外推",
+        "系统已内置压缩因子 0.3 与 fcas_collapse_engine 作为护栏"
+      ],
+      "source_url": "https://gridbeyond.com/understanding-the-decline-in-fcas-prices-in-australia/",
+      "confidence": "high",
+      "recorded_at": "2026-08-13",
+      "related_modules": ["fcas_collapse_engine", "fcas_compression 标签", "investment_analysis 压缩因子"]
+    },
+    {
+      "id": "bess_revenue_record_lows_2026",
+      "market": "NEM",
+      "category": "revenue_compression",
+      "title": "NEM 储能收益连续创新低（2026-03 ~ 2026-05）",
+      "period": "2026-03 ~ 2026-05",
+      "summary": "Modo 指数显示 NEM 电池收益 2026-03 跌至 $44k/MW/年（-19%）、2026-05 再跌至 $29k/MW/年（-45%），均创当时新低；四大州价差全面压缩。内部 benchmark 同向印证（NSW1 2026-03~06：59.96→50.03 kAUD/MW/年）。成因：新增装机抢食收缩的 merchant 价值。",
+      "impact": {
+        "price": "价差结构全面压缩（所有大陆州）",
+        "fcas": "已枯竭，非本轮主因",
+        "bess": "在运资产收益恶化；新资产进入进一步蚕食——'量增价减'循环"
+      },
+      "duration": "持续中（取决于装机速度与需求侧价值流落地）",
+      "lessons": [
+        "收益压缩周期里'项目 vs 市场基准'对照比绝对收益更重要",
+        "CIS 等合约型收益桶的对冲价值在压缩周期被放大",
+        "进入决策必须看区域管线饱和度，而非只看当前收益排名"
+      ],
+      "source_url": "https://modoenergy.com/research/en/nem-battery-revenues-record-low-may-2026",
+      "confidence": "high",
+      "recorded_at": "2026-08-13",
+      "related_modules": ["benchmark_engine", "cannibalization_forecast", "saturation_check"]
+    }
+  ]
+}

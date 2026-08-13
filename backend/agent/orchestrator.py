@@ -1513,6 +1513,26 @@ class AgentOrchestrator:
                     parts.append("- 口径: derived 理想放电，FCAS/容量不含，不与第三方指数绝对值对比\n")
                 if data.get("headline"):
                     parts.append(f"- {data['headline']}\n")
+            elif r.tool_name == "grid_knowledge_lookup":
+                matches = data.get("matches", [])
+                if matches:
+                    for m in matches[:3]:
+                        parts.append(
+                            f"- 【{m.get('market', '?')}】{m.get('title', '?')}"
+                            f"（生效 {m.get('effective_date') or '待定'}，置信 {m.get('confidence', '?')}）\n"
+                        )
+                else:
+                    parts.append("- 知识库未命中相关规则卡片\n")
+            elif r.tool_name == "market_event_lookup":
+                matches = data.get("matches", [])
+                if matches:
+                    for m in matches[:3]:
+                        parts.append(
+                            f"- 【案例】{m.get('title', '?')}（{m.get('period', '?')}，"
+                            f"置信 {m.get('confidence', '?')}）\n"
+                        )
+                else:
+                    parts.append("- 案例库未命中相关事件\n")
             elif r.tool_name == "fcas_analysis":
                 summary = data.get("summary", {})
                 if summary:

@@ -20,7 +20,8 @@
 2. 临时文件（`tmp_*`）任务结束当天删除；确需保留的移入 `workspace/` 对应分类；
 3. `output/` 为 agent/脚本运行输出（已 gitignore），A/B 数据等调研产物放这里；
 4. 需要长期保留的知识沉淀入 `docs/`（按下表子分类），数据样本入 `data/`（需评审）；
-5. `.gitignore` 已覆盖：`workspace/`、`logs/`、`*.log`、`tmp_*`、`*-live.*.log`、`artifacts-*.png`、`output/`、`__pycache__/`；新增产物类型时同步补充规则。
+5. `.gitignore` 已覆盖：`workspace/`、`logs/`、`*.log`、`tmp_*`、`*-live.*.log`、`artifacts-*.png`、`output/`、`__pycache__/`；新增产物类型时同步补充规则；
+6. **假设登记纪律（2026-08-12）**：影响分析结论的关键参数（压缩因子/参考电池/模型分布参数/合约锚点等）一律登记在 `data/assumptions_registry.json`；参数变更必须同步更新登记表并记录 `modified_by` / `last_calibrated`；新增关键假设时补登记条目（status 可选 wired/audit_only/pointer）。
 
 ## docs/ 子分类规范（2026-08-11 归类后）
 

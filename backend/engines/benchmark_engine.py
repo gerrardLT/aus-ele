@@ -24,10 +24,15 @@ from typing import Any
 # Constants
 # ---------------------------------------------------------------------------
 
-# 参考电池：与 Modo 参考资产同量级的 2h 电网级储能
-DEFAULT_POWER_MW = 100.0
-DEFAULT_ENERGY_MWH = 200.0
-DEFAULT_RTE = 0.85
+# 参考电池：与 Modo 参考资产同量级的 2h 电网级储能。
+# 优先从假设登记库读取（data/assumptions_registry.json），登记表不可用时
+# 回落代码默认值（行为不变）；参数变更必须同步登记表（AGENTS.md 硬性规则）。
+from services.assumptions_registry import get_assumption_value
+
+_REFERENCE_BATTERY = get_assumption_value("benchmark_reference_battery", default={}) or {}
+DEFAULT_POWER_MW = float(_REFERENCE_BATTERY.get("power_mw", 100.0))
+DEFAULT_ENERGY_MWH = float(_REFERENCE_BATTERY.get("energy_mwh", 200.0))
+DEFAULT_RTE = float(_REFERENCE_BATTERY.get("round_trip_efficiency", 0.85))
 
 # NEM 结算基准：30 分钟（完整性期望值的分母；指数计算的时间长度从数据推断）
 SETTLEMENT_INTERVAL_HOURS = 0.5
