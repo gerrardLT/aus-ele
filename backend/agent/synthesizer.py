@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from agent.llm_adapter import LLMAdapter, LLMRequestError, LLMUnavailableError
 from agent.prompts import SYNTHESIS_PROMPT, FALLBACK_REPORT_TEMPLATE
@@ -37,6 +37,7 @@ async def synthesize_report(
     tool_results: List[ToolResult],
     context: AgentContext,
     llm: LLMAdapter,
+    repair_feedback: Optional[str] = None,
 ) -> Tuple[str, str, ConfidenceLevel, str]:
     """Synthesize tool results into executive summary and recommendation.
 
@@ -45,6 +46,8 @@ async def synthesize_report(
         tool_results: List of all tool execution results.
         context: Agent execution context.
         llm: LLM adapter instance.
+        repair_feedback: 溯源修复指令（Generate→Verify→Repair 环，2026-08-13）；
+            非空时追加到提示词尾部，要求修正不可溯源数字。
 
     Returns:
         Tuple of (executive_summary, recommendation, confidence_level, full_analysis)
@@ -52,7 +55,8 @@ async def synthesize_report(
     """
     if llm.is_available():
         try:
-            return await _llm_synthesize(query, tool_results, context, llm)
+            return await _llm_synthesize(query, tool_results, context, llm,
+                                         repair_feedback=repair_feedback)
         except (LLMRequestError, LLMUnavailableError) as exc:
             logger.warning("LLM synthesis failed, falling back to rules: %s", exc)
 
@@ -70,6 +74,7 @@ async def _llm_synthesize(
     tool_results: List[ToolResult],
     context: AgentContext,
     llm: LLMAdapter,
+    repair_feedback: Optional[str] = None,
 ) -> Tuple[str, str, ConfidenceLevel, str]:
     """Use LLM to generate synthesis from tool results."""
     # Build compact tool results summary for LLM context
@@ -79,6 +84,9 @@ async def _llm_synthesize(
         query=query,
         tool_results=results_text,
     )
+    if repair_feedback:
+        # 溯源修复环（2026-08-13）：修复指令追加到尾部，权重最高
+        prompt = prompt + "\n\n" + repair_feedback
 
     messages = [
         {"role": "system", "content": "你是能源市场分析专家。基于提供的工具调用结果生成分析报告。只使用提供的数据，不编造数值。"},

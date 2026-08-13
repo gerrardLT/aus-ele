@@ -288,7 +288,8 @@ class TestWorkflowTemplates(unittest.TestCase):
     def test_full_investment_has_correct_step_count(self):
         tmpl = get_workflow_template("full_investment_feasibility")
         self.assertIsNotNone(tmpl)
-        self.assertEqual(len(tmpl.steps), 11)
+        # 13 步：2026-08-13 收入深潜扩容 +spike_profit_analysis +bess_revenue_benchmark
+        self.assertEqual(len(tmpl.steps), 13)
 
     def test_all_template_steps_are_valid_tools(self):
         registry = get_tool_registry()

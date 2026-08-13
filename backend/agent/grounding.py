@@ -106,3 +106,36 @@ def check_numeric_grounding(answer: str, tool_results: List[Any]) -> Dict[str, A
         "ungrounded_ratio": round(len(ungrounded) / len(candidates), 3),
         "ungrounded_samples": ungrounded[:10],
     }
+
+
+# =============================================================================
+# Repair Loop（Generate → Verify → Repair，2026-08-13）
+# =============================================================================
+
+# 与 orchestrator 风险标记同阈值：至少 4 个受检数字且超半数不可溯源
+REPAIR_MIN_CHECKED = 4
+REPAIR_RATIO_THRESHOLD = 0.5
+
+
+def should_repair(check: Dict[str, Any],
+                  min_checked: int = REPAIR_MIN_CHECKED,
+                  ratio_threshold: float = REPAIR_RATIO_THRESHOLD) -> bool:
+    """判断是否触发一次溯源修复重生成（确定性规则，无 LLM）。"""
+    if not isinstance(check, dict):
+        return False
+    return (
+        int(check.get("checked", 0)) >= min_checked
+        and float(check.get("ungrounded_ratio", 0.0)) > ratio_threshold
+    )
+
+
+def build_repair_feedback(samples: List[float]) -> str:
+    """构造修复指令：要求删除/替换不可溯源数字，禁止编造。"""
+    sample_text = "、".join(str(s) for s in samples[:10])
+    return (
+        "【数值溯源修复要求】\n"
+        f"上一版报告中的以下数字无法追溯到任何工具结果：{sample_text}。\n"
+        "请重写报告：删除这些数字，或替换为工具结果中真实存在的数值"
+        "（允许四舍五入与百分比换算）；严禁编造、估算或外推任何数值。\n"
+        "保持原有结构与结论不变，只处理数字问题。"
+    )

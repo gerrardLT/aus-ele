@@ -396,11 +396,11 @@ class AgentOrchestrator:
             # Synthesize
             yield {"type": "status", "message": "正在生成结构化报告..."}
             try:
-                executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
+                executive_summary, recommendation, confidence, full_analysis, grounding_repair = await self._synthesize(
                     query, tool_results, context
                 )
             except Exception:  # noqa: BLE001
-                executive_summary, recommendation, confidence, full_analysis = ("", "", ConfidenceLevel.LOW, "")
+                executive_summary, recommendation, confidence, full_analysis, grounding_repair = ("", "", ConfidenceLevel.LOW, "", {})
 
             # 降级透明化：非用户指定模板而是因 LLM 不可用降级时，
             # 标记 llm_degraded 供前端 DegradedBanner 展示（与 run() 路径对齐）
@@ -440,7 +440,7 @@ class AgentOrchestrator:
                 self.llm.end_usage_scope(run_id=execution_id)
 
             report_answer = full_analysis or self._safe_reasoning_narrative(tool_results, context)
-            self._apply_grounding_check(report, report_answer, tool_results)
+            self._apply_grounding_check(report, report_answer, tool_results, grounding_repair)
 
             yield {
                 "type": "report",
@@ -678,13 +678,13 @@ class AgentOrchestrator:
         # Build the structured report card (synthesizer may call the LLM).
         yield {"type": "status", "message": "正在生成结构化报告..."}
         try:
-            executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
+            executive_summary, recommendation, confidence, full_analysis, grounding_repair = await self._synthesize(
                 query, tool_results, context
             )
         except Exception as exc:  # noqa: BLE001 - synthesis is best-effort
             logger.warning("Synthesis failed in stream: %s", exc)
-            executive_summary, recommendation, confidence, full_analysis = (
-                final_content, "", ConfidenceLevel.LOW, "",
+            executive_summary, recommendation, confidence, full_analysis, grounding_repair = (
+                final_content, "", ConfidenceLevel.LOW, "", {},
             )
 
         report_metadata = {"mode": "react_stream", "llm_model": self.llm.config.model}
@@ -719,7 +719,7 @@ class AgentOrchestrator:
             self.llm.end_usage_scope(run_id=execution_id)
 
         report_answer = final_content or executive_summary
-        self._apply_grounding_check(report, report_answer, tool_results)
+        self._apply_grounding_check(report, report_answer, tool_results, grounding_repair)
 
         yield {
             "type": "report",
@@ -891,11 +891,11 @@ class AgentOrchestrator:
 
         yield {"type": "status", "message": "正在生成结构化报告..."}
         try:
-            executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
+            executive_summary, recommendation, confidence, full_analysis, grounding_repair = await self._synthesize(
                 query, tool_results, context
             )
         except Exception:  # noqa: BLE001
-            executive_summary, recommendation, confidence, full_analysis = ("", "", ConfidenceLevel.LOW, "")
+            executive_summary, recommendation, confidence, full_analysis, grounding_repair = ("", "", ConfidenceLevel.LOW, "", {})
 
         report = AgentReport(
             id=execution_id,
@@ -922,7 +922,7 @@ class AgentOrchestrator:
             self.llm.end_usage_scope(run_id=execution_id)
 
         report_answer = full_analysis or executive_summary
-        self._apply_grounding_check(report, report_answer, tool_results)
+        self._apply_grounding_check(report, report_answer, tool_results, grounding_repair)
 
         yield {
             "type": "report",
@@ -1027,7 +1027,7 @@ class AgentOrchestrator:
             status = WorkflowStatus.FAILED
 
         # Generate synthesis (LLM or fallback)
-        executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
+        executive_summary, recommendation, confidence, full_analysis, grounding_repair = await self._synthesize(
             query, tool_results, context
         )
 
@@ -1053,7 +1053,7 @@ class AgentOrchestrator:
             },
         )
         self._apply_grounding_check(
-            report, full_analysis or executive_summary, tool_results
+            report, full_analysis or executive_summary, tool_results, grounding_repair
         )
         return report
 
@@ -1190,7 +1190,7 @@ class AgentOrchestrator:
             status = WorkflowStatus.FAILED
 
         # Synthesize final report
-        executive_summary, recommendation, confidence, full_analysis = await self._synthesize(
+        executive_summary, recommendation, confidence, full_analysis, grounding_repair = await self._synthesize(
             query, tool_results, context
         )
 
@@ -1212,7 +1212,7 @@ class AgentOrchestrator:
             metadata={"mode": "react", "llm_model": self.llm.config.model},
         )
         self._apply_grounding_check(
-            report, full_analysis or executive_summary, tool_results
+            report, full_analysis or executive_summary, tool_results, grounding_repair
         )
         return report
 
@@ -1270,20 +1270,65 @@ class AgentOrchestrator:
         query: str,
         tool_results: List[ToolResult],
         context: AgentContext,
-    ) -> tuple[str, str, ConfidenceLevel, str]:
+    ) -> tuple[str, str, ConfidenceLevel, str, dict]:
         """Synthesize tool results into executive summary and recommendation.
 
+        内嵌 Generate → Verify → Repair 溯源修复环（2026-08-13）：
+        首次合成后做数值溯源检查，超阈值时带修复指令重合成一次，
+        取两次中 ungrounded_ratio 更低者（绝不劣化）。修复环自身异常
+        只降级不阻断；规则合成路径（LLM 不可用）不触发。
+
         Returns:
-            Tuple of (executive_summary, recommendation, confidence_level, full_analysis)
+            Tuple of (executive_summary, recommendation, confidence_level,
+            full_analysis, grounding_repair_info)
         """
         from agent.synthesizer import synthesize_report
 
-        return await synthesize_report(
+        result = await synthesize_report(
             query=query,
             tool_results=tool_results,
             context=context,
             llm=self.llm,
         )
+        repair_info: dict = {"attempted": False, "used": False}
+        try:
+            import os
+
+            from agent.grounding import (
+                build_repair_feedback,
+                check_numeric_grounding,
+                should_repair,
+            )
+
+            if os.environ.get("AUS_ELE_AGENT_GROUNDING_REPAIR", "1") not in ("0", "false", ""):
+                check = check_numeric_grounding(result[3] or "", tool_results)
+                if should_repair(check) and self.llm.is_available():
+                    feedback = build_repair_feedback(check["ungrounded_samples"])
+                    result2 = await synthesize_report(
+                        query=query,
+                        tool_results=tool_results,
+                        context=context,
+                        llm=self.llm,
+                        repair_feedback=feedback,
+                    )
+                    check2 = check_numeric_grounding(result2[3] or "", tool_results)
+                    repair_info.update({
+                        "attempted": True,
+                        "before_ratio": check["ungrounded_ratio"],
+                        "after_ratio": check2["ungrounded_ratio"],
+                    })
+                    # 取更优者；修复无效则保留原版
+                    if check2["ungrounded_ratio"] <= check["ungrounded_ratio"]:
+                        result = result2
+                        repair_info.update({
+                            "used": True,
+                            "improved": check2["ungrounded_ratio"] < check["ungrounded_ratio"],
+                        })
+        except Exception as exc:  # noqa: BLE001 - 修复环自身不得弄崩合成
+            logger.debug("Grounding repair skipped: %s", exc)
+            repair_info.setdefault("error", str(exc))
+
+        return result[0], result[1], result[2], result[3], repair_info
 
     # =========================================================================
     # Harness Agent: Planning, Reflection, Retry
@@ -1607,12 +1652,16 @@ class AgentOrchestrator:
     # =========================================================================
 
     def _apply_grounding_check(
-        self, report: AgentReport, answer: str, tool_results: List[ToolResult]
+        self, report: AgentReport, answer: str, tool_results: List[ToolResult],
+        grounding_repair: Optional[dict] = None,
     ) -> None:
         """数值溯源校验：结果写入 metadata，高占比不可溯源时追加风险标记。
 
         只观测不阻断：误报时最多多一条风险提示，不会让报告失败。
+        grounding_repair（2026-08-13）：非空时写入修复环元信息。
         """
+        if grounding_repair:
+            report.metadata["grounding_repair"] = grounding_repair
         try:
             from agent.grounding import check_numeric_grounding
 

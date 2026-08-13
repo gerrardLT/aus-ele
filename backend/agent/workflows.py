@@ -24,13 +24,16 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
     "full_investment_feasibility": WorkflowTemplate(
         id="full_investment_feasibility",
         name="完整投资可行性分析",
-        description="完整 7 阶段 BESS 投资可行性分析：市场筛选 → 收入深潜 → 饱和竞争 → 投资前景 → 联合优化回测 → 财务建模 → 风险分层",
+        description="完整 7 阶段 BESS 投资可行性分析：市场筛选 → 收入深潜（含尖峰与基准）→ 饱和竞争 → 投资前景 → 联合优化回测 → 财务建模 → 风险分层",
         steps=[
             "data_quality_check",
             "market_screening",
             "price_trend_analysis",
             "peak_analysis",
             "fcas_analysis",
+            # 收入深潜扩容（2026-08-13）：尖峰捕获 + 市场基准锚定并入并行组
+            "spike_profit_analysis",
+            "bess_revenue_benchmark",
             "saturation_check",
             "forward_spread_projection",
             "merchant_risk_simulate",
@@ -39,11 +42,11 @@ WORKFLOW_TEMPLATES: Dict[str, WorkflowTemplate] = {
             "risk_stratification",
         ],
         parallel_groups=[
-            [0, 1],       # data_quality + market_screening in parallel
-            [2, 3, 4],   # price_trend + peak + fcas in parallel
-            [5, 6, 7],   # saturation + forward_spread + merchant_risk in parallel
-            [8],          # co-optimized backtest alone (heavy)
-            [9, 10],     # investment + risk_stratification in parallel
+            [0, 1],           # data_quality + market_screening in parallel
+            [2, 3, 4, 5, 6],  # 收入深潜五工具并行：price_trend/peak/fcas/spike/benchmark
+            [7, 8, 9],        # saturation + forward_spread + merchant_risk in parallel
+            [10],             # co-optimized backtest alone (heavy)
+            [11, 12],         # investment + risk_stratification in parallel
         ],
         default_params={
             "power_mw": 100.0,

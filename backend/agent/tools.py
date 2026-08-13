@@ -1623,11 +1623,13 @@ def _exec_bess_revenue_benchmark(params: Dict[str, Any], ctx: AgentContext) -> D
     )
 
     region = (params.get("region") or ctx.effective_region or "NSW1").upper()
+    # WEM 守卫（2026-08-13）：benchmark 仅覆盖 NEM 大陆区，
+    # WEM 返回结构化提示而非抛错（供 full_investment_feasibility 并行组安全调用）
     if region not in NEM_BENCHMARK_REGIONS:
         return {
             "region": region,
-            "status": "unsupported_region",
-            "note": f"Benchmark 仅覆盖 NEM 大陆区域 {NEM_BENCHMARK_REGIONS}",
+            "status": "not_covered",
+            "note": f"收益基准仅覆盖 NEM 大陆区域 {NEM_BENCHMARK_REGIONS}，{region} 不在覆盖范围",
         }
     try:
         months = int(params.get("months", 12))
