@@ -155,7 +155,7 @@ def get_nem_bess_region_compare():
     ),
 )
 def get_wem_brcp_anchor(
-    capacity_year: str = Query("2026/27", description="Capacity year, e.g. 2026/27"),
+    capacity_year: str = Query("2028/29", description="Capacity year, e.g. 2027/28 or 2028/29"),
 ):
     from services.contract_revenue import get_wem_brcp_anchor as _anchor
 

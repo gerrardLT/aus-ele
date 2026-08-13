@@ -139,10 +139,10 @@
       "market": "WEM",
       "category": "capacity_mechanism",
       "title": "RCM 容量机制与 BRCP 基准容量价",
-      "summary": "WEM 通过 Reserve Capacity Mechanism 保障 SWIS 容量充足；ERA 每年以 200MW/1200MWh 电池为新进入者基准定价 BRCP。容量收益是 WEM BESS 的核心收益桶之一；Supplementary Capacity 连续多年触发。",
+      "summary": "WEM 通过 Reserve Capacity Mechanism 保障 SWIS 容量充足；ERA 按新进入者基准资产年度定价 BRCP（提前约 2 年确定）。CY2021/22~2026/27 基准为 160MW 燃气轮机，2027/28 起换为 200MW/800MWh 电池；官方口径已入配置（CY2027/28=$360,700、CY2028/29=$486,900/MW/年）。容量收益是 WEM BESS 的核心收益桶之一；Supplementary Capacity 连续多年触发。",
       "key_points": [
-        "BRCP 是官方容量价锚点（系统已配置化：contract_revenue_defaults.json）",
-        "实际容量收益需折算认证容量信用，不可当全额收入",
+        "BRCP 是官方容量价锚点（系统已配置化：contract_revenue_defaults.json，2026-08-13 换官方值）",
+        "实际容量收益需折算认证容量信用与容量盈余折减，不可当全额收入",
         "2026/27 容量缺口估计需新增 >1,460MW（多为公用级电池）"
       ],
       "affected_value_streams": ["capacity"],

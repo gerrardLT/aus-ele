@@ -117,9 +117,9 @@
         "backend/agent/tools.py（include_cis）",
         "backend/routes/benchmark_routes.py（wem-brcp-anchor）"
       ],
-      "source": "占位锚点：CIS floor 75,000 AUD/MW/年、BRCP 2026/27 = 11,500 AUD/MW/年",
-      "boundary": "示例值，待官方投标结果/容量年定价替换；输出一律带 caveat",
-      "last_calibrated": "2026-08-12",
+      "source": "CIS floor 75,000 AUD/MW/年为量级示意（中标 floor 非公开）；BRCP 已换官方口径：CY2027/28 = 360,700、CY2028/29 = 486,900 AUD/MW/年（AEMO/ERA 2026-08-13）",
+      "boundary": "CIS 值为示例待替换；BRCP 为官方定价但实际可得需折减容量信用与盈余；输出一律带 caveat",
+      "last_calibrated": "2026-08-13",
       "modified_by": "agent-team"
     }
   ]

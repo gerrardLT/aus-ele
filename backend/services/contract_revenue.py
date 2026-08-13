@@ -23,8 +23,8 @@ _CIS_CAVEAT = (
     "仅反映收入下限兜底，不含上行收益与投标竞争不确定性。"
 )
 _BRCP_CAVEAT = (
-    "BRCP 为 ERA 官方口径的年度锚点（200MW/1200MWh 电池基准，人工年度更新）；"
-    "容量收益还需折算认证容量信用（STEM 折减），不可直接当全额收入。"
+    "BRCP 为 ERA/AEMO 官方口径的容量年锚点（人工更新；2027/28 起基准资产为 200MW/800MWh 电池）；"
+    "容量收益还需折算认证容量信用与容量盈余折减，不可直接当全额收入。"
 )
 
 
@@ -53,8 +53,8 @@ def get_cis_floor_params(region: str) -> dict:
     }
 
 
-def get_wem_brcp_anchor(capacity_year: str = "2026/27") -> dict:
-    """返回 WEM BRCP 年度锚点。"""
+def get_wem_brcp_anchor(capacity_year: str = "2028/29") -> dict:
+    """返回 WEM BRCP 容量年锚点（默认最近已定价容量年 2028/29）。"""
     cfg = _load_config().get("wem_brcp", {})
     years = cfg.get("capacity_years", {}) or {}
     entry = years.get(capacity_year)
@@ -65,6 +65,9 @@ def get_wem_brcp_anchor(capacity_year: str = "2026/27") -> dict:
         "capacity_year": capacity_year,
         "brcp_aud_per_mw_year": entry.get("brcp_aud_per_mw_year"),
         "status": entry.get("status"),
-        "reference_battery": cfg.get("reference_battery"),
+        "determined_in": entry.get("determined_in"),
+        "reference_asset": entry.get("reference_asset"),
+        "note": entry.get("note"),
+        "reference_battery_history": cfg.get("reference_battery_history"),
         "caveat": _BRCP_CAVEAT,
     }

@@ -1,10 +1,11 @@
 {
   "meta": {
-    "updated_at": "2026-08-12",
-    "note": "合约型收益锚点配置（CIS floor / WEM BRCP）。低频数据，人工年度更新，不建爬虫。数值为示例锚点，实际投标/容量年以官方结果替换。",
+    "updated_at": "2026-08-13",
+    "note": "合约型收益锚点配置（CIS floor / WEM BRCP）。低频数据，人工更新，不建爬虫。BRCP 已于 2026-08-13 以 AEMO/ERA 官方口径替换占位值；CIS floor 仍为示例锚点（中标 floor 非公开，按投标轮次更新）。",
     "sources": [
       "CIS: https://www.dcceew.gov.au/energy/renewable/capacity-investment-scheme",
-      "BRCP: https://www.erawa.com.au/markets/wholesale-electricity-market/price-setting/benchmark-reserve-capacity-prices"
+      "BRCP: https://www.erawa.com.au/markets/wholesale-electricity-market/price-setting/benchmark-reserve-capacity-prices",
+      "BRCP(AEMO): https://www.aemo.com.au/energy-systems/electricity/wholesale-electricity-market-wem/wa-reserve-capacity-mechanism/benchmark-reserve-capacity-price"
     ]
   },
   "cis": {
@@ -12,13 +13,33 @@
     "mechanism": "政府收入下限（floor）兜底下行风险；2025-08 起单阶段投标",
     "term_years": 10,
     "default_floor_aud_per_mw_year": 75000,
-    "region_overrides": {}
+    "region_overrides": {},
+    "status": "illustrative_placeholder",
+    "note": "中标 floor 非公开，此值为量级示意；拿到实际投标结果后替换并移除 placeholder 状态"
   },
   "wem_brcp": {
-    "mechanism": "ERA Benchmark Reserve Capacity Price，以 200MW/1200MWh 电池为新进入者基准，年度定价",
-    "reference_battery": {"power_mw": 200, "energy_mwh": 1200},
+    "mechanism": "ERA Benchmark Reserve Capacity Price，按新进入者基准资产年度定价，提前约 2 年确定（T 年定价适用于 T+2 容量年）",
+    "reference_battery_history": {
+      "note": "CY2021/22~2026/27 基准资产为 160MW 开式燃气轮机；2027/28 起换为电池基准",
+      "from_capacity_year": "2027/28",
+      "battery": {"power_mw": 200, "energy_mwh": 800}
+    },
     "capacity_years": {
-      "2026/27": {"brcp_aud_per_mw_year": 11500, "status": "illustrative_placeholder"}
+      "2027/28": {
+        "brcp_aud_per_mw_year": 360700,
+        "determined_in": "2025",
+        "reference_asset": "160MW OCGT",
+        "status": "official",
+        "source": "AEMO BRCP 页（2025 BRCP = $360,700/MW/年）"
+      },
+      "2028/29": {
+        "brcp_aud_per_mw_year": 486900,
+        "determined_in": "2026",
+        "reference_asset": "200MW/800MWh 电池",
+        "status": "official",
+        "note": "2026 BRCP，较 2025 定价 +35%；Modo 草稿口径 $491,700，并预计电池实际可得约 $422,372/MW/年（容量盈余折减）",
+        "source": "AEMO/ERA 2026 BRCP 定价（适用于 2028-29 容量年）"
+      }
     }
   }
 }
