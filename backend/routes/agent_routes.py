@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -786,6 +786,19 @@ def _build_trajectory(steps) -> list:
             entry["error_bucket"] = _classify_tool_error(status, err or "")
         trajectory.append(entry)
     return trajectory
+
+
+@router.get("/experience-summary")
+async def get_experience_summary(
+    days: int = Query(30, ge=1, le=365, description="Aggregation window in days"),
+    principal: dict = Depends(get_current_principal),  # noqa: ARG001
+):
+    """Agent 经验库汇总（2026-08-13）：问题意图分布、工具调用频次与失败率、
+    未使用工具、慢查询/失败案例抽样。需鉴权（包含用户查询文本）。
+    """
+    from services.agent_experience import build_experience_summary
+
+    return build_experience_summary(days=days)
 
 
 def _log_execution(report) -> None:
