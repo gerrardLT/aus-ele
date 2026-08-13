@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "purpose": "benchmark 校准状态（机器可读镜像源）。容器内无 docs/，健康检查以此文件为回退数据源；月度校准时必须同时更新本文件与方法论文档 §6 校准表（运营节奏清单 §2）。",
+    "methodology_doc": "docs/architecture/NEM-BESS收益基准方法论.md"
+  },
+  "last_calibration": "2026-08-13",
+  "calibrations": [
+    {
+      "date": "2026-08-13",
+      "subject": "NSW1 压缩趋势 2025-11→2026-06",
+      "ours": "297 → 50 kAUD/MW/年（-83%）",
+      "third_party": "Modo $148k(2024) → $29k(2026-05)/MW/年（-80%）",
+      "conclusion": "方向与压缩幅度一致"
+    },
+    {
+      "date": "2026-08-13",
+      "subject": "NSW1 2026-06 vs Modo 2026-05",
+      "ours": "50.03 kAUD/MW/年",
+      "third_party": "$29k/MW/年",
+      "conclusion": "绝对值偏高约 1.7×，归因理想算子，量级同阶"
+    }
+  ]
+}

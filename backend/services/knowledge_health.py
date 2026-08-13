@@ -24,6 +24,9 @@ _KNOWLEDGE_DIR = os.path.join(_DATA_DIR, "knowledge")
 _METHODOLOGY_DOC = os.path.join(
     _ROOT, "docs", "architecture", "NEM-BESS收益基准方法论.md"
 )
+# 容器内无 docs/（Dockerfile 只拷 backend/scrapers），校准日期另存 data 层
+# 镜像内可读；两处均需同步更新（运营节奏清单 §2）
+_CALIBRATION_STATE = os.path.join(_KNOWLEDGE_DIR, "benchmark_calibration.json")
 _SOP_REF = "docs/deployment/运营节奏清单.md"
 
 # 阈值（天）
@@ -127,27 +130,37 @@ def check_rule_reviews(today: date) -> list[dict]:
 
 
 def _latest_calibration_date() -> Optional[date]:
-    """从方法论文档 §6 校准记录表解析最新校准日期（表格首列 YYYY-MM-DD）。"""
+    """解析最新校准日期：优先方法论文档 §6 校准表，回退 data 层状态文件。
+
+    回退原因：生产容器不包含 docs/（Dockerfile 只拷 backend/scrapers），
+    data/knowledge/benchmark_calibration.json 是容器内可读的镜像源。
+    """
+    candidates: list[date] = []
     try:
         with open(_METHODOLOGY_DOC, "r", encoding="utf-8") as f:
             text = f.read()
+        section = text.split("校准记录表", 1)
+        scope = section[1] if len(section) > 1 else text
+        candidates.extend(
+            d for d in (_parse_date(m) for m in re.findall(r"\|\s*(\d{4}-\d{2}-\d{2})\s*\|", scope)) if d
+        )
     except FileNotFoundError:
-        return None
-    section = text.split("校准记录表", 1)
-    scope = section[1] if len(section) > 1 else text
-    dates = [
-        _parse_date(m)
-        for m in re.findall(r"\|\s*(\d{4}-\d{2}-\d{2})\s*\|", scope)
-    ]
-    valid = [d for d in dates if d is not None]
-    return max(valid) if valid else None
+        pass
+
+    state = _load_json(_CALIBRATION_STATE)
+    state_date = _parse_date(state.get("last_calibration"))
+    if state_date is not None:
+        candidates.append(state_date)
+
+    return max(candidates) if candidates else None
 
 
 def check_benchmark_calibration(today: date) -> dict:
     last = _latest_calibration_date()
     if last is None:
         return _item("benchmark_calibration", "benchmark 月度校准", "月度", "overdue",
-                     "方法论文档 §6 未解析到任何校准记录", sop_section="§2")
+                     "方法论文档 §6 与 benchmark_calibration.json 均未解析到校准记录",
+                     sop_section="§2")
     age = _age_days(last, today)
     due = date.fromordinal(last.toordinal() + CALIBRATION_OVERDUE_DAYS)
     if age > CALIBRATION_OVERDUE_DAYS:

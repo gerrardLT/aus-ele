@@ -2,25 +2,21 @@
 
 GET /api/knowledge/health — 知识库健康报告（运营节奏自动化体检）。
 公开端点：报告不含用户数据，仅知识库维护状态。
+不走响应缓存：报告基于本地文件即席计算（毫秒级），
+缓存会让维护状态失真（2026-08-13 生产演练教训）。
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 
 from fastapi import APIRouter
 
-from deps import get_cache
 from services.knowledge_health import build_health_report
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["knowledge"])
-
-_CACHE_SCOPE = "api_knowledge_health_v1"
-_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
 @router.get(
@@ -34,12 +30,4 @@ _CACHE_TTL_SECONDS = 6 * 60 * 60
     ),
 )
 def get_knowledge_health():
-    cache = get_cache()
-    cache_key = hashlib.sha256(json.dumps({"endpoint": "health"}, sort_keys=True).encode()).hexdigest()
-    cached = cache.get_json(_CACHE_SCOPE, cache_key)
-    if cached is not None:
-        return cached
-
-    report = build_health_report()
-    cache.set_json(_CACHE_SCOPE, cache_key, report, _CACHE_TTL_SECONDS)
-    return report
+    return build_health_report()
