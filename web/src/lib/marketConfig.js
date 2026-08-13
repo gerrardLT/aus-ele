@@ -50,6 +50,7 @@ export const MARKET_CONFIGS = {
     id: 'NEM',
     label: '国家电力市场 (NEM)',
     regions: ['NSW1', 'QLD1', 'VIC1', 'SA1', 'TAS1'],
+    dataStartYear: 2020, // 年份按钮按市场数据覆盖过滤（2026-08-13）
     settlementIntervalMinutes: 5,
     timezone: 'Australia/Sydney',
     timezoneLabel: 'AEST',
@@ -144,6 +145,7 @@ export const MARKET_CONFIGS = {
     id: 'WEM',
     label: '西澳电力市场 (WEM)',
     regions: ['WEM'],
+    dataStartYear: 2023, // WEM 数据自 2023 起（2020-2022 无数据，年份按钮需过滤，2026-08-13）
     settlementIntervalMinutes: 30,
     timezone: 'Australia/Perth',
     timezoneLabel: 'AWST',

@@ -55,11 +55,18 @@ export default function MarketPage({ market }) {
       .then(data => {
         if (data.years?.length > 0) {
           setYears(data.years);
-          setFilter('year', data.years[0]);
+          // 按市场数据覆盖选默认年（WEM 自 2023 起，避免选中无数据年份）
+          const start = config.dataStartYear ?? 0;
+          const covered = data.years.filter(y => y >= start);
+          setFilter('year', covered[0] ?? data.years[0]);
         }
       })
       .catch(err => console.error('Failed to fetch years:', err));
-  }, [setFilter]);
+  }, [setFilter, config.dataStartYear]);
+
+  // 年份按钮按市场数据覆盖过滤（2026-08-13）：/api/years 返回全库年份，
+  // WEM 实际仅 2023+ 有数据，2020-2022 按钮会导向空图表
+  const marketYears = years.filter(y => y >= (config.dataStartYear ?? 0));
 
   // Persist language
   useEffect(() => {
@@ -145,7 +152,7 @@ export default function MarketPage({ market }) {
       onSectionClick={handleSectionClick}
       lang={lang}
       onLangToggle={handleLangToggle}
-      years={years}
+      years={marketYears}
     >
       {/* S6/F3: Persistent context bar + U4: Anomaly badge */}
       <div className="flex items-center gap-3 mb-2 px-1 text-xs text-[var(--color-muted)]">
