@@ -86,11 +86,18 @@ TOOL_PROFILES = {
 
 
 def profile_tools(profile: str) -> Optional[frozenset]:
-    """返回 profile 的可见工具集（含全局工具）；未知 profile 返回 None（全量）。"""
+    """返回 profile 的可见工具集（含全局工具与 MCP 工具）；未知 profile 返回 None（全量）。"""
     tools = TOOL_PROFILES.get(profile)
     if tools is None:
         return None
-    return frozenset(tools) | frozenset(ALWAYS_VISIBLE)
+    # MCP 工具并入（2026-08-15）：按 server profiles 配置，懒导入避免循环依赖
+    try:
+        from agent.mcp.adapter import mcp_tools_for_profile
+
+        mcp_tools = mcp_tools_for_profile(profile)
+    except Exception:  # noqa: BLE001 — MCP 包不可用时不影响静态工具
+        mcp_tools = set()
+    return frozenset(tools) | frozenset(ALWAYS_VISIBLE) | frozenset(mcp_tools)
 
 
 def resolve_visible_tools(

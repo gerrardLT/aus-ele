@@ -339,7 +339,7 @@ jobs:
           port: ${{ secrets.SSH_PORT || '22' }}
           timeout: 30s
           command_timeout: 20m
-          envs: AUS_ELE_JWT_SECRET,FINGRID_API_KEY,AUS_ELE_WEB_BOOTSTRAP_SECRET,IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_USERNAME,GHCR_TOKEN,API_HOST_PORT,WEB_HOST_PORT,APP_DIR,AUS_ELE_PG_PASSWORD,AUS_ELE_CORS_ALLOW_ORIGINS
+          envs: AUS_ELE_JWT_SECRET,FINGRID_API_KEY,AUS_ELE_WEB_BOOTSTRAP_SECRET,IMAGE_TAG,REGISTRY,IMAGE_PREFIX,GHCR_USERNAME,GHCR_TOKEN,API_HOST_PORT,WEB_HOST_PORT,APP_DIR,AUS_ELE_PG_PASSWORD,AUS_ELE_CORS_ALLOW_ORIGINS,TAVILY_API_KEY,AUS_ELE_MCP_ENABLED
           script: |
             set -e
             bash "${APP_DIR}/deploy/scripts/deploy.sh"
@@ -357,6 +357,9 @@ jobs:
           WEB_HOST_PORT: ${{ env.WEB_HOST_PORT }}
           APP_DIR: ${{ env.APP_DIR }}
           AUS_ELE_CORS_ALLOW_ORIGINS: ${{ secrets.AUS_ELE_CORS_ALLOW_ORIGINS }}
+          # MCP 外部工具（2026-08-15）：Tavily key 从仓库 secrets 注入（未配置时 Tavily 自动停用）
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          AUS_ELE_MCP_ENABLED: "true"
 
       - name: 阶段状态汇总
         if: always()

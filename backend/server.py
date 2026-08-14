@@ -2355,10 +2355,29 @@ async def lifespan(app: FastAPI):
         )
     else:
         logger.info("Internal job worker disabled by AUS_ELE_ENABLE_JOB_WORKER")
-    
+
+    # MCP 外部工具注册（2026-08-15）：发现失败仅告警，不阻断启动
+    try:
+        from agent.mcp.adapter import register_all_mcp_tools
+
+        registered = await register_all_mcp_tools()
+        if registered:
+            logger.info("MCP tools registered: %s", registered)
+        else:
+            logger.info("MCP: no servers enabled/registered (AUS_ELE_MCP_ENABLED or keys missing)")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("MCP tool registration skipped: %s", exc)
+
     yield
     # Shutdown actions
     logger.info("Shutting down AEMO NEM API server...")
+    # MCP 网关清理：终止 stdio 子进程（2026-08-15）
+    try:
+        from agent.mcp.adapter import get_gateway
+
+        await get_gateway().shutdown()
+    except Exception:  # noqa: BLE001
+        pass
     if hasattr(app.state, 'scheduler'):
         app.state.scheduler.shutdown()
     if hasattr(app.state, 'job_worker'):

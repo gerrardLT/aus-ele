@@ -9,6 +9,15 @@ COPY requirements.txt /app/requirements.txt
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 libpq-dev && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+# MCP 集成（2026-08-15）：预热 stdio MCP server 包（uvx 首次拉包入缓存，消除运行冷启动）。
+# 失败容忍：网络不可达时不阻断构建，运行时降级为内置工具。
+ENV UV_CACHE_DIR=/app/.uvcache
+RUN uvx aemo-mcp --help || true
+RUN uvx au-weather-mcp --help || true
+RUN uvx rba-mcp --help || true
+RUN uvx abs-mcp --help || true
+RUN uvx yfinance-mcp --help || true
+
 COPY backend /app/backend
 COPY scrapers /app/scrapers
 

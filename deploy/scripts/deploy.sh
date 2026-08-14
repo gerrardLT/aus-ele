@@ -149,6 +149,9 @@ write_env_file() {
         echo "AGENT_ALERT_SMTP_PASSWORD=${AGENT_ALERT_SMTP_PASSWORD:-ZShwb9QNnXxkZC3J}"
         echo "AGENT_ALERT_SMTP_FROM=15851880785@163.com"
         echo "FEEDBACK_TO=15851880785@163.com"
+        # MCP 外部工具（2026-08-15）：Tavily key 由 CI secret 注入，缺省自动停用 Tavily
+        echo "AUS_ELE_MCP_ENABLED=${AUS_ELE_MCP_ENABLED:-true}"
+        echo "TAVILY_API_KEY=${TAVILY_API_KEY:-}"
     } >>"${ENV_FILE}"
 
     log ".env.prod 写入完成（含变量: REGISTRY, IMAGE_PREFIX, IMAGE_TAG, ports, JWT, FINGRID, LLM, CORS, SMTP）"
