@@ -1,0 +1,36 @@
+name: Ops Seed Admin
+
+# 运维工作流：在生产 backend 容器内执行种子管理员初始化（2026-08-14）。
+# 手动触发（Actions 页 Run workflow）；复用 CI 的 SSH Secrets 通道。
+# 初始密码由脚本自动生成并打印在作业日志中（一次性，请执行后立即保存）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: '管理员邮箱'
+        required: true
+        default: '15851880785@163.com'
+
+env:
+  APP_DIR: /www/wwwroot/aus-ele
+
+jobs:
+  seed-admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: SSH 执行 seed_admin.py
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          timeout: 30s
+          command_timeout: 5m
+          script: |
+            set -e
+            cd "${APP_DIR}"
+            docker compose -f docker-compose.prod.yml exec -T backend \
+              python scripts/seed_admin.py --email "${{ github.event.inputs.email }}"

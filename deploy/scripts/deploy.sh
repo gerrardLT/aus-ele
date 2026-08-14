@@ -141,9 +141,17 @@ write_env_file() {
         echo "AUS_ELE_AGENT_LLM_MODEL=gpt-5.6-terra"  # luna 已被供应商下架（2026-08-09，404）
         # CORS（生产域名）
         echo "AUS_ELE_CORS_ALLOW_ORIGINS=${AUS_ELE_CORS_ALLOW_ORIGINS:-}"
+        # P2 邮件渠道（2026-08-14）— 163 SMTP 465 隐式 SSL，授权码非登录密码
+        echo "AGENT_ALERT_SMTP_HOST=smtp.163.com"
+        echo "AGENT_ALERT_SMTP_PORT=465"
+        echo "AGENT_ALERT_SMTP_USE_TLS=false"
+        echo "AGENT_ALERT_SMTP_USER=15851880785@163.com"
+        echo "AGENT_ALERT_SMTP_PASSWORD=${AGENT_ALERT_SMTP_PASSWORD:-ZShwb9QNnXxkZC3J}"
+        echo "AGENT_ALERT_SMTP_FROM=15851880785@163.com"
+        echo "FEEDBACK_TO=15851880785@163.com"
     } >>"${ENV_FILE}"
 
-    log ".env.prod 写入完成（含变量: REGISTRY, IMAGE_PREFIX, IMAGE_TAG, ports, JWT, FINGRID, LLM, CORS）"
+    log ".env.prod 写入完成（含变量: REGISTRY, IMAGE_PREFIX, IMAGE_TAG, ports, JWT, FINGRID, LLM, CORS, SMTP）"
 }
 
 # ---------------------------------------------------------------------------
