@@ -34,8 +34,8 @@ function buildSteps(zh) {
       target: '[data-tour="sidebar"]',
       title: zh ? '全局导航' : 'Global navigation',
       body: zh
-        ? 'NEM / WEM 双市场、AI 决策引擎、报告中心、定价与账户都在这里。登录后可在「账户中心」管理成员、API Key 与告警。'
-        : 'NEM/WEM markets, AI Decision Engine, report center, pricing and account live here. After signing in, manage members, API keys and alerts in the Account Center.',
+        ? 'NEM / WEM 双市场、天枢 · AI 决策引擎、报告中心、定价与账户都在这里。登录后可在「账户中心」管理成员、API Key 与告警。'
+        : 'NEM/WEM markets, Tianshu · Decision Engine, report center, pricing and account live here. After signing in, manage members, API keys and alerts in the Account Center.',
       placement: 'right',
     },
     {
@@ -71,8 +71,8 @@ function buildSteps(zh) {
       target: null,
       title: zh ? '准备好了' : 'You are set',
       body: zh
-        ? '建议通过侧边栏「AI 决策引擎」开始你的第一个问题，或浏览定价页了解套餐。祝分析顺利！'
-        : 'Start with your first question via "AI Decision Engine" in the sidebar, or check the pricing page. Happy analyzing!',
+        ? '建议通过侧边栏「天枢 · AI 决策引擎」开始你的第一个问题，或浏览定价页了解套餐。祝分析顺利！'
+        : 'Start with your first question via "Tianshu · Decision Engine" in the sidebar, or check the pricing page. Happy analyzing!',
     },
   ];
 }

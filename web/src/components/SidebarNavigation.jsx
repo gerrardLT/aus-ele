@@ -23,7 +23,7 @@ export default function SidebarNavigation({
   const groups = [
     {
       title: lang === 'zh' ? '智能分析' : 'INTELLIGENCE',
-      links: [{ id: 'agent', label: lang === 'zh' ? 'AI 决策引擎' : 'AI Decision Engine', path: '/agent' }],
+      links: [{ id: 'agent', label: lang === 'zh' ? '天枢 · AI 决策引擎' : 'Tianshu · Decision Engine', path: '/agent' }],
     },
     {
       title: lang === 'zh' ? '其他市场' : 'OTHER MARKETS',

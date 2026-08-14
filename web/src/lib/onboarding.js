@@ -9,7 +9,7 @@ export const ONBOARDING_STEPS = [
   { id: 'browse', zh: '浏览市场分析页', en: 'Browse market analysis' },
   { id: 'switch_market', zh: '切换 NEM/WEM 市场', en: 'Switch between NEM/WEM' },
   { id: 'filter', zh: '使用筛选器（季度/负荷类型）', en: 'Use filters (quarter/day type)' },
-  { id: 'agent', zh: '完成一次 AI 决策引擎分析', en: 'Complete an AI Decision Engine run' },
+  { id: 'agent', zh: '完成一次天枢 AI 分析', en: 'Complete a Tianshu AI run' },
   { id: 'pricing', zh: '查看定价与套餐', en: 'View pricing plans' },
 ];
 

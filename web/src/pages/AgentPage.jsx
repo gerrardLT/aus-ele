@@ -556,7 +556,7 @@ function AgentLayout({
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/60">
             AEMO Intelligence
           </div>
-          <div className="mt-1 text-xs text-white/60">AI 决策引擎</div>
+          <div className="mt-1 text-xs text-white/60">天枢 · AI 决策引擎</div>
         </div>
 
         {/* Nav links back */}
@@ -642,7 +642,7 @@ function AgentLayout({
       <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
         {/* Top bar: 标题 + 区域 + 工作流 + 操作，合并为单行（2026-08-11 精简） */}
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-6 py-2.5">
-          <h1 className="font-serif text-base font-semibold text-[var(--color-text)]">AI 决策引擎</h1>
+          <h1 className="font-serif text-base font-semibold text-[var(--color-text)]">天枢 · AI 决策引擎</h1>
           <span className="h-4 w-px bg-[var(--color-border)]" />
           <select
             value={region}

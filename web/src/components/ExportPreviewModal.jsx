@@ -197,7 +197,7 @@ export default function ExportPreviewModal({ report, answer, trace, kpis, onClos
               {/* 文档头 */}
               <div style={{ borderBottom: `2px solid ${C.primary}`, paddingBottom: 10 }}>
                 <div style={{ fontSize: 10, letterSpacing: '0.16em', color: C.muted, textTransform: 'uppercase' }}>
-                  AEMO Intelligence · AI 决策引擎
+                  AEMO Intelligence · 天枢 · AI 决策引擎
                 </div>
                 <div style={{ fontSize: 18, fontWeight: 700, margin: '6px 0 4px', lineHeight: '26px' }}>
                   {report.query || '分析执行报告'}
@@ -347,7 +347,7 @@ export default function ExportPreviewModal({ report, answer, trace, kpis, onClos
                   )}
                 </div>
                 <div style={{ fontSize: 8, color: C.muted, marginTop: 8, lineHeight: '13px' }}>
-                  本报告由 AI 决策引擎自动生成，为研究参考，不构成投资建议。数据来源与质量以「数据质量」章节为准。
+                  本报告由天枢 · AI 决策引擎自动生成，为研究参考，不构成投资建议。数据来源与质量以「数据质量」章节为准。
                 </div>
               </div>
             </div>
