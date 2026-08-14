@@ -745,7 +745,7 @@ function AgentLayout({
           {messages.length === 0 ? (
             <EmptyState region={region} />
           ) : (
-            <div className="mx-auto flex max-w-[880px] flex-col gap-6">
+            <div className="mx-auto flex max-w-[1200px] 2xl:max-w-[1360px] flex-col gap-6">
               {messages.map((m) =>
                 m.role === 'user' ? (
                   <UserBubble key={m.id} text={m.content} />
@@ -759,7 +759,7 @@ function AgentLayout({
 
         {/* Composer：固定首屏底部，发送按钮内嵌输入框右下角（2026-08-11） */}
         <div className="border-t border-[var(--color-border)] px-8 py-3">
-          <div className="mx-auto max-w-[880px]">
+          <div className="mx-auto max-w-[1200px] 2xl:max-w-[1360px]">
             {error && (
               <div className="mb-2 rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2 text-xs text-[var(--color-error)]">
                 {error}
@@ -860,7 +860,7 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
       {plan && <PlanView plan={plan} />}
 
       {/* 双栏：左=结论+推理，右=轨迹/报告（窄屏自动堆叠） */}
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(380px,460px)]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(420px,520px)]">
         <div className="flex min-w-0 flex-col gap-3">
           {/* 左栏窄，2 列布局避免卡片文字截断（2026-08-11 用户反馈） */}
           {kpis.length > 0 && (
@@ -878,7 +878,8 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
               defaultOpen
               badge={streaming && !answerDone ? '生成中' : undefined}
             >
-              <MarkdownText text={answer} streaming={streaming && !answerDone} />
+              {/* 长推理限高内滚 + 流式自动跟随 + 一键展开（2026-08-14 交互优化） */}
+              <ReasoningBox text={answer} streaming={streaming && !answerDone} />
             </Collapsible>
           )}
           {error && (
@@ -897,6 +898,58 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
 }
 
 // ─── Degraded banner (LLM 不可用 → 模板模式透明化) ────────────────────
+
+// ─── ReasoningBox（长推理限高内滚，2026-08-14 交互优化） ───────────────
+// 默认最大高度 360px 内滚；流式输出自动跟随到底；内容超高时提供展开/收起逃逸。
+
+function ReasoningBox({ text, streaming }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const ref = useRef(null);
+
+  // 流式输出时自动滚动到底部（展开态不强制，避免打断阅读）
+  useEffect(() => {
+    if (streaming && !expanded && ref.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+    }
+  }, [text, streaming, expanded]);
+
+  // 检测内容是否超过最大高度 → 决定是否显示展开按钮与渐隐
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const check = () => setOverflowing(el.scrollHeight > el.clientHeight + 8);
+    check();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    if (ro) ro.observe(el);
+    return () => { if (ro) ro.disconnect(); };
+  }, [text, expanded]);
+
+  return (
+    <div className="relative">
+      <div
+        ref={ref}
+        className={`overflow-y-auto px-4 pb-3 pt-1 ${expanded ? '' : 'max-h-[360px]'}`}
+      >
+        <MarkdownText text={text} streaming={streaming} />
+      </div>
+      {/* 底部渐隐提示（仅收起且超高时） */}
+      {!expanded && overflowing && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-8 h-10 bg-gradient-to-t from-[var(--color-surface)] to-transparent" />
+      )}
+      {overflowing && (
+        <div className="flex justify-center border-t border-[var(--color-border)] py-1">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)]"
+          >
+            {expanded ? '收起高度限制' : '展开全部推理'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function DegradedBanner({ reason }) {
   return (
