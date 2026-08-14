@@ -57,15 +57,6 @@ function buildSteps(zh) {
       placement: 'bottom',
     },
     {
-      id: 'ai',
-      target: '[data-tour="ai"]',
-      title: zh ? 'AI 编排分析' : 'AI orchestrated analysis',
-      body: zh
-        ? '用自然语言提问：价格异动归因、区域对比、储能收益测算。AI 只基于系统内数据作答，每个结论附规则与数据边界。'
-        : 'Ask in plain language: spike attribution, region comparison, storage revenue estimates. Answers are grounded in system data, with rule and data-boundary annotations.',
-      placement: 'left',
-    },
-    {
       id: 'bell',
       target: '[data-tour="bell"]',
       optional: true,
@@ -80,8 +71,8 @@ function buildSteps(zh) {
       target: null,
       title: zh ? '准备好了' : 'You are set',
       body: zh
-        ? '建议从右下角 AI 分析师开始你的第一个问题，或浏览定价页了解套餐。祝分析顺利！'
-        : 'Start with your first question to the AI Analyst, or check the pricing page. Happy analyzing!',
+        ? '建议通过侧边栏「AI 编排分析」开始你的第一个问题，或浏览定价页了解套餐。祝分析顺利！'
+        : 'Start with your first question via "AI Agent" in the sidebar, or check the pricing page. Happy analyzing!',
     },
   ];
 }

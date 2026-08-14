@@ -15,7 +15,6 @@ import { getMarketConfig, DEFAULT_BESS_PARAMS } from '../lib/marketConfig';
 import { useFilters } from '../contexts/FilterContext';
 import { useStageSummaries } from '../hooks/useStageSummaries';
 import AnomalyBadge from '../components/AnomalyBadge';
-import AnalystChat from '../components/AnalystChat';
 import NotificationBell from '../components/NotificationBell';
 import OnboardingTour from '../components/OnboardingTour';
 import SavedViewsBar from '../components/SavedViewsBar';
@@ -257,10 +256,7 @@ export default function MarketPage({ market }) {
         )}
       </div>
 
-      {/* U6: AI Analyst Chat FAB */}
-      <AnalystChat lang={lang} />
-
-      {/* P2：站内通知铃铛 + 沉浸式新手导览（2026-08-14） */}
+      {/* P2：站内通知铃铛 + 沉浸式新手导览（2026-08-14）；AI 分析入口在侧边栏 /agent（2026-08-14 移除右下角悬浮组件） */}
       <NotificationBell lang={lang} />
       <OnboardingTour lang={lang} />
 
