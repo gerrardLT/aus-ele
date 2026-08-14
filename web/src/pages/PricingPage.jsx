@@ -13,8 +13,8 @@ const PLANS = [
     agentRuns: 50,
     apiUnits: 1000,
     features: {
-      zh: ['NEM/WEM 全部分析模块', 'AI 编排分析（50 次/天）', 'API 访问（1,000 units/天）', '成员邀请与协作'],
-      en: ['All NEM/WEM analysis modules', 'AI orchestrated analysis (50 runs/day)', 'API access (1,000 units/day)', 'Member invites & collaboration'],
+      zh: ['NEM/WEM 全部分析模块', 'AI 决策引擎（50 次/天）', 'API 访问（1,000 units/天）', '成员邀请与协作'],
+      en: ['All NEM/WEM analysis modules', 'AI Decision Engine (50 runs/day)', 'API access (1,000 units/day)', 'Member invites & collaboration'],
     },
     highlight: false,
   },
@@ -25,8 +25,8 @@ const PLANS = [
     agentRuns: 200,
     apiUnits: 10000,
     features: {
-      zh: ['Starter 全部功能', 'AI 编排分析（200 次/天）', 'API 访问（10,000 units/天）', '优先支持'],
-      en: ['Everything in Starter', 'AI orchestrated analysis (200 runs/day)', 'API access (10,000 units/day)', 'Priority support'],
+      zh: ['Starter 全部功能', 'AI 决策引擎（200 次/天）', 'API 访问（10,000 units/天）', '优先支持'],
+      en: ['Everything in Starter', 'AI Decision Engine (200 runs/day)', 'API access (10,000 units/day)', 'Priority support'],
     },
     highlight: true,
   },
@@ -37,8 +37,8 @@ const PLANS = [
     agentRuns: 1000,
     apiUnits: 50000,
     features: {
-      zh: ['Growth 全部功能', 'AI 编排分析（1,000 次/天）', 'API 访问（50,000 units/天）', '专属支持与方法论白皮书'],
-      en: ['Everything in Growth', 'AI orchestrated analysis (1,000 runs/day)', 'API access (50,000 units/day)', 'Dedicated support & methodology whitepaper'],
+      zh: ['Growth 全部功能', 'AI 决策引擎（1,000 次/天）', 'API 访问（50,000 units/天）', '专属支持与方法论白皮书'],
+      en: ['Everything in Growth', 'AI Decision Engine (1,000 runs/day)', 'API access (50,000 units/day)', 'Dedicated support & methodology whitepaper'],
     },
     highlight: false,
   },
@@ -138,7 +138,7 @@ export default function PricingPage() {
               {(zh
                 ? [
                     ['NEM/WEM 全部分析模块', '✓', '✓', '✓'],
-                    ['AI 编排分析（次/天）', '50', '200', '1,000'],
+                    ['AI 决策引擎（次/天）', '50', '200', '1,000'],
                     ['API 访问（units/天）', '1,000', '10,000', '50,000'],
                     ['收益基准对照（benchmark）', '✓', '✓', '✓'],
                     ['成员协作', '✓', '✓', '✓'],
@@ -147,7 +147,7 @@ export default function PricingPage() {
                   ]
                 : [
                     ['All NEM/WEM analysis modules', '✓', '✓', '✓'],
-                    ['AI orchestrated analysis (runs/day)', '50', '200', '1,000'],
+                    ['AI Decision Engine (runs/day)', '50', '200', '1,000'],
                     ['API access (units/day)', '1,000', '10,000', '50,000'],
                     ['Revenue benchmark comparison', '✓', '✓', '✓'],
                     ['Member collaboration', '✓', '✓', '✓'],
