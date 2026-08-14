@@ -37,6 +37,7 @@ export default function SidebarNavigation({
         { id: 'reports', label: lang === 'zh' ? '报告中心' : 'Reports', path: '/reports' },
         { id: 'pricing', label: lang === 'zh' ? '定价与套餐' : 'Pricing', path: '/pricing' },
         { id: 'help', label: lang === 'zh' ? '帮助与反馈' : 'Help', path: '/help' },
+        { id: 'tour', label: lang === 'zh' ? '重看新手导览' : 'Replay tour', path: '/?tour=1' },
       ],
     },
   ];
@@ -46,7 +47,7 @@ export default function SidebarNavigation({
   const userEmail = storedAuth?.principal?.email;
 
   return (
-    <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 overflow-y-auto border-r border-white/8 bg-[#13161A] px-4 py-5 text-[#F3F5F7] md:block max-[1100px]:hidden">
+    <aside data-tour="sidebar" className="sticky top-0 hidden h-screen w-[248px] shrink-0 overflow-y-auto border-r border-white/8 bg-[#13161A] px-4 py-5 text-[#F3F5F7] md:block max-[1100px]:hidden">
       {/* Decorative gradients */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top_left,rgba(110,168,255,0.14),transparent_60%)]" />
 

@@ -17,7 +17,7 @@ import { useStageSummaries } from '../hooks/useStageSummaries';
 import AnomalyBadge from '../components/AnomalyBadge';
 import AnalystChat from '../components/AnalystChat';
 import NotificationBell from '../components/NotificationBell';
-import OnboardingChecklist from '../components/OnboardingChecklist';
+import OnboardingTour from '../components/OnboardingTour';
 import SavedViewsBar from '../components/SavedViewsBar';
 import { markOnboardingStep, visitMarket } from '../lib/onboarding.js';
 import { fetchJson } from '../lib/apiClient';
@@ -152,7 +152,7 @@ export default function MarketPage({ market }) {
       years={marketYears}
     >
       {/* S6/F3: Persistent context bar + U4: Anomaly badge */}
-      <div className="flex items-center gap-3 mb-2 px-1 text-xs text-[var(--color-muted)]">
+      <div data-tour="filters" className="flex items-center gap-3 mb-2 px-1 text-xs text-[var(--color-muted)]">
         <span className="inline-flex items-center gap-1 rounded bg-[var(--color-border)] px-2 py-0.5 font-medium">
           📍 {filters.region}
         </span>
@@ -175,7 +175,7 @@ export default function MarketPage({ market }) {
       </div>
 
       {/* Tab Navigation Bar */}
-      <div className="sticky top-0 z-20 -mx-1 mb-3 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 backdrop-blur-sm">
+      <div data-tour="stages" className="sticky top-0 z-20 -mx-1 mb-3 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 backdrop-blur-sm">
         <div className="flex min-w-max gap-0" role="tablist" aria-label={lang === 'zh' ? '分析阶段' : 'Analysis Stages'}>
           {config.stages.map((stage, index) => {
             const isActive = index === activeTabIndex;
@@ -260,9 +260,9 @@ export default function MarketPage({ market }) {
       {/* U6: AI Analyst Chat FAB */}
       <AnalystChat lang={lang} />
 
-      {/* P2：站内通知铃铛 + 新手引导（2026-08-14） */}
+      {/* P2：站内通知铃铛 + 沉浸式新手导览（2026-08-14） */}
       <NotificationBell lang={lang} />
-      <OnboardingChecklist lang={lang} />
+      <OnboardingTour lang={lang} />
 
     </PageShell>
   );

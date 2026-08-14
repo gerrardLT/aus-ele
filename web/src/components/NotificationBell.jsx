@@ -82,7 +82,7 @@ export default function NotificationBell({ lang = 'zh' }) {
   if (!workspaceId) return null;
 
   return (
-    <div ref={boxRef} className="fixed right-4 top-3 z-50">
+    <div ref={boxRef} data-tour="bell" className="fixed right-4 top-3 z-50">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
