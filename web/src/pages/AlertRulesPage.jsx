@@ -41,9 +41,15 @@ export default function AlertRulesPage() {
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
-    const res = await fetch(`${API_BASE}/alerts/rules?workspace_id=${workspaceId}`);
-    if (res.ok) setRules((await res.json()).items || []);
-  }, [workspaceId]);
+    // 旧端点已鉴权收紧（2026-08-14），列表需携带令牌
+    const token = await getToken();
+    try {
+      const res = await fetch(`${API_BASE}/alerts/rules?workspace_id=${workspaceId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) setRules((await res.json()).items || []);
+    } catch { /* best-effort */ }
+  }, [workspaceId, getToken]);
 
   useEffect(() => { load().catch(() => {}); }, [load]);
 

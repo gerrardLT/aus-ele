@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -36,22 +37,26 @@ from database import DatabaseManager
 
 
 class OrganizationGovernanceDatabaseTests(unittest.TestCase):
+    """随机后缀隔离（2026-08-14 技术债修复）：DatabaseManager 为 PG-only，
+    temp path 被忽略直连共享库；固定 ID/邮箱重复运行撞唯一约束。"""
+
     def setUp(self):
+        self._s = uuid.uuid4().hex[:8]
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
         self.organization = self.db.upsert_organization(
             {
-                "organization_id": "org_acme",
-                "name": "Acme",
+                "organization_id": f"org_acme_{self._s}",
+                "name": f"Acme-{self._s}",
                 "created_at": "2026-04-28T00:00:00Z",
                 "updated_at": "2026-04-28T00:00:00Z",
             }
         )
         self.owner = self.db.upsert_principal(
             {
-                "principal_id": "pr_owner",
-                "email": "owner@acme.com",
+                "principal_id": f"pr_owner_{self._s}",
+                "email": f"owner-{self._s}@acme-{self._s}.com",
                 "display_name": "Owner",
                 "password_hash": None,
                 "password_salt": None,
@@ -67,7 +72,7 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
     def test_organization_membership_round_trip(self):
         membership = self.db.upsert_organization_membership(
             {
-                "organization_membership_id": "om_1",
+                "organization_membership_id": f"om_1_{self._s}",
                 "organization_id": self.organization["organization_id"],
                 "principal_id": self.owner["principal_id"],
                 "role": "org_owner",
@@ -88,7 +93,7 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
             self.db.upsert_principal(
                 {
                     "principal_id": principal_id,
-                    "email": f"user{idx}@acme.com",
+                    "email": f"user{idx}-{self._s}@acme-{self._s}.com",
                     "display_name": f"User {idx}",
                     "password_hash": None,
                     "password_salt": None,
@@ -98,7 +103,7 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
             )
             self.db.upsert_organization_membership(
                 {
-                    "organization_membership_id": f"om_{idx}",
+                    "organization_membership_id": f"om_{idx}_{self._s}",
                     "organization_id": self.organization["organization_id"],
                     "principal_id": principal_id,
                     "role": "org_member",
@@ -117,9 +122,9 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
                 "organization_id": self.organization["organization_id"],
                 "workspace_id": None,
                 "target_scope_type": "organization",
-                "email": "analyst@acme.com",
+                "email": f"analyst-{self._s}@acme-{self._s}.com",
                 "target_role": "org_member",
-                "invite_token": "invite-token-1",
+                "invite_token": f"invite-token-1-{self._s}",
                 "status": "pending",
                 "invited_by_principal_id": self.owner["principal_id"],
                 "accepted_by_principal_id": None,
@@ -143,9 +148,9 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
                 "organization_id": self.organization["organization_id"],
                 "workspace_id": None,
                 "target_scope_type": "organization",
-                "email": "analyst@acme.com",
+                "email": f"analyst-{self._s}@acme-{self._s}.com",
                 "target_role": "org_member",
-                "invite_token": "invite-token-2",
+                "invite_token": f"invite-token-2-{self._s}",
                 "status": "pending",
                 "invited_by_principal_id": self.owner["principal_id"],
                 "accepted_by_principal_id": None,
@@ -158,8 +163,8 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
                 "updated_at": "2026-04-28T00:00:00Z",
             }
         )
-        invite = self.db.fetch_membership_invite_by_token("invite-token-2")
-        self.assertEqual(invite["email"], "analyst@acme.com")
+        invite = self.db.fetch_membership_invite_by_token(f"invite-token-2-{self._s}")
+        self.assertEqual(invite["email"], f"analyst-{self._s}@acme-{self._s}.com")
 
     def test_list_membership_invites_can_filter_by_status(self):
         self.db.upsert_membership_invite(
@@ -168,9 +173,9 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
                 "organization_id": self.organization["organization_id"],
                 "workspace_id": None,
                 "target_scope_type": "organization",
-                "email": "pending@acme.com",
+                "email": f"pending-{self._s}@acme-{self._s}.com",
                 "target_role": "org_member",
-                "invite_token": "invite-token-3",
+                "invite_token": f"invite-token-3-{self._s}",
                 "status": "pending",
                 "invited_by_principal_id": self.owner["principal_id"],
                 "accepted_by_principal_id": None,
@@ -179,6 +184,18 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
                 "accepted_at": None,
                 "revoked_at": None,
                 "revoke_reason": None,
+                "created_at": "2026-04-28T00:00:00Z",
+                "updated_at": "2026-04-28T00:00:00Z",
+            }
+        )
+        # PG 外键约束：accepted_by_principal_id 必须真实存在（2026-08-14 修复）
+        self.db.upsert_principal(
+            {
+                "principal_id": f"pr_other_{self._s}",
+                "email": f"other-{self._s}@acme-{self._s}.com",
+                "display_name": "Other",
+                "password_hash": None,
+                "password_salt": None,
                 "created_at": "2026-04-28T00:00:00Z",
                 "updated_at": "2026-04-28T00:00:00Z",
             }
@@ -189,12 +206,12 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
                 "organization_id": self.organization["organization_id"],
                 "workspace_id": None,
                 "target_scope_type": "organization",
-                "email": "accepted@acme.com",
+                "email": f"accepted-{self._s}@acme-{self._s}.com",
                 "target_role": "org_member",
-                "invite_token": "invite-token-4",
+                "invite_token": f"invite-token-4-{self._s}",
                 "status": "accepted",
                 "invited_by_principal_id": self.owner["principal_id"],
-                "accepted_by_principal_id": "pr_other",
+                "accepted_by_principal_id": f"pr_other_{self._s}",
                 "revoked_by_principal_id": None,
                 "expires_at": "2026-05-01T00:00:00Z",
                 "accepted_at": "2026-04-28T01:00:00Z",
@@ -206,17 +223,18 @@ class OrganizationGovernanceDatabaseTests(unittest.TestCase):
         )
         items = self.db.list_membership_invites(self.organization["organization_id"], status="pending")
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["email"], "pending@acme.com")
+        self.assertEqual(items[0]["email"], f"pending-{self._s}@acme-{self._s}.com")
 
 
 class OrganizationGovernanceAccessControlTests(unittest.TestCase):
     def setUp(self):
+        self._s = uuid.uuid4().hex[:8]
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
-        self.organization = seed_organization(self.db, name="Acme")
-        self.owner_principal = seed_principal(self.db, email="owner@acme.com", display_name="Owner")
-        self.member_principal = seed_principal(self.db, email="member@acme.com", display_name="Member")
+        self.organization = seed_organization(self.db, name=f"Acme-{self._s}")
+        self.owner_principal = seed_principal(self.db, email=f"owner-{self._s}@acme-{self._s}.com", display_name="Owner")
+        self.member_principal = seed_principal(self.db, email=f"member-{self._s}@acme-{self._s}.com", display_name="Member")
         self.owner_membership = seed_organization_membership(
             self.db,
             organization_id=self.organization["organization_id"],
@@ -240,9 +258,9 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             organization_id=self.organization["organization_id"],
             workspace_id=None,
             target_scope_type="organization",
-            email="invitee@acme.com",
+            email=f"invitee-{self._s}@acme-{self._s}.com",
             target_role="org_member",
-            expires_at="2026-05-01T00:00:00Z",
+            expires_at="2027-05-01T00:00:00Z",
         )
 
     def tearDown(self):
@@ -274,9 +292,9 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             organization_id=self.organization["organization_id"],
             workspace_id=None,
             target_scope_type="organization",
-            email="invitee2@acme.com",
+            email=f"invitee2-{self._s}@acme-{self._s}.com",
             target_role="org_member",
-            expires_at="2026-05-01T00:00:00Z",
+            expires_at="2027-05-01T00:00:00Z",
         )
         self.assertEqual(invite["status"], "pending")
         self.assertEqual(invite["target_scope_type"], "organization")
@@ -288,9 +306,9 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             organization_id=self.organization["organization_id"],
             workspace_id=None,
             target_scope_type="organization",
-            email="invitee@acme.com",
+            email=f"invitee-{self._s}@acme-{self._s}.com",
             target_role="org_member",
-            expires_at="2026-05-03T00:00:00Z",
+            expires_at="2027-05-03T00:00:00Z",
         )
         self.assertEqual(invite["invite_id"], self.pending_invite["invite_id"])
         self.assertEqual(invite["status"], "pending")
@@ -324,7 +342,7 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             organization_id=self.organization["organization_id"],
             workspace_id=None,
             target_scope_type="organization",
-            email="expired@acme.com",
+            email=f"expired-{self._s}@acme-{self._s}.com",
             target_role="org_member",
             expires_at="2026-04-01T00:00:00Z",
         )
@@ -364,11 +382,11 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             self.db,
             actor=self.org_owner_actor,
             invite_id=revoked["invite_id"],
-            expires_at="2026-05-10T00:00:00Z",
+            expires_at="2027-05-10T00:00:00Z",
         )
         self.assertEqual(reissued["status"], "pending")
         self.assertNotEqual(reissued["invite_token"], revoked["invite_token"])
-        self.assertEqual(reissued["expires_at"], "2026-05-10T00:00:00Z")
+        self.assertEqual(reissued["expires_at"], "2027-05-10T00:00:00Z")
 
     def test_reissue_membership_invite_rejects_accepted_invite(self):
         accepted = accept_membership_invite(
@@ -382,7 +400,7 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
                 self.db,
                 actor=self.org_owner_actor,
                 invite_id=self.pending_invite["invite_id"],
-                expires_at="2026-05-10T00:00:00Z",
+                expires_at="2027-05-10T00:00:00Z",
             )
         self.assertEqual(ctx.exception.status_code, 400)
 
@@ -430,7 +448,7 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
         )
         session = login_with_password(
             self.db,
-            email="member@acme.com",
+            email=f"member-{self._s}@acme-{self._s}.com",
             password="Str0ngPass!",
             workspace_id=workspace["workspace_id"],
         )
@@ -486,7 +504,7 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             {
                 "domain_id": "dom_acme",
                 "organization_id": self.organization["organization_id"],
-                "domain": "acme.com",
+                "domain": f"acme-{self._s}.com",
                 "verified_at": None,
                 "join_mode": "domain_auto_join_org",
                 "created_at": "2026-04-28T00:00:00Z",
@@ -497,12 +515,12 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
         joined = join_organization_by_domain(
             self.db,
             organization_id=self.organization["organization_id"],
-            email="newuser@acme.com",
+            email=f"newuser-{self._s}@acme-{self._s}.com",
             display_name="New User",
             password="Welc0mePass!",
         )
 
-        self.assertEqual(joined["principal"]["email"], "newuser@acme.com")
+        self.assertEqual(joined["principal"]["email"], f"newuser-{self._s}@acme-{self._s}.com")
         self.assertEqual(joined["organization_membership"]["role"], "org_member")
         self.assertEqual(joined["organization_membership"]["status"], "active")
         self.assertEqual(joined["workspace_memberships"], [])
@@ -512,20 +530,20 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             {
                 "domain_id": "dom_acme",
                 "organization_id": self.organization["organization_id"],
-                "domain": "acme.com",
+                "domain": f"acme-{self._s}.com",
                 "verified_at": None,
                 "join_mode": "domain_auto_join_org",
                 "created_at": "2026-04-28T00:00:00Z",
                 "updated_at": "2026-04-28T00:00:00Z",
             }
         )
-        principal = seed_principal(self.db, email="existing@acme.com", display_name="Existing")
+        principal = seed_principal(self.db, email=f"existing-{self._s}@acme-{self._s}.com", display_name="Existing")
         set_principal_password(self.db, principal_id=principal["principal_id"], password="Welc0mePass!")
 
         joined = join_organization_by_domain(
             self.db,
             organization_id=self.organization["organization_id"],
-            email="existing@acme.com",
+            email=f"existing-{self._s}@acme-{self._s}.com",
             display_name="Existing User",
             password="Welc0mePass!",
         )
@@ -538,7 +556,7 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
             {
                 "domain_id": "dom_acme",
                 "organization_id": self.organization["organization_id"],
-                "domain": "acme.com",
+                "domain": f"acme-{self._s}.com",
                 "verified_at": None,
                 "join_mode": "invite_only",
                 "created_at": "2026-04-28T00:00:00Z",

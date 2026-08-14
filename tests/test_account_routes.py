@@ -417,6 +417,56 @@ class AccountRoutesTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 422)
 
+    # ── 修改密码（2026-08-14） ─────────────────────────────────────
+
+    def test_password_change_flow(self):
+        from access_control import set_principal_password, login_with_password
+
+        set_principal_password(self.db, principal_id=self.owner["principal_id"], password="OldPass-123")
+        client = _build_client(self.db, self.owner_actor)
+        ws = self.ws["workspace_id"]
+        # 旧密码错误 → 401
+        resp = client.post("/api/v1/account/password", json={
+            "current_password": "WrongPass-1", "new_password": "NewPass-456",
+        })
+        self.assertEqual(resp.status_code, 401)
+        # 正确旧密码 → 修改成功，新密码可登录
+        resp = client.post("/api/v1/account/password", json={
+            "current_password": "OldPass-123", "new_password": "NewPass-456",
+        })
+        self.assertEqual(resp.status_code, 200)
+        session = login_with_password(self.db, email=self.owner["email"],
+                                      password="NewPass-456", workspace_id=ws)
+        self.assertIn("access_token", session)
+
+    # ── 邀请接受限流（2026-08-14） ───────────────────────────────────
+
+    def test_invite_accept_rate_limit_blocks_token_probing(self):
+        from routes.account_routes import check_invite_accept_rate_limit
+        from fastapi import HTTPException
+
+        token = f"probe_{self._suffix}"
+        for _ in range(10):
+            check_invite_accept_rate_limit(token, "1.2.3.4")
+        with self.assertRaises(HTTPException) as ctx:
+            check_invite_accept_rate_limit(token, "1.2.3.4")
+        self.assertEqual(ctx.exception.status_code, 429)
+        # 不同 IP 不受影响
+        check_invite_accept_rate_limit(token, "5.6.7.8")
+
+    def test_invite_accept_endpoint_rate_limited(self):
+        app = FastAPI()
+        app.include_router(account_routes.router)
+        client = TestClient(app)
+        token = f"probe2_{self._suffix}"
+        statuses = []
+        for _ in range(11):
+            resp = client.post("/api/v1/account/invites/accept", json={
+                "invite_token": token, "display_name": "X", "password": "long-enough-pw",
+            })
+            statuses.append(resp.status_code)
+        self.assertIn(429, statuses)
+
 
 if __name__ == "__main__":
     unittest.main()

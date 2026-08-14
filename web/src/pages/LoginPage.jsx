@@ -3,6 +3,9 @@
 
 import { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from '../contexts/AuthContext.jsx';
+import { getApiBase } from '../lib/apiBase.js';
+
+const API_BASE = getApiBase();
 
 function readLang() {
   try { return globalThis.localStorage?.getItem('app_lang') || 'zh'; } catch { return 'zh'; }
@@ -80,7 +83,69 @@ function LoginForm() {
       <p className="pt-2 text-center text-xs text-[var(--color-muted)]">
         {zh ? '本平台为邀请制，如需账户请联系管理员获取邀请链接' : 'Invite-only platform. Contact your administrator for an invite link.'}
       </p>
+      <SsoBlock zh={zh} />
     </form>
+  );
+}
+
+/** SSO 入口（P1-7，2026-08-14）：组织已注册 OIDC provider 后可用；
+ * 未开通时报 404 提示联系管理员。 */
+function SsoBlock({ zh }) {
+  const [open, setOpen] = useState(false);
+  const [orgId, setOrgId] = useState('');
+  const [provider, setProvider] = useState('google');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const startSso = async () => {
+    if (!orgId.trim()) { setError(zh ? '请输入组织 ID' : 'Organization ID required'); return; }
+    setBusy(true); setError('');
+    try {
+      const redirectUri = `${globalThis.location.origin}/api/auth/oidc/callback`;
+      const qs = new URLSearchParams({
+        organization_id: orgId.trim(),
+        provider_key: provider,
+        redirect_uri: redirectUri,
+      });
+      const res = await fetch(`${API_BASE}/auth/oidc/start?${qs}`, { method: 'POST' });
+      if (res.ok) {
+        const body = await res.json();
+        if (body.authorization_url) { globalThis.location.href = body.authorization_url; return; }
+        setError(zh ? 'SSO 响应缺少授权地址' : 'SSO response missing authorization URL');
+      } else if (res.status === 404) {
+        setError(zh ? '该组织未开通 SSO，请联系管理员' : 'SSO not enabled for this organization');
+      } else {
+        setError(`SSO failed (${res.status})`);
+      }
+    } catch {
+      setError(zh ? '网络错误，请稍后重试' : 'Network error, please retry');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls = 'w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]';
+
+  return (
+    <div className="border-t border-[var(--color-border)] pt-3">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full text-center text-xs text-[var(--color-muted)] hover:text-[var(--color-text)]">
+        {zh ? `企业 SSO 登录 ${open ? '−' : '+'}` : `Enterprise SSO ${open ? '−' : '+'}`}
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <input placeholder={zh ? '组织 ID（org_xxx）' : 'Organization ID (org_xxx)'} value={orgId} onChange={(e) => setOrgId(e.target.value)} className={inputCls} />
+          <select value={provider} onChange={(e) => setProvider(e.target.value)} className={inputCls}>
+            <option value="google">Google</option>
+            <option value="microsoft">Microsoft</option>
+          </select>
+          <button type="button" onClick={startSso} disabled={busy}
+            className="w-full rounded-lg border border-[var(--color-border)] px-4 py-2 text-xs font-semibold text-[var(--color-text)] hover:opacity-80 disabled:opacity-50">
+            {busy ? (zh ? '跳转中…' : 'Redirecting…') : (zh ? '使用 SSO 登录' : 'Sign in with SSO')}
+          </button>
+          {error && <p className="text-center text-[11px] text-[var(--color-status-error)]">{error}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 

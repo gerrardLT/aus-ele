@@ -26,7 +26,7 @@ import secrets
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -93,6 +93,49 @@ class InviteAcceptRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# 邀请接受限流（2026-08-14）：防 token 探测/暴力尝试。
+# 进程内滑动窗口：同一 invite_token+IP 在 10 分钟内最多 10 次。
+# server.py 的 query 版端点也复用本限流器（from-import 惰性引入）。
+# ---------------------------------------------------------------------------
+
+_invite_accept_attempts: dict[str, list[float]] = {}
+_INVITE_ACCEPT_MAX_ATTEMPTS = 10
+_INVITE_ACCEPT_WINDOW_SECONDS = 600
+
+
+def check_invite_accept_rate_limit(invite_token: str, client_ip: str | None = None) -> None:
+    import time as _time
+
+    key = f"{invite_token}|{client_ip or 'unknown'}"
+    now = _time.time()
+    recent = [t for t in _invite_accept_attempts.get(key, []) if now - t < _INVITE_ACCEPT_WINDOW_SECONDS]
+    if len(recent) >= _INVITE_ACCEPT_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many invite accept attempts, please retry later")
+    recent.append(now)
+    _invite_accept_attempts[key] = recent
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(..., description="当前密码")
+    new_password: str = Field(..., min_length=8, description="新密码（至少 8 位）")
+
+
+@router.post("/password")
+def change_password(body: PasswordChangeRequest, actor: dict = Depends(_get_actor)):
+    """自助修改密码（2026-08-14）：验旧改新，错误语义与登录一致。"""
+    from access_control import change_principal_password
+
+    change_principal_password(
+        get_db(),
+        principal_id=actor["principal"]["principal_id"],
+        current_password=body.current_password,
+        new_password=body.new_password,
+    )
+    logger.info("password changed: principal=%s", actor["principal"]["principal_id"])
+    return {"changed": True}
+
+
+# ---------------------------------------------------------------------------
 # Invite accept（JSON body 版，2026-08-13 代码审查修复）
 # 既有 /api/auth/invites/accept 仅收 Query 参数，密码会进 URL → 落日志。
 # 本端点用 JSON body，密码不进 URL（CWE-598）。server.py 保持零改动。
@@ -100,10 +143,13 @@ class InviteAcceptRequest(BaseModel):
 
 
 @router.post("/invites/accept")
-def accept_invite(body: InviteAcceptRequest):
-    """接受邀请（注册）：JSON body，密码不进 URL。"""
+def accept_invite(body: InviteAcceptRequest, request: "Request" = None):
+    """接受邀请（注册）：JSON body，密码不进 URL；限流防 token 探测。"""
     from access_control import accept_workspace_invite
 
+    check_invite_accept_rate_limit(
+        body.invite_token, request.client.host if request and request.client else None
+    )
     return accept_workspace_invite(
         get_db(),
         invite_token=body.invite_token.strip(),

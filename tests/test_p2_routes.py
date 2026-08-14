@@ -78,6 +78,7 @@ class P2RoutesTests(unittest.TestCase):
                 conn.execute("DELETE FROM user_preference WHERE workspace_id = ?", (ws,))
                 conn.execute("DELETE FROM feedback WHERE workspace_id = ?", (ws,))
                 conn.execute("DELETE FROM alert_rule WHERE workspace_id = ?", (ws,))
+                conn.execute("DELETE FROM report_subscription WHERE workspace_id = ?", (ws,))
                 conn.commit()
         except Exception:
             pass
@@ -373,6 +374,84 @@ class P2RoutesTests(unittest.TestCase):
         result = alerts._deliver_alert(self.db, rule, {"result": {"value": 1}}, None)
         self.assertEqual(result["delivery_status"], "sent")
         self.assertEqual(self.db.count_unread_notifications(f"ws-ghost-{self._suffix}"), 0)
+
+    # ── 报告定时订阅（2026-08-14） ──────────────────────────────────
+
+    def test_report_subscription_lifecycle(self):
+        ws = self.ws["workspace_id"]
+        owner = _build_client(self.db, self.owner_actor)
+        # monthly 缺 day_of_month → 422
+        resp = owner.post("/api/v1/reports/subscriptions", json={
+            "workspace_id": ws, "title": "t", "region": "NSW1", "frequency": "monthly",
+        })
+        self.assertEqual(resp.status_code, 422)
+        # 正常创建
+        resp = owner.post("/api/v1/reports/subscriptions", json={
+            "workspace_id": ws, "title": f"月报-{self._suffix}", "region": "NSW1",
+            "frequency": "monthly", "day_of_month": 15,
+        })
+        self.assertEqual(resp.status_code, 200)
+        sub_id = resp.json()["subscription_id"]
+        # 列表可见
+        resp = owner.get(f"/api/v1/reports/subscriptions?workspace_id={ws}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(any(s["subscription_id"] == sub_id for s in resp.json()["items"]))
+        # viewer 不能删他人订阅
+        viewer = _build_client(self.db, self.viewer_actor)
+        resp = viewer.delete(f"/api/v1/reports/subscriptions/{sub_id}?workspace_id={ws}")
+        self.assertEqual(resp.status_code, 403)
+        # 本人可删
+        resp = owner.delete(f"/api/v1/reports/subscriptions/{sub_id}?workspace_id={ws}")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_report_dispatch_monthly_due_and_same_day_skip(self):
+        """到期投递 + 同日不重发；email=None 强制走站内降级路径（不发真实邮件）。"""
+        import datetime
+        from services.report_scheduler import dispatch_due_report_subscriptions
+
+        ws = self.ws["workspace_id"]
+        now = datetime.datetime.now(datetime.timezone.utc)
+        sub = self.db.upsert_report_subscription({
+            "subscription_id": f"rsub_{self._suffix}",
+            "workspace_id": ws,
+            "principal_id": self.owner["principal_id"],
+            "title": f"调度测试-{self._suffix}",
+            "market": "NEM",
+            "region": "NSW1",
+            "frequency": "monthly",
+            "day_of_month": now.day,
+            "day_of_week": None,
+            "email": None,
+            "enabled": True,
+            "last_sent_at": None,
+            "created_at": "2026-08-14T00:00:00Z",
+        })
+        stats = dispatch_due_report_subscriptions(self.db, now=now)
+        self.assertEqual(stats["due"], 1)
+        self.assertEqual(stats["degraded_inapp"], 1)  # email=None → 站内通知
+        self.assertEqual(stats["sent_email"], 0)
+        # 已写站内通知与保存报告
+        self.assertGreaterEqual(self.db.count_unread_notifications(ws), 1)
+        reports = self.db.list_saved_reports(ws)
+        self.assertTrue(any("自动" in r["title"] for r in reports))
+        # 同日再跑：last_sent_at 保护，不重发
+        stats2 = dispatch_due_report_subscriptions(self.db, now=now)
+        self.assertEqual(stats2["due"], 0)
+        # 清理
+        self.db.delete_report_subscription(sub["subscription_id"], ws)
+
+    def test_notification_purge_expired(self):
+        ws = self.ws["workspace_id"]
+        self.db.insert_notification({
+            "notification_id": f"ntf_old_{self._suffix}",
+            "workspace_id": ws, "principal_id": None,
+            "title": "旧通知", "body": {}, "link": None,
+            "created_at": "2020-01-01T00:00:00Z",
+        })
+        removed = self.db.purge_expired_notifications()
+        self.assertGreaterEqual(removed, 1)
+        items = self.db.list_notifications_by_workspace(ws)
+        self.assertFalse(any(n["notification_id"] == f"ntf_old_{self._suffix}" for n in items))
 
     def test_deliver_alert_email_degrades_to_inapp(self):
         """SMTP 未配置时 email 渠道降级写站内通知（degraded）。"""

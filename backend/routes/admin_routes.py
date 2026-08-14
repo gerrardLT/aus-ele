@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from deps import get_db, get_cache
@@ -99,8 +99,13 @@ def run_next_job_route(
 
 
 @router.get("/api/alerts/rules")
-def list_alert_rules_route(workspace_id: Optional[str] = Query(None)):
-    """List configured alert rules, optionally filtered by workspace."""
+def list_alert_rules_route(workspace_id: Optional[str] = Query(None), request: Request = None):
+    """List configured alert rules, scoped to the caller's workspace (auth required)."""
     import server as _server
 
-    return _server.list_alert_rules_route(workspace_id=workspace_id)
+    # 鉴权收紧（2026-08-14）：本路由先于 server.py 内联路由注册，
+    # 是 GET /api/alerts/rules 的实际入口，必须同样鉴权
+    actor = _server._require_alerts_actor(request)
+    return _server.list_alert_rules(
+        workspace_id=_server._scoped_alert_workspace(actor, workspace_id)
+    )

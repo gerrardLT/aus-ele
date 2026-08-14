@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+import uuid
 
 from fastapi import HTTPException
 
@@ -18,7 +19,11 @@ import server
 
 
 class OidcAuthRouteTests(unittest.TestCase):
+    """随机后缀隔离（2026-08-14 技术债修复）：DatabaseManager 为 PG-only，
+    temp path 被忽略直连共享库；邮箱/域名/OIDC subject 均带随机后缀，可重复运行。"""
+
     def setUp(self):
+        self._s = uuid.uuid4().hex[:8]
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
@@ -33,45 +38,51 @@ class OidcAuthRouteTests(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
+    def _email(self, name: str) -> str:
+        return f"{name}-{self._s}@acme-{self._s}.com"
+
+    def _domain(self) -> str:
+        return f"acme-{self._s}.com"
+
     def _bootstrap_oidc_org(self):
-        org = server.create_organization_route(name="Acme Energy")
+        org = server.create_organization_route(name=f"Acme Energy-{self._s}")
         provider = server.create_oidc_provider_route(
             organization_id=org["organization_id"],
             provider_key="google",
             issuer="https://accounts.google.com",
             discovery_url="https://accounts.google.com/.well-known/openid-configuration",
-            client_id="client-123",
-            client_secret="secret-123",
+            client_id=f"client-{self._s}",
+            client_secret=f"secret-{self._s}",
             scopes="openid,email,profile",
         )
         domain = server.create_organization_domain_route(
             organization_id=org["organization_id"],
-            domain="acme.com",
+            domain=self._domain(),
             join_mode="invite_only",
         )
         workspace = server.create_workspace_route(organization_id=org["organization_id"], name="Primary")
         return org, provider, domain, workspace
 
     def test_admin_can_create_oidc_provider_and_domain(self):
-        org = server.create_organization_route(name="Acme Energy")
+        org = server.create_organization_route(name=f"Acme Energy-{self._s}")
         provider = server.create_oidc_provider_route(
             organization_id=org["organization_id"],
             provider_key="google",
             issuer="https://accounts.google.com",
             discovery_url="https://accounts.google.com/.well-known/openid-configuration",
-            client_id="client-123",
-            client_secret="secret-123",
+            client_id=f"client-{self._s}",
+            client_secret=f"secret-{self._s}",
             scopes="openid,email,profile",
         )
         domain = server.create_organization_domain_route(
             organization_id=org["organization_id"],
-            domain="acme.com",
+            domain=self._domain(),
             join_mode="invite_only",
         )
 
         self.assertEqual(provider["organization_id"], org["organization_id"])
         self.assertEqual(provider["provider_key"], "google")
-        self.assertEqual(domain["domain"], "acme.com")
+        self.assertEqual(domain["domain"], self._domain())
 
     def test_oidc_start_route_returns_redirect_payload(self):
         org, _, _, _ = self._bootstrap_oidc_org()
@@ -96,7 +107,7 @@ class OidcAuthRouteTests(unittest.TestCase):
                 "join_mode": "domain_auto_join_org",
             }
         )
-        principal = server.create_principal_route(email="owner@acme.com", display_name="Owner")
+        principal = server.create_principal_route(email=self._email("owner"), display_name="Owner")
         server.add_workspace_member_route(
             workspace_id=workspace["workspace_id"],
             principal_id=principal["principal_id"],
@@ -106,8 +117,8 @@ class OidcAuthRouteTests(unittest.TestCase):
         result = server.complete_oidc_callback_route(
             organization_id=org["organization_id"],
             provider_key="google",
-            subject="google-sub-1",
-            email="owner@acme.com",
+            subject=f"google-sub-1-{self._s}",
+            email=self._email("owner"),
             email_verified=True,
             display_name="Owner",
             workspace_id=workspace["workspace_id"],
@@ -119,13 +130,13 @@ class OidcAuthRouteTests(unittest.TestCase):
 
         self.assertIn("session_token", result["session"])
         actor = server.get_session_route(x_session_token=result["session"]["session_token"])
-        self.assertEqual(actor["principal"]["email"], "owner@acme.com")
+        self.assertEqual(actor["principal"]["email"], self._email("owner"))
         self.assertEqual(actor["session"]["auth_method"], "oidc")
         self.assertEqual(actor["organization_membership"]["status"], "active")
 
     def test_oidc_callback_rejects_invite_only_domain_join_without_existing_org_membership(self):
         org, _, _, workspace = self._bootstrap_oidc_org()
-        principal = server.create_principal_route(email="blocked@acme.com", display_name="Blocked")
+        principal = server.create_principal_route(email=self._email("blocked"), display_name="Blocked")
         server.add_workspace_member_route(
             workspace_id=workspace["workspace_id"],
             principal_id=principal["principal_id"],
@@ -136,8 +147,8 @@ class OidcAuthRouteTests(unittest.TestCase):
             server.complete_oidc_callback_route(
                 organization_id=org["organization_id"],
                 provider_key="google",
-                subject="google-sub-blocked",
-                email="blocked@acme.com",
+                subject=f"google-sub-blocked-{self._s}",
+                email=self._email("blocked"),
                 email_verified=True,
                 display_name="Blocked",
                 workspace_id=workspace["workspace_id"],
@@ -157,7 +168,7 @@ class OidcAuthRouteTests(unittest.TestCase):
                 "join_mode": "domain_auto_join_org",
             }
         )
-        principal = server.create_principal_route(email="viewer@acme.com", display_name="Viewer")
+        principal = server.create_principal_route(email=self._email("viewer"), display_name="Viewer")
         server.add_workspace_member_route(
             workspace_id=workspace["workspace_id"],
             principal_id=principal["principal_id"],
@@ -166,8 +177,8 @@ class OidcAuthRouteTests(unittest.TestCase):
         result = server.complete_oidc_callback_route(
             organization_id=org["organization_id"],
             provider_key="google",
-            subject="google-sub-2",
-            email="viewer@acme.com",
+            subject=f"google-sub-2-{self._s}",
+            email=self._email("viewer"),
             email_verified=True,
             display_name="Viewer",
             workspace_id=workspace["workspace_id"],
@@ -191,7 +202,7 @@ class OidcAuthRouteTests(unittest.TestCase):
                 "join_mode": "domain_auto_join_org",
             }
         )
-        principal = server.create_principal_route(email="audit@acme.com", display_name="Audit")
+        principal = server.create_principal_route(email=self._email("audit"), display_name="Audit")
         server.add_workspace_member_route(
             workspace_id=workspace["workspace_id"],
             principal_id=principal["principal_id"],
@@ -200,8 +211,8 @@ class OidcAuthRouteTests(unittest.TestCase):
         result = server.complete_oidc_callback_route(
             organization_id=org["organization_id"],
             provider_key="google",
-            subject="google-sub-3",
-            email="audit@acme.com",
+            subject=f"google-sub-3-{self._s}",
+            email=self._email("audit"),
             email_verified=True,
             display_name="Audit",
             workspace_id=workspace["workspace_id"],
@@ -217,3 +228,7 @@ class OidcAuthRouteTests(unittest.TestCase):
 
         self.assertIn("auth.oidc_login", actions)
         self.assertIn("auth.session_revoked", actions)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -384,6 +384,24 @@ def set_principal_password(db, *, principal_id: str, password: str) -> dict:
     return updated
 
 
+def change_principal_password(db, *, principal_id: str, current_password: str, new_password: str) -> dict:
+    """自助修改密码（2026-08-14）：验证旧密码后设置新密码。
+
+    错误语义与登录一致（401 不泄露细节）；新密码长度校验同邀请接受（≥8 位）。
+    """
+    principal = db.fetch_principal(principal_id)
+    if not principal or not principal.get("password_hash") or not principal.get("password_salt"):
+        raise HTTPException(status_code=401, detail="Invalid current password")
+    if not hmac.compare_digest(
+        _hash_password(current_password, principal["password_salt"]).encode(),
+        principal["password_hash"].encode(),
+    ):
+        raise HTTPException(status_code=401, detail="Invalid current password")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=422, detail="New password must be at least 8 characters")
+    return set_principal_password(db, principal_id=principal_id, password=new_password)
+
+
 def link_auth_identity(db, *, principal_id: str, provider_key: str, subject: str, email: str, email_verified: bool) -> dict:
     existing = db.fetch_auth_identity_by_subject("oidc", provider_key, subject)
     if existing:

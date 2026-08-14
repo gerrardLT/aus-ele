@@ -58,7 +58,13 @@ def list_notifications(
     actor: dict = Depends(_get_actor),
 ):
     _assert_workspace(actor, workspace_id)
-    return {"items": get_db().list_notifications_by_workspace(workspace_id, limit=limit)}
+    db = get_db()
+    # 自动清理（2026-08-14）：惰性删除 90 天前通知，best-effort
+    try:
+        db.purge_expired_notifications()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("notification purge skipped: %s", exc)
+    return {"items": db.list_notifications_by_workspace(workspace_id, limit=limit)}
 
 
 @router.get("/notify/unread-count")
@@ -230,6 +236,82 @@ def delete_saved(report_id: str, workspace_id: str, actor: dict = Depends(_get_a
     if not ok:
         raise HTTPException(status_code=404, detail="Report not found")
     return {"report_id": report_id, "deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Report subscriptions（报告定时订阅，2026-08-14）
+# ---------------------------------------------------------------------------
+
+
+class ReportSubscriptionRequest(BaseModel):
+    workspace_id: str
+    subscription_id: str | None = None
+    title: str = Field(..., min_length=1, max_length=200)
+    market: str = "NEM"
+    region: str = Field(..., description="区域，如 NSW1")
+    frequency: Literal["monthly", "weekly"] = "monthly"
+    day_of_month: int | None = Field(None, ge=1, le=31, description="monthly：每月几号")
+    day_of_week: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = Field(None, description="weekly：星期几")
+    email: str | None = Field(None, max_length=254, description="收件邮箱，缺省用账户邮箱")
+    enabled: bool = True
+
+
+@router.get("/reports/subscriptions")
+def list_report_subscriptions(workspace_id: str, actor: dict = Depends(_get_actor)):
+    """我在本 workspace 的报告订阅。"""
+    _assert_workspace(actor, workspace_id)
+    items = get_db().list_report_subscriptions(
+        workspace_id, principal_id=actor["principal"]["principal_id"]
+    )
+    return {"items": items}
+
+
+@router.post("/reports/subscriptions")
+def upsert_report_subscription(body: ReportSubscriptionRequest, actor: dict = Depends(_get_actor)):
+    _assert_workspace(actor, body.workspace_id)
+    if body.frequency == "monthly" and body.day_of_month is None:
+        raise HTTPException(status_code=422, detail="monthly subscription requires day_of_month")
+    if body.frequency == "weekly" and body.day_of_week is None:
+        raise HTTPException(status_code=422, detail="weekly subscription requires day_of_week")
+    db = get_db()
+    record = {
+        "subscription_id": body.subscription_id or f"rsub_{uuid.uuid4().hex[:16]}",
+        "workspace_id": body.workspace_id,
+        "principal_id": actor["principal"]["principal_id"],
+        "title": body.title.strip(),
+        "market": body.market,
+        "region": body.region,
+        "frequency": body.frequency,
+        "day_of_month": body.day_of_month,
+        "day_of_week": body.day_of_week,
+        "email": body.email or actor["principal"].get("email"),
+        "enabled": body.enabled,
+        "last_sent_at": None,
+        "created_at": _utc_now_iso(),
+    }
+    if body.subscription_id:
+        existing = db.fetch_report_subscription(body.subscription_id)
+        if not existing or existing["workspace_id"] != body.workspace_id:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        if existing["principal_id"] != actor["principal"]["principal_id"]:
+            raise HTTPException(status_code=403, detail="Cannot modify another user's subscription")
+        record["last_sent_at"] = existing.get("last_sent_at")
+        record["created_at"] = existing.get("created_at") or record["created_at"]
+    return db.upsert_report_subscription(record)
+
+
+@router.delete("/reports/subscriptions/{subscription_id}")
+def delete_report_subscription(subscription_id: str, workspace_id: str, actor: dict = Depends(_get_actor)):
+    _assert_workspace(actor, workspace_id)
+    db = get_db()
+    existing = db.fetch_report_subscription(subscription_id)
+    if not existing or existing["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    if existing["principal_id"] != actor["principal"]["principal_id"] \
+            and actor["membership"]["role"] not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Cannot delete another user's subscription")
+    db.delete_report_subscription(subscription_id, workspace_id)
+    return {"subscription_id": subscription_id, "deleted": True}
 
 
 # ---------------------------------------------------------------------------

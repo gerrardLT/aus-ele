@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+import uuid
 
 from fastapi import HTTPException
 
@@ -18,7 +19,12 @@ import server
 
 
 class OrganizationGovernanceRouteTests(unittest.TestCase):
+    """随机后缀隔离（2026-08-14 技术债修复）：DatabaseManager 为 PG-only，
+    temp path 被忽略直连共享库，固定邮箱重复运行必撞唯一约束。
+    邮箱/域名/组织名均带随机后缀，可重复运行。"""
+
     def setUp(self):
+        self._s = uuid.uuid4().hex[:8]
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
@@ -27,9 +33,9 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         server.db = self.db
         server.job_orchestrator.db = self.db
 
-        self.organization = server.create_organization_route(name="Acme")
-        self.owner = server.create_principal_route(email="owner@acme.com", display_name="Owner")
-        self.member = server.create_principal_route(email="member@acme.com", display_name="Member")
+        self.organization = server.create_organization_route(name=f"Acme-{self._s}")
+        self.owner = server.create_principal_route(email=self._email("owner"), display_name="Owner")
+        self.member = server.create_principal_route(email=self._email("member"), display_name="Member")
         server.add_organization_member_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
@@ -43,6 +49,12 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
+    def _email(self, name: str) -> str:
+        return f"{name}-{self._s}@acme-{self._s}.com"
+
+    def _domain(self) -> str:
+        return f"acme-{self._s}.com"
+
     def test_owner_can_list_organization_members(self):
         payload = server.list_organization_members_route(
             organization_id=self.organization["organization_id"],
@@ -54,7 +66,7 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         invite = server.create_organization_invite_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
-            email="invitee@acme.com",
+            email=self._email("invitee"),
             target_role="org_member",
             expires_at="2026-05-01T00:00:00Z",
         )
@@ -76,14 +88,14 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         server.create_organization_invite_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
-            email="pending1@acme.com",
+            email=self._email("pending1"),
             target_role="org_member",
             expires_at="2026-05-01T00:00:00Z",
         )
         server.create_organization_invite_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
-            email="pending2@acme.com",
+            email=self._email("pending2"),
             target_role="org_member",
             expires_at="2026-05-01T00:00:00Z",
         )
@@ -98,14 +110,14 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         invite1 = server.create_organization_invite_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
-            email="same@acme.com",
+            email=self._email("same"),
             target_role="org_member",
             expires_at="2026-05-01T00:00:00Z",
         )
         invite2 = server.create_organization_invite_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
-            email="same@acme.com",
+            email=self._email("same"),
             target_role="org_member",
             expires_at="2026-05-10T00:00:00Z",
         )
@@ -115,7 +127,7 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         invite = server.create_organization_invite_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
-            email="reissue@acme.com",
+            email=self._email("reissue"),
             target_role="org_member",
             expires_at="2026-05-01T00:00:00Z",
         )
@@ -145,7 +157,7 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
             server.create_organization_invite_route(
                 organization_id=self.organization["organization_id"],
                 principal_id=self.member["principal_id"],
-                email="blocked@acme.com",
+                email=self._email("blocked"),
                 target_role="org_member",
                 expires_at="2026-05-01T00:00:00Z",
             )
@@ -168,8 +180,8 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
             )
 
     def test_org_member_list_supports_status_role_and_query_filters(self):
-        suspended = server.create_principal_route(email="suspended@acme.com", display_name="Suspended User")
-        admin = server.create_principal_route(email="admin@acme.com", display_name="Admin User")
+        suspended = server.create_principal_route(email=self._email("suspended"), display_name="Suspended User")
+        admin = server.create_principal_route(email=self._email("admin"), display_name="Admin User")
         server.add_organization_member_route(
             organization_id=self.organization["organization_id"],
             principal_id=suspended["principal_id"],
@@ -188,17 +200,17 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
             principal_id=self.owner["principal_id"],
             status="active",
             role="org_admin",
-            query="admin@acme.com",
+            query=self._email("admin"),
         )
 
         self.assertEqual(len(payload["items"]), 1)
-        self.assertEqual(payload["items"][0]["principal"]["email"], "admin@acme.com")
+        self.assertEqual(payload["items"][0]["principal"]["email"], self._email("admin"))
 
     def test_org_admin_can_query_organization_audit_logs_with_filters(self):
         invite = server.create_organization_invite_route(
             organization_id=self.organization["organization_id"],
             principal_id=self.owner["principal_id"],
-            email="audit-filter@acme.com",
+            email=self._email("audit-filter"),
             target_role="org_member",
             expires_at="2026-05-01T00:00:00Z",
         )
@@ -208,7 +220,7 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
             principal_id=self.owner["principal_id"],
             action="membership_invite.created",
             target_type="membership_invite",
-            query="audit-filter@acme.com",
+            query=self._email("audit-filter"),
             limit=50,
         )
 
@@ -216,8 +228,8 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["target_id"], invite["invite_id"])
 
     def test_bulk_member_update_route_can_suspend_multiple_members(self):
-        member_a = server.create_principal_route(email="bulk-a@acme.com", display_name="Bulk A")
-        member_b = server.create_principal_route(email="bulk-b@acme.com", display_name="Bulk B")
+        member_a = server.create_principal_route(email=self._email("bulk-a"), display_name="Bulk A")
+        member_b = server.create_principal_route(email=self._email("bulk-b"), display_name="Bulk B")
         server.add_organization_member_route(
             organization_id=self.organization["organization_id"],
             principal_id=member_a["principal_id"],
@@ -245,34 +257,42 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
     def test_domain_join_route_creates_org_membership_under_domain_auto_join_policy(self):
         server.create_organization_domain_route(
             organization_id=self.organization["organization_id"],
-            domain="acme.com",
+            domain=self._domain(),
             join_mode="domain_auto_join_org",
         )
 
         payload = server.domain_join_route(
-            organization_id=self.organization["organization_id"],
-            email="joiner@acme.com",
-            display_name="Joiner",
-            password="Welc0mePass!",
+            server.DomainJoinRequest(
+                organization_id=self.organization["organization_id"],
+                email=self._email("joiner"),
+                display_name="Joiner",
+                password="Welc0mePass!",
+            )
         )
 
-        self.assertEqual(payload["principal"]["email"], "joiner@acme.com")
+        self.assertEqual(payload["principal"]["email"], self._email("joiner"))
         self.assertEqual(payload["organization_membership"]["status"], "active")
         self.assertFalse(payload["workspace_access_ready"])
 
     def test_domain_join_route_rejects_invite_only_policy(self):
         server.create_organization_domain_route(
             organization_id=self.organization["organization_id"],
-            domain="acme.com",
+            domain=self._domain(),
             join_mode="invite_only",
         )
 
         with self.assertRaises(HTTPException) as ctx:
             server.domain_join_route(
-                organization_id=self.organization["organization_id"],
-                email="blocked@acme.com",
-                display_name="Blocked",
-                password="Welc0mePass!",
+                server.DomainJoinRequest(
+                    organization_id=self.organization["organization_id"],
+                    email=self._email("blocked"),
+                    display_name="Blocked",
+                    password="Welc0mePass!",
+                )
             )
 
         self.assertEqual(ctx.exception.status_code, 403)
+
+
+if __name__ == "__main__":
+    unittest.main()

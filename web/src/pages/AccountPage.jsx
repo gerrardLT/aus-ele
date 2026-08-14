@@ -115,6 +115,58 @@ function SubscriptionCard({ zh, workspaceId, role, getToken, onPlanChanged }) {
   );
 }
 
+function PasswordChangeForm({ zh, getToken }) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (next !== confirm) { setMsg({ ok: false, text: zh ? '两次新密码不一致' : 'New passwords do not match' }); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_BASE}/v1/account/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      if (res.ok) {
+        setMsg({ ok: true, text: zh ? '密码已修改' : 'Password changed' });
+        setCurrent(''); setNext(''); setConfirm('');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setMsg({ ok: false, text: err.detail || `Failed (${res.status})` });
+      }
+    } catch {
+      setMsg({ ok: false, text: zh ? '网络错误，请稍后重试' : 'Network error, please retry' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls = 'w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-xs text-[var(--color-text)]';
+
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">{zh ? '修改密码' : 'Change password'}</h3>
+      <form onSubmit={submit} className="space-y-2">
+        <input type="password" required placeholder={zh ? '当前密码' : 'Current password'} value={current} onChange={(e) => setCurrent(e.target.value)} className={inputCls} />
+        <input type="password" required minLength={8} placeholder={zh ? '新密码（至少 8 位）' : 'New password (min 8 chars)'} value={next} onChange={(e) => setNext(e.target.value)} className={inputCls} />
+        <input type="password" required placeholder={zh ? '确认新密码' : 'Confirm new password'} value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputCls} />
+        <div className="flex items-center gap-3">
+          <button type="submit" disabled={busy} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+            {busy ? (zh ? '提交中…' : 'Saving…') : (zh ? '修改密码' : 'Change')}
+          </button>
+          {msg && <span className={`text-xs ${msg.ok ? 'text-[var(--color-status-success)]' : 'text-[var(--color-status-error)]'}`}>{msg.text}</span>}
+        </div>
+      </form>
+    </section>
+  );
+}
+
 function AccountHome() {
   const { auth, getToken } = useAuth();
   const lang = readLang();
@@ -154,6 +206,7 @@ function AccountHome() {
           )}
         </section>
         <SubscriptionCard zh={zh} workspaceId={auth?.workspaceId} role={role} getToken={getToken} onPlanChanged={loadUsage} />
+        <PasswordChangeForm zh={zh} getToken={getToken} />
       </div>
 
       <UsageBars

@@ -260,6 +260,7 @@ class DatabaseManager:
     SAVED_REPORT_TABLE = "saved_report"
     USER_PREFERENCE_TABLE = "user_preference"
     FEEDBACK_TABLE = "feedback"
+    REPORT_SUBSCRIPTION_TABLE = "report_subscription"
     OIDC_PROVIDER_TABLE = "oidc_provider"
     ORGANIZATION_DOMAIN_TABLE = "organization_domain"
 
@@ -4284,6 +4285,28 @@ class DatabaseManager:
                 created_at TEXT NOT NULL
             )
         """)
+        # 报告定时订阅（2026-08-14）：monthly(按日)/weekly(按星期) 邮件推送
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.REPORT_SUBSCRIPTION_TABLE} (
+                subscription_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                market TEXT NOT NULL DEFAULT 'NEM',
+                region TEXT NOT NULL,
+                frequency TEXT NOT NULL DEFAULT 'monthly',
+                day_of_month INTEGER,
+                day_of_week TEXT,
+                email TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_sent_at TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.REPORT_SUBSCRIPTION_TABLE}_ws
+            ON {self.REPORT_SUBSCRIPTION_TABLE} (workspace_id, enabled)
+        """)
         conn.commit()
 
     # --- notification ---
@@ -4360,6 +4383,22 @@ class DatabaseManager:
             cur = conn.execute(
                 f"UPDATE {self.NOTIFICATION_TABLE} SET read = 1 WHERE workspace_id = ? AND read = 0",
                 (workspace_id,),
+            )
+            conn.commit()
+            return int(getattr(cur, "rowcount", None) or 0)
+
+    def purge_expired_notifications(self, *, retention_days: int = 90) -> int:
+        """自动清理（2026-08-14）：删除超过保留期的通知，列表查询时惰性触发。"""
+        import datetime as _dt
+
+        cutoff = (
+            _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=retention_days)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            cur = conn.execute(
+                f"DELETE FROM {self.NOTIFICATION_TABLE} WHERE created_at < ?",
+                (cutoff,),
             )
             conn.commit()
             return int(getattr(cur, "rowcount", None) or 0)
@@ -4509,6 +4548,110 @@ class DatabaseManager:
                     record["message"],
                     record["created_at"],
                 ),
+            )
+            conn.commit()
+
+    # --- report_subscription（报告定时订阅，2026-08-14） ---
+
+    def upsert_report_subscription(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.REPORT_SUBSCRIPTION_TABLE} (
+                    subscription_id, workspace_id, principal_id, title, market, region,
+                    frequency, day_of_month, day_of_week, email, enabled, last_sent_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(subscription_id) DO UPDATE SET
+                    title=excluded.title, market=excluded.market, region=excluded.region,
+                    frequency=excluded.frequency, day_of_month=excluded.day_of_month,
+                    day_of_week=excluded.day_of_week, email=excluded.email, enabled=excluded.enabled
+                """,
+                (
+                    record["subscription_id"],
+                    record["workspace_id"],
+                    record["principal_id"],
+                    record["title"],
+                    record.get("market", "NEM"),
+                    record["region"],
+                    record.get("frequency", "monthly"),
+                    record.get("day_of_month"),
+                    record.get("day_of_week"),
+                    record.get("email"),
+                    1 if record.get("enabled", True) else 0,
+                    record.get("last_sent_at"),
+                    record["created_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_report_subscription(record["subscription_id"])
+
+    def fetch_report_subscription(self, subscription_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT subscription_id, workspace_id, principal_id, title, market, region,
+                       frequency, day_of_month, day_of_week, email, enabled, last_sent_at, created_at
+                FROM {self.REPORT_SUBSCRIPTION_TABLE} WHERE subscription_id = ?
+                """,
+                (subscription_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "subscription_id": row[0], "workspace_id": row[1], "principal_id": row[2],
+            "title": row[3], "market": row[4], "region": row[5], "frequency": row[6],
+            "day_of_month": row[7], "day_of_week": row[8], "email": row[9],
+            "enabled": bool(row[10]), "last_sent_at": row[11], "created_at": row[12],
+        }
+
+    def list_report_subscriptions(self, workspace_id: str, *, principal_id: str | None = None) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            if principal_id:
+                rows = conn.execute(
+                    f"""
+                    SELECT subscription_id FROM {self.REPORT_SUBSCRIPTION_TABLE}
+                    WHERE workspace_id = ? AND principal_id = ? ORDER BY created_at DESC
+                    """,
+                    (workspace_id, principal_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT subscription_id FROM {self.REPORT_SUBSCRIPTION_TABLE}
+                    WHERE workspace_id = ? ORDER BY created_at DESC
+                    """,
+                    (workspace_id,),
+                ).fetchall()
+        return [s for s in (self.fetch_report_subscription(r[0]) for r in rows) if s]
+
+    def list_enabled_report_subscriptions(self) -> list[dict]:
+        """调度用：全部启用中的订阅（跨 workspace）。"""
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            rows = conn.execute(
+                f"SELECT subscription_id FROM {self.REPORT_SUBSCRIPTION_TABLE} WHERE enabled = 1"
+            ).fetchall()
+        return [s for s in (self.fetch_report_subscription(r[0]) for r in rows) if s]
+
+    def delete_report_subscription(self, subscription_id: str, workspace_id: str) -> bool:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            cur = conn.execute(
+                f"DELETE FROM {self.REPORT_SUBSCRIPTION_TABLE} WHERE subscription_id = ? AND workspace_id = ?",
+                (subscription_id, workspace_id),
+            )
+            conn.commit()
+            return (getattr(cur, "rowcount", None) or 0) > 0
+
+    def mark_report_subscription_sent(self, subscription_id: str, sent_at: str):
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            conn.execute(
+                f"UPDATE {self.REPORT_SUBSCRIPTION_TABLE} SET last_sent_at = ? WHERE subscription_id = ?",
+                (sent_at, subscription_id),
             )
             conn.commit()
 

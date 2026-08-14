@@ -29,7 +29,7 @@ MIGRATION STATUS (2026-06):
         the pattern for any brand-new endpoints.
 """
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response, Header
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ConfigDict
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -2310,6 +2310,26 @@ async def lifespan(app: FastAPI):
             coalesce=True,
             misfire_grace_time=6 * 60 * 60,
         )
+        # 报告定时订阅投递（2026-08-14）：每日检查到期订阅，默认 03:20
+        def run_report_subscription_dispatch() -> dict:
+            try:
+                from services.report_scheduler import dispatch_due_report_subscriptions
+
+                return dispatch_due_report_subscriptions(db)
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.warning("Report subscription dispatch failed: %s", exc)
+                return {"failed": 1, "error": str(exc)}
+
+        scheduler.add_job(
+            run_report_subscription_dispatch,
+            'cron',
+            hour=_scheduler_cron_hour("AUS_ELE_REPORT_DISPATCH_HOUR", 3),
+            minute=_scheduler_cron_minute("AUS_ELE_REPORT_DISPATCH_MINUTE", 20),
+            id="report-subscription-daily",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=6 * 60 * 60,
+        )
         scheduler.start()
         app.state.scheduler = scheduler
         logger.info(
@@ -3868,6 +3888,31 @@ def get_market_screening(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _require_alerts_actor(request: Request, *, write: bool = False) -> dict:
+    """旧告警端点鉴权收紧（2026-08-14）：Bearer 令牌全链校验。
+
+    write=True 时额外要求 owner/admin（创建/评估属写操作）。
+    返回 actor（principal/workspace/membership）。
+    """
+    from access_control import authenticate_access_token
+
+    header = request.headers.get("Authorization", "")
+    if not header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    actor = authenticate_access_token(db, header.split(" ", 1)[1].strip())
+    if write and actor["membership"]["role"] not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only owner/admin can modify alert rules")
+    return actor
+
+
+def _scoped_alert_workspace(actor: dict, workspace_id: str | None) -> str:
+    """告警端点 workspace 收紧：缺省取令牌 workspace，提供则必须一致。"""
+    actor_ws = actor.get("workspace", {}).get("workspace_id")
+    if workspace_id and workspace_id != actor_ws:
+        raise HTTPException(status_code=403, detail="Workspace mismatch")
+    return actor_ws
+
+
 def create_alert_rule(payload: AlertRuleUpsert):
     now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     record = {
@@ -3937,7 +3982,16 @@ def generate_report(
 
 
 @app.post("/api/alerts/rules", response_model=AlertRuleRecordPayload)
-def create_alert_rule_route(payload: AlertRuleUpsert):
+def create_alert_rule_route(payload: AlertRuleUpsert, request: Request):
+    # 鉴权收紧（2026-08-14）：无鉴权创建与 inapp 投递组合可跨租户注入通知
+    actor = _require_alerts_actor(request, write=True)
+    actor_ws = actor.get("workspace", {}).get("workspace_id")
+    if payload.workspace_id and payload.workspace_id != actor_ws:
+        raise HTTPException(status_code=403, detail="Workspace mismatch")
+    payload = payload.model_copy(update={
+        "workspace_id": actor_ws,
+        "organization_id": actor.get("workspace", {}).get("organization_id"),
+    })
     try:
         return create_alert_rule(payload)
     except Exception as exc:
@@ -3946,9 +4000,10 @@ def create_alert_rule_route(payload: AlertRuleUpsert):
 
 
 @app.get("/api/alerts/rules", response_model=AlertRuleListPayload)
-def list_alert_rules_route(workspace_id: Optional[str] = Query(None)):
+def list_alert_rules_route(workspace_id: Optional[str] = Query(None), request: Request = None):
+    actor = _require_alerts_actor(request)
     try:
-        return list_alert_rules(workspace_id=workspace_id)
+        return list_alert_rules(workspace_id=_scoped_alert_workspace(actor, workspace_id))
     except HTTPException:
         raise
     except Exception as exc:
@@ -3957,9 +4012,10 @@ def list_alert_rules_route(workspace_id: Optional[str] = Query(None)):
 
 
 @app.get("/api/alerts/states", response_model=AlertStateListPayload)
-def list_alert_states_route(workspace_id: Optional[str] = Query(None)):
+def list_alert_states_route(workspace_id: Optional[str] = Query(None), request: Request = None):
+    actor = _require_alerts_actor(request)
     try:
-        return list_alert_states(workspace_id=workspace_id)
+        return list_alert_states(workspace_id=_scoped_alert_workspace(actor, workspace_id))
     except HTTPException:
         raise
     except Exception as exc:
@@ -3971,9 +4027,11 @@ def list_alert_states_route(workspace_id: Optional[str] = Query(None)):
 def list_alert_delivery_logs_route(
     limit: int = Query(100, ge=1, le=500),
     workspace_id: Optional[str] = Query(None),
+    request: Request = None,
 ):
+    actor = _require_alerts_actor(request)
     try:
-        return list_alert_delivery_logs(limit=limit, workspace_id=workspace_id)
+        return list_alert_delivery_logs(limit=limit, workspace_id=_scoped_alert_workspace(actor, workspace_id))
     except HTTPException:
         raise
     except Exception as exc:
@@ -3982,9 +4040,10 @@ def list_alert_delivery_logs_route(
 
 
 @app.post("/api/alerts/evaluate", response_model=AlertEvaluationPayload)
-def evaluate_alert_rules_route(workspace_id: Optional[str] = Query(None)):
+def evaluate_alert_rules_route(workspace_id: Optional[str] = Query(None), request: Request = None):
+    actor = _require_alerts_actor(request, write=True)
     try:
-        return evaluate_alert_rules(workspace_id=workspace_id)
+        return evaluate_alert_rules(workspace_id=_scoped_alert_workspace(actor, workspace_id))
     except HTTPException:
         raise
     except Exception as exc:
@@ -4834,7 +4893,14 @@ def accept_workspace_invite_route(
     invite_token: str = Query(...),
     display_name: str = Query(...),
     password: str = Query(...),
+    request: Request = None,
 ):
+    # 限流收紧（2026-08-14）：防 token 探测，与 JSON body 版共用限流器
+    from routes.account_routes import check_invite_accept_rate_limit
+
+    check_invite_accept_rate_limit(
+        invite_token, request.client.host if request and request.client else None
+    )
     try:
         return accept_workspace_invite(db, invite_token=invite_token, display_name=display_name, password=password)
     except HTTPException:

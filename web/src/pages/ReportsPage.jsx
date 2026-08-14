@@ -21,10 +21,12 @@ function ReportsHome() {
   const canDelete = role === 'owner' || role === 'admin';
 
   const [items, setItems] = useState([]);
+  const [subs, setSubs] = useState([]);
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({ title: '', market: 'NEM', region: 'NSW1', year: new Date().getFullYear() - 1 });
+  const [subForm, setSubForm] = useState({ title: '', region: 'NSW1', frequency: 'monthly', day_of_month: '1', day_of_week: 'mon', email: '' });
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -36,6 +38,54 @@ function ReportsHome() {
   }, [workspaceId, getToken]);
 
   useEffect(() => { if (isLoggedIn) load().catch(() => {}); }, [isLoggedIn, load]);
+
+  const loadSubs = useCallback(async () => {
+    if (!workspaceId) return;
+    const token = await getToken();
+    const res = await fetch(`${API_BASE}/v1/reports/subscriptions?workspace_id=${workspaceId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) setSubs((await res.json()).items || []);
+  }, [workspaceId, getToken]);
+
+  useEffect(() => { if (isLoggedIn) loadSubs().catch(() => {}); }, [isLoggedIn, loadSubs]);
+
+  const createSub = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_BASE}/v1/reports/subscriptions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          title: subForm.title || `${subForm.region} 月度报告`,
+          region: subForm.region,
+          frequency: subForm.frequency,
+          day_of_month: subForm.frequency === 'monthly' ? Number(subForm.day_of_month) : null,
+          day_of_week: subForm.frequency === 'weekly' ? subForm.day_of_week : null,
+          email: subForm.email || null,
+        }),
+      });
+      if (!res.ok) { setError((await res.json().catch(() => ({}))).detail || `Failed (${res.status})`); return; }
+      setSubForm((f) => ({ ...f, title: '', email: '' }));
+      await loadSubs();
+    } catch {
+      setError(zh ? '网络错误，请稍后重试' : 'Network error, please retry');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeSub = async (id) => {
+    const token = await getToken();
+    const res = await fetch(`${API_BASE}/v1/reports/subscriptions/${id}?workspace_id=${workspaceId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) await loadSubs();
+  };
 
   const generateAndSave = async (e) => {
     e.preventDefault();
@@ -169,6 +219,51 @@ function ReportsHome() {
                 </pre>
               </section>
             )}
+
+            {/* 定时订阅（2026-08-14）：邮件/站内推送 */}
+            <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <h2 className="mb-3 text-sm font-semibold text-[var(--color-text)]">{zh ? '定时订阅（每日 03:20 检查投递）' : 'Scheduled subscriptions (dispatched daily 03:20)'}</h2>
+              <form onSubmit={createSub} className="flex flex-wrap items-center gap-2">
+                <input placeholder={zh ? '订阅标题' : 'Title'} value={subForm.title}
+                  onChange={(e) => setSubForm({ ...subForm, title: e.target.value })} className={inputCls} />
+                <select value={subForm.region} onChange={(e) => setSubForm({ ...subForm, region: e.target.value })} className={inputCls}>
+                  {NEM_REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <select value={subForm.frequency} onChange={(e) => setSubForm({ ...subForm, frequency: e.target.value })} className={inputCls}>
+                  <option value="monthly">{zh ? '每月' : 'Monthly'}</option>
+                  <option value="weekly">{zh ? '每周' : 'Weekly'}</option>
+                </select>
+                {subForm.frequency === 'monthly' ? (
+                  <input type="number" min="1" max="31" value={subForm.day_of_month}
+                    onChange={(e) => setSubForm({ ...subForm, day_of_month: e.target.value })}
+                    title={zh ? '每月几号' : 'Day of month'} className={`w-20 ${inputCls}`} />
+                ) : (
+                  <select value={subForm.day_of_week} onChange={(e) => setSubForm({ ...subForm, day_of_week: e.target.value })} className={inputCls}>
+                    {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                )}
+                <input placeholder={zh ? '收件邮箱（缺省用账户邮箱）' : 'Email (default: account email)'} value={subForm.email}
+                  onChange={(e) => setSubForm({ ...subForm, email: e.target.value })} className={`w-56 ${inputCls}`} />
+                <button type="submit" disabled={busy}
+                  className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                  {zh ? '创建订阅' : 'Subscribe'}
+                </button>
+              </form>
+              <ul className="mt-3 space-y-1.5">
+                {subs.length === 0 && <li className="text-xs text-[var(--color-muted)]">{zh ? '暂无订阅' : 'No subscriptions'}</li>}
+                {subs.map((s) => (
+                  <li key={s.subscription_id} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-text)]">
+                    <span>
+                      {s.title} · {s.region} · {s.frequency === 'monthly' ? (zh ? `每月 ${s.day_of_month} 日` : `day ${s.day_of_month}`) : (zh ? `每 ${s.day_of_week}` : s.day_of_week)}
+                      {s.last_sent_at ? <span className="ml-2 text-[10px] text-[var(--color-muted)]">{zh ? '上次' : 'last'} {(s.last_sent_at || '').slice(0, 10)}</span> : null}
+                    </span>
+                    <button type="button" onClick={() => removeSub(s.subscription_id)} className="text-[10px] text-[var(--color-status-error)] hover:underline">
+                      {zh ? '删除' : 'Delete'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
           </div>
         </div>
       )}
