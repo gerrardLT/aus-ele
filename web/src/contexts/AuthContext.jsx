@@ -108,10 +108,38 @@ export function AuthProvider({ children }) {
     return tryRefreshToken();
   }, []);
 
+  /** 多工作空间切换（2026-08-14）：免密码，签发新会话。 */
+  const switchWorkspace = useCallback(async (workspaceId) => {
+    try {
+      const token = getValidAccessToken() || (await tryRefreshToken());
+      const res = await fetch(`${API_BASE}/v1/account/workspaces/${workspaceId}/login-session`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { ok: false, error: err.detail || `Switch failed (${res.status})` };
+      }
+      const session = await res.json();
+      const next = sessionToAuth(session);
+      const me = await fetchMe(next.accessToken);
+      if (me) {
+        next.principal = me.principal;
+        next.workspaces = me.workspaces || [];
+      }
+      writeAuth(next);
+      setAuth(next);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: readLangIsZh() ? '网络错误，请稍后重试' : 'Network error, please retry' };
+    }
+  }, []);
+
   const value = {
     auth,
     isLoggedIn: Boolean(auth?.accessToken),
     login,
+    switchWorkspace,
     acceptInvite,
     logout,
     getToken,

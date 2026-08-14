@@ -5,6 +5,9 @@ export function resolveRootPage(pathname = '/') {
   if (pathname.startsWith('/invite')) {
     return 'invite';
   }
+  if (pathname.startsWith('/forgot') || pathname.startsWith('/reset')) {
+    return 'forgot';
+  }
   if (pathname.startsWith('/account')) {
     return 'account';
   }

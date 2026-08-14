@@ -3913,6 +3913,36 @@ def _scoped_alert_workspace(actor: dict, workspace_id: str | None) -> str:
     return actor_ws
 
 
+def _require_bearer_actor(request: Request | None) -> dict | None:
+    """管理端点收紧（2026-08-14）：HTTP 调用必须携带 Bearer 令牌。
+
+    进程内直调（request=None，测试兼容）返回 None，由调用方走旧路径。
+    """
+    if request is None:
+        return None
+    from access_control import authenticate_access_token
+
+    header = request.headers.get("Authorization", "")
+    if not header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    return authenticate_access_token(db, header.split(" ", 1)[1].strip())
+
+
+def _resolve_admin_principal_id(request: Request | None, claimed_principal_id: str | None = None) -> str:
+    """管理端点 actor 解析（2026-08-14 安全收紧）。
+
+    旧端点允许客户端自报 principal_id/actor_principal_id 查询参数，等于无鉴权。
+    现：HTTP 调用一律用 Bearer 令牌内的 principal；自报参数仅限进程内直调。
+    """
+    actor = _require_bearer_actor(request)
+    if actor is not None:
+        return actor["principal"]["principal_id"]
+    # 进程内直调兼容：Query(None) 缺省对象不是 str，视为未提供
+    if not claimed_principal_id or not isinstance(claimed_principal_id, str):
+        raise HTTPException(status_code=401, detail="Missing principal")
+    return claimed_principal_id
+
+
 def create_alert_rule(payload: AlertRuleUpsert):
     now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     record = {
@@ -4278,7 +4308,9 @@ def get_model_governance_summary():
 
 
 @app.post("/api/admin/organizations")
-def create_organization_route(name: str = Query(...)):
+def create_organization_route(name: str = Query(...), request: Request = None):
+    # 收紧（2026-08-14）：HTTP 需已登录用户（引导自举场景）
+    _require_bearer_actor(request)
     try:
         return seed_organization(db, name=name)
     except Exception as exc:
@@ -4287,9 +4319,20 @@ def create_organization_route(name: str = Query(...)):
 
 
 @app.get("/api/admin/organizations")
-def list_organizations_route():
+def list_organizations_route(request: Request = None):
+    # 收紧（2026-08-14）：仅返回调用者所属组织，不再全量泄露
+    actor = _require_bearer_actor(request)
     try:
-        return {"items": db.list_organizations()}
+        items = db.list_organizations()
+        if actor is not None:
+            pid = actor["principal"]["principal_id"]
+            items = [
+                org for org in items
+                if db.fetch_organization_membership(org["organization_id"], pid)
+            ]
+        return {"items": items}
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("List organizations route error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -4301,8 +4344,19 @@ def add_organization_member_route(
     principal_id: str = Query(...),
     role: str = Query(...),
     status: str = Query("active"),
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
 ):
+    # 收紧（2026-08-14）：原端点完全无鉴权；HTTP 调用要求组织内 member_manage 权限
+    actor = _require_bearer_actor(request)
     try:
+        if actor is not None:
+            org_actor = authenticate_org_actor(db, organization_id, actor["principal"]["principal_id"])
+            check_organization_permission(org_actor, "member_manage")
+        elif isinstance(actor_principal_id, str) and actor_principal_id:
+            org_actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+            check_organization_permission(org_actor, "member_manage")
+        # 进程内直调且未提供 actor（引导/测试场景）保留旧行为
         return seed_organization_membership(
             db,
             organization_id=organization_id,
@@ -4320,13 +4374,16 @@ def add_organization_member_route(
 @app.get("/api/admin/organizations/{organization_id}/members")
 def list_organization_members_route(
     organization_id: str,
-    principal_id: str = Query(...),
+    principal_id: Optional[str] = Query(None),
     status: Optional[str] = None,
     role: Optional[str] = None,
     query: Optional[str] = None,
+    request: Request = None,
 ):
+    # 收紧（2026-08-14）：actor 取自令牌，不再信任自报 principal_id
+    resolved = _resolve_admin_principal_id(request, principal_id)
     try:
-        authenticate_org_actor(db, organization_id, principal_id)
+        authenticate_org_actor(db, organization_id, resolved)
         items = [
             _build_organization_member_view(item)
             for item in db.list_organization_memberships(organization_id, status=status, role=role)
@@ -4357,13 +4414,15 @@ def list_organization_members_route(
 @app.post("/api/admin/organizations/{organization_id}/invites")
 def create_organization_invite_route(
     organization_id: str,
-    principal_id: str = Query(...),
+    principal_id: Optional[str] = Query(None),
     email: str = Query(...),
     target_role: str = Query(...),
     expires_at: str = Query(...),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, principal_id)
+        resolved = _resolve_admin_principal_id(request, principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         return create_membership_invite(
             db,
             actor=actor,
@@ -4384,11 +4443,13 @@ def create_organization_invite_route(
 @app.get("/api/admin/organizations/{organization_id}/invites")
 def list_organization_invites_route(
     organization_id: str,
-    principal_id: str = Query(...),
+    principal_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, principal_id)
+        resolved = _resolve_admin_principal_id(request, principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         check_organization_permission(actor, "member_manage")
         return {"items": db.list_membership_invites(organization_id, status=status)}
     except HTTPException:
@@ -4402,11 +4463,13 @@ def list_organization_invites_route(
 def revoke_organization_invite_route(
     invite_id: str,
     organization_id: str = Query(...),
-    principal_id: str = Query(...),
+    principal_id: Optional[str] = Query(None),
     revoke_reason: str = Query("manual_revoke"),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, principal_id)
+        resolved = _resolve_admin_principal_id(request, principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         return revoke_membership_invite(db, actor=actor, invite_id=invite_id, revoke_reason=revoke_reason)
     except HTTPException:
         raise
@@ -4419,11 +4482,13 @@ def revoke_organization_invite_route(
 def reissue_organization_invite_route(
     invite_id: str,
     organization_id: str = Query(...),
-    principal_id: str = Query(...),
+    principal_id: Optional[str] = Query(None),
     expires_at: str = Query(...),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, principal_id)
+        resolved = _resolve_admin_principal_id(request, principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         return reissue_membership_invite(db, actor=actor, invite_id=invite_id, expires_at=expires_at)
     except HTTPException:
         raise
@@ -4447,10 +4512,12 @@ def accept_organization_invite_route(invite_token: str = Query(...), display_nam
 def suspend_organization_member_route(
     organization_id: str,
     principal_id: str,
-    actor_principal_id: str = Query(...),
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        resolved = _resolve_admin_principal_id(request, actor_principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         return suspend_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id)
     except HTTPException:
         raise
@@ -4463,10 +4530,12 @@ def suspend_organization_member_route(
 def reactivate_organization_member_route(
     organization_id: str,
     principal_id: str,
-    actor_principal_id: str = Query(...),
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        resolved = _resolve_admin_principal_id(request, actor_principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         return reactivate_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id)
     except HTTPException:
         raise
@@ -4479,10 +4548,12 @@ def reactivate_organization_member_route(
 def remove_organization_member_route(
     organization_id: str,
     principal_id: str,
-    actor_principal_id: str = Query(...),
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        resolved = _resolve_admin_principal_id(request, actor_principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         return remove_organization_member(db, actor=actor, organization_id=organization_id, principal_id=principal_id)
     except HTTPException:
         raise
@@ -4494,12 +4565,14 @@ def remove_organization_member_route(
 @app.post("/api/admin/organizations/{organization_id}/members/bulk-update")
 def bulk_update_organization_members_route(
     organization_id: str,
-    actor_principal_id: str = Query(...),
+    actor_principal_id: Optional[str] = Query(None),
     principal_ids: str = Query(..., description="Comma-separated principal ids"),
     operation: str = Query(..., description="suspend | reactivate | remove"),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        resolved = _resolve_admin_principal_id(request, actor_principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         targets = [item.strip() for item in principal_ids.split(",") if item.strip()]
         items = []
         for principal_id in targets:
@@ -4522,11 +4595,13 @@ def bulk_update_organization_members_route(
 @app.post("/api/admin/organizations/{organization_id}/owner-transfer")
 def transfer_organization_owner_route(
     organization_id: str,
-    actor_principal_id: str = Query(...),
+    actor_principal_id: Optional[str] = Query(None),
     new_owner_principal_id: str = Query(...),
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+        resolved = _resolve_admin_principal_id(request, actor_principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         return transfer_organization_owner(
             db,
             actor=actor,
@@ -4543,15 +4618,17 @@ def transfer_organization_owner_route(
 @app.get("/api/admin/organizations/{organization_id}/audit-logs")
 def list_organization_audit_logs_route(
     organization_id: str,
-    principal_id: str = Query(...),
+    principal_id: Optional[str] = Query(None),
     action: Optional[str] = None,
     target_type: Optional[str] = None,
     actor_principal_id: Optional[str] = None,
     query: Optional[str] = None,
     limit: int = 100,
+    request: Request = None,
 ):
     try:
-        actor = authenticate_org_actor(db, organization_id, principal_id)
+        resolved = _resolve_admin_principal_id(request, principal_id)
+        actor = authenticate_org_actor(db, organization_id, resolved)
         check_organization_permission(actor, "read_audit")
         items = db.fetch_audit_logs(
             action=action,
@@ -4569,7 +4646,9 @@ def list_organization_audit_logs_route(
 
 
 @app.post("/api/admin/principals")
-def create_principal_route(email: str = Query(...), display_name: str = Query(...)):
+def create_principal_route(email: str = Query(...), display_name: str = Query(...), request: Request = None):
+    # 收紧（2026-08-14）：HTTP 需已登录用户；正常注册走邀请链路
+    _require_bearer_actor(request)
     try:
         return seed_principal(db, email=email, display_name=display_name)
     except Exception as exc:
@@ -4586,8 +4665,18 @@ def create_oidc_provider_route(
     client_id: str = Query(...),
     client_secret: str = Query(...),
     scopes: str = Query("openid,email,profile"),
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
 ):
     try:
+        # 收紧（2026-08-14）：HTTP 调用需组织内 org_manage 权限；进程内直调保留旧行为
+        bearer_actor = _require_bearer_actor(request)
+        if bearer_actor is not None:
+            _org_actor = authenticate_org_actor(db, organization_id, bearer_actor["principal"]["principal_id"])
+            check_organization_permission(_org_actor, "org_manage")
+        elif isinstance(actor_principal_id, str) and actor_principal_id:
+            _org_actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+            check_organization_permission(_org_actor, "org_manage")
         if not db.fetch_organization(organization_id):
             raise HTTPException(status_code=404, detail="Organization not found")
         return db.upsert_oidc_provider(
@@ -4617,8 +4706,18 @@ def create_organization_domain_route(
     organization_id: str,
     domain: str = Query(...),
     join_mode: str = Query("invite_only"),
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
 ):
     try:
+        # 收紧（2026-08-14）：HTTP 调用需组织内 org_manage 权限；进程内直调保留旧行为
+        bearer_actor = _require_bearer_actor(request)
+        if bearer_actor is not None:
+            _org_actor = authenticate_org_actor(db, organization_id, bearer_actor["principal"]["principal_id"])
+            check_organization_permission(_org_actor, "org_manage")
+        elif isinstance(actor_principal_id, str) and actor_principal_id:
+            _org_actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+            check_organization_permission(_org_actor, "org_manage")
         if not db.fetch_organization(organization_id):
             raise HTTPException(status_code=404, detail="Organization not found")
         return db.upsert_organization_domain(
@@ -4640,7 +4739,26 @@ def create_organization_domain_route(
 
 
 @app.post("/api/auth/password/set")
-def set_password_route(body: SetPasswordRequest):
+def set_password_route(body: SetPasswordRequest, request: Request = None):
+    # 收紧（2026-08-14）：原端点允许任何人重置任意用户密码（严重漏洞）。
+    # 现：仅限本人；或调用者是目标所在组织的 org_owner/org_admin（管理员重置场景）。
+    actor = _require_bearer_actor(request)
+    if actor is not None:
+        caller_pid = actor["principal"]["principal_id"]
+        if caller_pid != body.principal_id:
+            allowed = False
+            for org in db.list_organizations():
+                caller_m = db.fetch_organization_membership(org["organization_id"], caller_pid)
+                if not caller_m or caller_m.get("status") != "active":
+                    continue
+                if caller_m.get("role") not in ("org_owner", "org_admin"):
+                    continue
+                target_m = db.fetch_organization_membership(org["organization_id"], body.principal_id)
+                if target_m:
+                    allowed = True
+                    break
+            if not allowed:
+                raise HTTPException(status_code=403, detail="Not authorized to set this principal's password")
     try:
         return set_principal_password(db, principal_id=body.principal_id, password=body.password)
     except HTTPException:
@@ -4911,9 +5029,20 @@ def accept_workspace_invite_route(
 
 
 @app.post("/api/admin/access-tokens")
-def create_access_token_route(principal_id: str = Query(...), workspace_id: str = Query(...)):
+def create_access_token_route(
+    principal_id: str = Query(...),
+    workspace_id: str = Query(...),
+    request: Request = None,
+):
+    # 收紧（2026-08-14）：原端点允许任何人给任意 principal 签发令牌（严重漏洞）。
+    # 现：仅限本人（令牌主体 == 调用者）；工作空间成员资格由 issue_access_token 校验。
+    actor = _require_bearer_actor(request)
+    if actor is not None and actor["principal"]["principal_id"] != principal_id:
+        raise HTTPException(status_code=403, detail="Cannot issue tokens for another principal")
     try:
         return issue_access_token(db, principal_id=principal_id, workspace_id=workspace_id)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("Create access token route error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error")

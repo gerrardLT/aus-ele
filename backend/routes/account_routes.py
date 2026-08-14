@@ -136,6 +136,190 @@ def change_password(body: PasswordChangeRequest, actor: dict = Depends(_get_acto
 
 
 # ---------------------------------------------------------------------------
+# 忘记密码（2026-08-14）：邮件重置链路；防邮箱枚举（统一响应）
+# ---------------------------------------------------------------------------
+
+_RESET_TOKEN_TTL_SECONDS = 30 * 60
+
+
+class PasswordResetRequestBody(BaseModel):
+    email: str = Field(..., description="账户邮箱")
+
+
+class PasswordResetConfirmBody(BaseModel):
+    token: str = Field(..., description="重置令牌（邮件链接中）")
+    new_password: str = Field(..., min_length=8, description="新密码（至少 8 位）")
+
+
+def _reset_token_hash(token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@router.post("/password/reset-request")
+def request_password_reset(body: PasswordResetRequestBody):
+    """请求密码重置邮件（无需登录）。防枚举：无论邮箱是否存在均返回相同响应。"""
+    db = get_db()
+    email = (body.email or "").strip().lower()
+    principal = db.fetch_principal_by_email(email) if email else None
+    if principal:
+        import secrets as _secrets
+
+        token = _secrets.token_urlsafe(32)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        db.insert_password_reset(
+            {
+                "reset_id": f"rst_{uuid.uuid4().hex[:12]}",
+                "principal_id": principal["principal_id"],
+                "token_hash": _reset_token_hash(token),
+                "expires_at": (now + datetime.timedelta(seconds=_RESET_TOKEN_TTL_SECONDS))
+                .isoformat().replace("+00:00", "Z"),
+                "used_at": None,
+                "created_at": now.isoformat().replace("+00:00", "Z"),
+            }
+        )
+        # best-effort 发信；SMTP 未配置时静默降级（管理员可走成员管理重置）
+        try:
+            from services.email_sender import send_email
+
+            reset_url = f"/reset?token={token}"
+            send_email(
+                to=email,
+                subject="[AEMO Intelligence] 密码重置",
+                body=(
+                    "你正在重置 AEMO Intelligence 账户密码。\n"
+                    f"请在 30 分钟内访问以下链接完成重置：{reset_url}\n"
+                    "若非本人操作，请忽略本邮件。"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("password reset email failed: %s", exc)
+    # 统一响应，不泄露邮箱存在性
+    return {"sent": True}
+
+
+@router.post("/password/reset-confirm")
+def confirm_password_reset(body: PasswordResetConfirmBody):
+    """凭邮件令牌重置密码；成功后吊销该用户全部会话与令牌。"""
+    from access_control import set_principal_password
+
+    db = get_db()
+    record = db.fetch_password_reset_by_token_hash(_reset_token_hash(body.token))
+    if not record or record.get("used_at"):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    expires_at = datetime.datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00"))
+    if expires_at <= datetime.datetime.now(datetime.timezone.utc):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    set_principal_password(db, principal_id=record["principal_id"], password=body.new_password)
+    db.mark_password_reset_used(record["reset_id"], datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"))
+    # 安全：重置密码后全部既有会话/令牌失效
+    db.revoke_auth_sessions_by_principal(record["principal_id"])
+    db.revoke_access_tokens_by_principal(record["principal_id"])
+    logger.info("password reset completed: principal=%s", record["principal_id"])
+    return {"reset": True}
+
+
+# ---------------------------------------------------------------------------
+# 工作空间切换（2026-08-14）
+# ---------------------------------------------------------------------------
+
+
+@router.post("/workspaces/{workspace_id}/login-session")
+def switch_workspace(workspace_id: str, actor: dict = Depends(_get_actor)):
+    """已登录用户切换到另一个所属 workspace（免密码，完整资格校验）。"""
+    from access_control import switch_workspace_session
+
+    session = switch_workspace_session(
+        get_db(),
+        principal_id=actor["principal"]["principal_id"],
+        workspace_id=workspace_id,
+    )
+    return session
+
+
+# ---------------------------------------------------------------------------
+# 资料编辑（2026-08-14）
+# ---------------------------------------------------------------------------
+
+
+class ProfileUpdateRequest(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=120)
+
+
+@router.patch("/me")
+def update_profile(body: ProfileUpdateRequest, actor: dict = Depends(_get_actor)):
+    db = get_db()
+    principal = actor["principal"]
+    updated = db.upsert_principal(
+        {
+            **principal,
+            "display_name": body.display_name.strip(),
+            "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+    )
+    return {"principal_id": updated["principal_id"], "display_name": updated["display_name"]}
+
+
+# ---------------------------------------------------------------------------
+# 会话管理（2026-08-14）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sessions")
+def list_sessions(actor: dict = Depends(_get_actor)):
+    db = get_db()
+    items = db.list_auth_sessions_by_principal(actor["principal"]["principal_id"])
+    return {"items": items, "current_session_id": (actor.get("session") or {}).get("session_id")}
+
+
+@router.post("/sessions/revoke-others")
+def revoke_other_sessions(actor: dict = Depends(_get_actor)):
+    """登出其他设备：保留当前会话，吊销其余会话与令牌。"""
+    db = get_db()
+    pid = actor["principal"]["principal_id"]
+    current = (actor.get("session") or {}).get("session_id")
+    revoked = db.revoke_auth_sessions_by_principal(pid, exclude_session_id=current)
+    db.revoke_access_tokens_by_principal(pid)
+    # 重新给当前会话补发令牌已被吊销的影响：当前会话不受影响（令牌按 session 绑定，
+    # revoke_access_tokens 会吊销含当前的全部令牌），由前端静默 refresh 重建
+    return {"revoked_sessions": revoked}
+
+
+# ---------------------------------------------------------------------------
+# 管理员重置成员密码（2026-08-14，功能5）
+# ---------------------------------------------------------------------------
+
+
+class MemberPasswordResetRequest(BaseModel):
+    new_password: str = Field(..., min_length=8)
+
+
+@router.post("/workspaces/{workspace_id}/members/{principal_id}/reset-password")
+def reset_member_password(
+    workspace_id: str,
+    principal_id: str,
+    body: MemberPasswordResetRequest,
+    actor: dict = Depends(_get_actor),
+):
+    """owner/admin 重置本 workspace 成员密码；重置后吊销目标全部会话。"""
+    _assert_workspace(actor, workspace_id)
+    if actor["membership"]["role"] not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only owner/admin can reset member passwords")
+    db = get_db()
+    if not db.fetch_workspace_membership(workspace_id, principal_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    from access_control import set_principal_password
+
+    set_principal_password(db, principal_id=principal_id, password=body.new_password)
+    db.revoke_auth_sessions_by_principal(principal_id)
+    db.revoke_access_tokens_by_principal(principal_id)
+    logger.info("member password reset: ws=%s target=%s by=%s",
+                workspace_id, principal_id, actor["principal"]["principal_id"])
+    return {"reset": True}
+
+
+# ---------------------------------------------------------------------------
 # Invite accept（JSON body 版，2026-08-13 代码审查修复）
 # 既有 /api/auth/invites/accept 仅收 Query 参数，密码会进 URL → 落日志。
 # 本端点用 JSON body，密码不进 URL（CWE-598）。server.py 保持零改动。

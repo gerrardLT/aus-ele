@@ -26,6 +26,8 @@ export default function MembersPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [resettingId, setResettingId] = useState(null);
+  const [resetPw, setResetPw] = useState('');
 
   const authedFetch = useCallback(async (path, opts = {}) => {
     const token = await getToken();
@@ -71,6 +73,28 @@ export default function MembersPage() {
     if (res.ok) reload();
   };
 
+  // 管理员重置成员密码（2026-08-14）：重置后目标全部会话失效
+  const resetMemberPassword = async (principalId) => {
+    if (!resetPw || resetPw.length < 8) {
+      setError(zh ? '新密码至少 8 位' : 'New password must be at least 8 characters');
+      return;
+    }
+    setError('');
+    const res = await authedFetch(`/v1/account/workspaces/${workspaceId}/members/${principalId}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password: resetPw }),
+    });
+    if (res.ok) {
+      setNotice(zh ? '密码已重置，该成员原会话已全部失效' : 'Password reset; all sessions of the member revoked');
+      setResettingId(null);
+      setResetPw('');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      setError(String(err.detail || `Failed (${res.status})`));
+    }
+  };
+
   const cellCls = 'px-3 py-2 text-xs';
   const thCls = `${cellCls} text-left font-semibold uppercase tracking-wider text-[var(--color-muted)]`;
 
@@ -84,6 +108,7 @@ export default function MembersPage() {
               <th className={thCls}>{zh ? '邮箱' : 'Email'}</th>
               <th className={thCls}>{zh ? '显示名' : 'Name'}</th>
               <th className={thCls}>{zh ? '角色' : 'Role'}</th>
+              {canManage && <th className={thCls}></th>}
             </tr>
           </thead>
           <tbody>
@@ -92,6 +117,24 @@ export default function MembersPage() {
                 <td className={`${cellCls} font-mono`}>{m.email}</td>
                 <td className={cellCls}>{m.display_name || '—'}</td>
                 <td className={cellCls}><span className="rounded bg-[var(--color-border)] px-1.5 py-0.5 text-[10px] font-semibold">{m.role}</span></td>
+                {canManage && (
+                  <td className={cellCls}>
+                    {resettingId === m.principal_id ? (
+                      <span className="flex items-center gap-2">
+                        <input type="text" value={resetPw} onChange={(e) => setResetPw(e.target.value)}
+                          placeholder={zh ? '新密码（≥8位）' : 'New password'}
+                          className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-0.5 text-[10px] text-[var(--color-text)]" />
+                        <button onClick={() => resetMemberPassword(m.principal_id)} className="text-[10px] text-[var(--color-primary)] hover:underline">{zh ? '确认' : 'OK'}</button>
+                        <button onClick={() => { setResettingId(null); setResetPw(''); }} className="text-[10px] text-[var(--color-muted)] hover:underline">{zh ? '取消' : 'Cancel'}</button>
+                      </span>
+                    ) : (
+                      <button onClick={() => { setResettingId(m.principal_id); setResetPw(''); setError(''); }}
+                        className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-text)] hover:underline">
+                        {zh ? '重置密码' : 'Reset password'}
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

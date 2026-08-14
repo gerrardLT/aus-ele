@@ -467,6 +467,128 @@ class AccountRoutesTests(unittest.TestCase):
             statuses.append(resp.status_code)
         self.assertIn(429, statuses)
 
+    # ── 用户机制补全（2026-08-14） ─────────────────────────────────
+
+    def test_profile_display_name_update(self):
+        client = _build_client(self.db, self.owner_actor)
+        resp = client.patch("/api/v1/account/me", json={"display_name": f"新名-{self._suffix}"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["display_name"], f"新名-{self._suffix}")
+
+    def test_workspace_switch_issues_new_session(self):
+        from access_control import seed_workspace, seed_workspace_membership, login_with_password
+
+        ws2 = seed_workspace(self.db, organization_id=self.org["organization_id"], name="second")
+        seed_workspace_membership(self.db, workspace_id=ws2["workspace_id"],
+                                  principal_id=self.owner["principal_id"], role="owner")
+        client = _build_client(self.db, self.owner_actor)
+        resp = client.post(f"/api/v1/account/workspaces/{ws2['workspace_id']}/login-session")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("access_token", resp.json())
+        self.assertEqual(resp.json()["workspace_id"], ws2["workspace_id"])
+        # 非所属 workspace → 403
+        resp = client.post(f"/api/v1/account/workspaces/ws-not-exist/login-session")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_sessions_list_and_revoke_others(self):
+        client = _build_client(self.db, self.owner_actor)
+        resp = client.get("/api/v1/account/sessions")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsInstance(resp.json()["items"], list)
+        resp = client.post("/api/v1/account/sessions/revoke-others")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("revoked_sessions", resp.json())
+
+    def test_member_password_reset_by_owner_and_denied_for_viewer(self):
+        from access_control import set_principal_password
+
+        set_principal_password(self.db, principal_id=self.viewer["principal_id"], password="OldPass-123")
+        owner = _build_client(self.db, self.owner_actor)
+        ws = self.ws["workspace_id"]
+        resp = owner.post(
+            f"/api/v1/account/workspaces/{ws}/members/{self.viewer['principal_id']}/reset-password",
+            json={"new_password": "ResetPass-789"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        # viewer 无权重置他人
+        viewer = _build_client(self.db, self.viewer_actor)
+        resp = viewer.post(
+            f"/api/v1/account/workspaces/{ws}/members/{self.owner['principal_id']}/reset-password",
+            json={"new_password": "EvilPass-789"},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_password_reset_flow_with_known_token(self):
+        """忘记密码：凭有效令牌重置，令牌一次性，重置后旧会话失效。"""
+        import hashlib
+        from access_control import set_principal_password, login_with_password
+
+        set_principal_password(self.db, principal_id=self.owner["principal_id"], password="OrigPass-123")
+        raw_token = f"reset_token_{self._suffix}"
+        self.db.insert_password_reset({
+            "reset_id": f"rst_{self._suffix}",
+            "principal_id": self.owner["principal_id"],
+            "token_hash": hashlib.sha256(raw_token.encode()).hexdigest(),
+            "expires_at": "2099-01-01T00:00:00Z",
+            "used_at": None,
+            "created_at": "2026-08-14T00:00:00Z",
+        })
+        app = FastAPI()
+        app.include_router(account_routes.router)
+        client = TestClient(app)
+        resp = client.post("/api/v1/account/password/reset-confirm", json={
+            "token": raw_token, "new_password": "FreshPass-456",
+        })
+        self.assertEqual(resp.status_code, 200)
+        # 一次性：再次使用 → 400
+        resp = client.post("/api/v1/account/password/reset-confirm", json={
+            "token": raw_token, "new_password": "AnotherPass-1",
+        })
+        self.assertEqual(resp.status_code, 400)
+        # 新密码可登录
+        session = login_with_password(self.db, email=self.owner["email"],
+                                      password="FreshPass-456", workspace_id=self.ws["workspace_id"])
+        self.assertIn("access_token", session)
+
+    def test_password_reset_request_is_enumeration_safe(self):
+        from unittest import mock
+
+        app = FastAPI()
+        app.include_router(account_routes.router)
+        client = TestClient(app)
+        # mock 发信避免测试真实发送；存在与不存在的邮箱返回相同结构（防枚举）
+        with mock.patch("services.email_sender.send_email", return_value={"delivered": True, "degraded": False}):
+            r1 = client.post("/api/v1/account/password/reset-request", json={"email": self.owner["email"]})
+            r2 = client.post("/api/v1/account/password/reset-request", json={"email": f"ghost-{self._suffix}@nowhere.test"})
+        self.assertEqual(r1.status_code, 200)
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r1.json(), r2.json())
+
+    def test_legacy_admin_endpoints_require_bearer_over_http(self):
+        """安全收紧：旧管理端点在 HTTP（带 request）调用时无令牌必须 401。"""
+        import server
+        from fastapi import HTTPException
+
+        class _FakeRequest:
+            headers = {}
+
+        with self.assertRaises(HTTPException) as ctx:
+            server.list_organizations_route(request=_FakeRequest())
+        self.assertEqual(ctx.exception.status_code, 401)
+        with self.assertRaises(HTTPException) as ctx:
+            server.create_organization_route(name="x", request=_FakeRequest())
+        self.assertEqual(ctx.exception.status_code, 401)
+        with self.assertRaises(HTTPException) as ctx:
+            server.create_principal_route(email="a@b.c", display_name="x", request=_FakeRequest())
+        self.assertEqual(ctx.exception.status_code, 401)
+        with self.assertRaises(HTTPException) as ctx:
+            server.create_access_token_route(principal_id="pr_x", workspace_id="ws_x", request=_FakeRequest())
+        self.assertEqual(ctx.exception.status_code, 401)
+        # password/set：无令牌 HTTP 调用 401
+        with self.assertRaises(HTTPException) as ctx:
+            server.set_password_route(server.SetPasswordRequest(principal_id="pr_x", password="whatever1"), request=_FakeRequest())
+        self.assertEqual(ctx.exception.status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,7 @@ const DeveloperPortalPage = lazy(() => import('./pages/DeveloperPortalPage.jsx')
 const AgentPage = lazy(() => import('./pages/AgentPage.jsx'))
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'))
 const InviteAcceptPage = lazy(() => import('./pages/InviteAcceptPage.jsx'))
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage.jsx'))
 const AccountPage = lazy(() => import('./pages/AccountPage.jsx'))
 const PricingPage = lazy(() => import('./pages/PricingPage.jsx'))
 const LegalPage = lazy(() => import('./pages/LegalPage.jsx'))
@@ -55,7 +56,9 @@ const rootElement = rootPage === 'wem'
             ? <LoginPage />
             : rootPage === 'invite'
               ? <InviteAcceptPage />
-              : rootPage === 'account'
+              : rootPage === 'forgot'
+                ? <ForgotPasswordPage />
+                : rootPage === 'account'
                 ? <AccountPage />
                 : rootPage === 'pricing'
                   ? <PricingPage />

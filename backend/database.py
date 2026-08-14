@@ -255,6 +255,7 @@ class DatabaseManager:
     WORKSPACE_INVITE_TABLE = "workspace_invite"
     MEMBERSHIP_INVITE_TABLE = "membership_invite"
     WORKSPACE_SUBSCRIPTION_TABLE = "workspace_subscription"
+    PASSWORD_RESET_TABLE = "password_reset"
     # P2 留存增值（2026-08-14）
     NOTIFICATION_TABLE = "notification"
     SAVED_REPORT_TABLE = "saved_report"
@@ -4154,6 +4155,124 @@ class DatabaseManager:
             }
             for row in rows
         ]
+
+    # ------------------------------------------------------------------
+    # 密码重置 / 会话管理（2026-08-14 用户机制补全）
+    # ------------------------------------------------------------------
+
+    def ensure_password_reset_table(self, conn) -> None:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.PASSWORD_RESET_TABLE} (
+                reset_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+    def insert_password_reset(self, record: dict):
+        with self.get_connection() as conn:
+            self.ensure_password_reset_table(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.PASSWORD_RESET_TABLE} (
+                    reset_id, principal_id, token_hash, expires_at, used_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["reset_id"],
+                    record["principal_id"],
+                    record["token_hash"],
+                    record["expires_at"],
+                    record.get("used_at"),
+                    record["created_at"],
+                ),
+            )
+            conn.commit()
+
+    def fetch_password_reset_by_token_hash(self, token_hash: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_password_reset_table(conn)
+            row = conn.execute(
+                f"""
+                SELECT reset_id, principal_id, token_hash, expires_at, used_at, created_at
+                FROM {self.PASSWORD_RESET_TABLE} WHERE token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "reset_id": row[0],
+            "principal_id": row[1],
+            "token_hash": row[2],
+            "expires_at": row[3],
+            "used_at": row[4],
+            "created_at": row[5],
+        }
+
+    def mark_password_reset_used(self, reset_id: str, used_at: str):
+        with self.get_connection() as conn:
+            self.ensure_password_reset_table(conn)
+            conn.execute(
+                f"UPDATE {self.PASSWORD_RESET_TABLE} SET used_at = ? WHERE reset_id = ?",
+                (used_at, reset_id),
+            )
+            conn.commit()
+
+    def list_auth_sessions_by_principal(self, principal_id: str) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT session_id, workspace_id, auth_method, created_at, last_seen_at, expires_at, revoked
+                FROM {self.AUTH_SESSION_TABLE}
+                WHERE principal_id = ? AND revoked = 0
+                ORDER BY created_at DESC LIMIT 50
+                """,
+                (principal_id,),
+            ).fetchall()
+        return [
+            {
+                "session_id": row[0],
+                "workspace_id": row[1],
+                "auth_method": row[2],
+                "created_at": row[3],
+                "last_seen_at": row[4],
+                "expires_at": row[5],
+            }
+            for row in rows
+        ]
+
+    def revoke_auth_sessions_by_principal(self, principal_id: str, *, exclude_session_id: str | None = None) -> int:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            if exclude_session_id:
+                cur = conn.execute(
+                    f"UPDATE {self.AUTH_SESSION_TABLE} SET revoked = 1 WHERE principal_id = ? AND session_id != ? AND revoked = 0",
+                    (principal_id, exclude_session_id),
+                )
+            else:
+                cur = conn.execute(
+                    f"UPDATE {self.AUTH_SESSION_TABLE} SET revoked = 1 WHERE principal_id = ? AND revoked = 0",
+                    (principal_id,),
+                )
+            conn.commit()
+            return int(getattr(cur, "rowcount", None) or 0)
+
+    def revoke_access_tokens_by_principal(self, principal_id: str) -> int:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cur = conn.execute(
+                f"UPDATE {self.ACCESS_TOKEN_TABLE} SET revoked = 1 WHERE principal_id = ? AND revoked = 0",
+                (principal_id,),
+            )
+            conn.commit()
+            return int(getattr(cur, "rowcount", None) or 0)
 
     # ------------------------------------------------------------------
     # Workspace subscription（P1-2 商业化，2026-08-14；payment_* 为支付网关预留）

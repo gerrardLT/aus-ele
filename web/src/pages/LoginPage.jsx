@@ -80,9 +80,14 @@ function LoginForm() {
       >
         {busy ? (zh ? '登录中…' : 'Signing in…') : zh ? '登录' : 'Sign in'}
       </button>
-      <p className="pt-2 text-center text-xs text-[var(--color-muted)]">
-        {zh ? '本平台为邀请制，如需账户请联系管理员获取邀请链接' : 'Invite-only platform. Contact your administrator for an invite link.'}
-      </p>
+      <div className="flex items-center justify-between pt-1 text-xs">
+        <a href="/forgot" className="text-[var(--color-muted)] hover:text-[var(--color-text)]">
+          {zh ? '忘记密码？' : 'Forgot password?'}
+        </a>
+        <span className="text-[var(--color-muted)]">
+          {zh ? '邀请制，联系管理员获取邀请' : 'Invite-only, contact admin'}
+        </span>
+      </div>
       <SsoBlock zh={zh} />
     </form>
   );

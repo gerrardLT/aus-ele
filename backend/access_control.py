@@ -504,6 +504,60 @@ def login_with_password(db, *, email: str, password: str, workspace_id: str) -> 
     }
 
 
+def switch_workspace_session(db, *, principal_id: str, workspace_id: str) -> dict:
+    """多工作空间切换（2026-08-14）：已登录用户切换到另一个所属 workspace。
+
+    无需重输密码，但完整校验 workspace/组织成员资格；签发新会话与访问令牌，
+    返回结构与 login_with_password 一致（前端 authStore 可直接消费）。
+    """
+    workspace = db.fetch_workspace(workspace_id)
+    membership = db.fetch_workspace_membership(workspace_id, principal_id)
+    if not workspace or not membership:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
+    organization_id = workspace.get("organization_id")
+    if organization_id:
+        org_membership = db.fetch_organization_membership(organization_id, principal_id)
+        if not org_membership or org_membership.get("status") != "active":
+            raise HTTPException(status_code=403, detail="Organization access denied")
+    expires_at = _utc_now() + datetime.timedelta(seconds=_session_ttl_seconds())
+    session = db.upsert_auth_session(
+        {
+            "session_id": f"sess_{uuid.uuid4().hex[:12]}",
+            "session_token": uuid.uuid4().hex + uuid.uuid4().hex,
+            "principal_id": principal_id,
+            "organization_id": organization_id,
+            "workspace_id": workspace_id,
+            "auth_method": "workspace_switch",
+            "created_at": _utc_now_iso(),
+            "last_seen_at": _utc_now_iso(),
+            "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+            "revoked": 0,
+        }
+    )
+    access_token = issue_access_token(
+        db,
+        principal_id=principal_id,
+        workspace_id=workspace_id,
+        session_id=session["session_id"],
+    )
+    _write_audit(
+        db,
+        actor_principal_id=principal_id,
+        workspace_id=workspace_id,
+        action="auth.workspace_switch",
+        target_type="auth_session",
+        target_id=session["session_id"],
+        detail_json={},
+    )
+    return {
+        **session,
+        "access_token": access_token["token"],
+        "token_type": access_token["token_type"],
+        "access_token_expires_at": access_token["expires_at"],
+        "access_token_expires_in": access_token["expires_in"],
+    }
+
+
 def _oidc_session_ttl_seconds() -> int:
     return int(os.environ.get("AUS_ELE_OIDC_SESSION_TTL_SECONDS", str(7 * 24 * 60 * 60)))
 

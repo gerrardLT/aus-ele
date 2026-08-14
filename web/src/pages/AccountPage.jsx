@@ -167,6 +167,68 @@ function PasswordChangeForm({ zh, getToken }) {
   );
 }
 
+function SessionsSection({ zh, getToken }) {
+  const [items, setItems] = useState([]);
+  const [currentId, setCurrentId] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const token = await getToken();
+    try {
+      const res = await fetch(`${API_BASE}/v1/account/sessions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const body = await res.json();
+        setItems(body.items || []);
+        setCurrentId(body.current_session_id);
+      }
+    } catch { /* best-effort */ }
+  }, [getToken]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const revokeOthers = async () => {
+    setBusy(true);
+    const token = await getToken();
+    try {
+      await fetch(`${API_BASE}/v1/account/sessions/revoke-others`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[var(--color-text)]">{zh ? '活跃会话' : 'Active sessions'}</h3>
+        {items.length > 1 && (
+          <button type="button" onClick={revokeOthers} disabled={busy}
+            className="rounded-lg border border-[var(--color-status-error)]/50 px-2 py-1 text-[10px] text-[var(--color-status-error)] hover:opacity-80 disabled:opacity-50">
+            {zh ? '登出其他设备' : 'Sign out others'}
+          </button>
+        )}
+      </div>
+      <ul className="space-y-1.5">
+        {items.map((s) => (
+          <li key={s.session_id} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-2 py-1.5 text-[10px] text-[var(--color-muted)]">
+            <span>
+              {s.auth_method || 'password'} · ws: {(s.workspace_id || '').slice(0, 12)}…
+              {s.session_id === currentId && <span className="ml-1 text-[var(--color-status-success)]">{zh ? '（当前）' : '(current)'}</span>}
+            </span>
+            <span className="font-mono">{(s.last_seen_at || s.created_at || '').slice(0, 16).replace('T', ' ')}</span>
+          </li>
+        ))}
+        {items.length === 0 && <li className="text-xs text-[var(--color-muted)]">{zh ? '无会话信息' : 'No sessions'}</li>}
+      </ul>
+    </section>
+  );
+}
+
 function AccountHome() {
   const { auth, getToken } = useAuth();
   const lang = readLang();
@@ -187,6 +249,32 @@ function AccountHome() {
 
   const currentWs = auth?.workspaces?.find((w) => w.workspace_id === auth?.workspaceId);
 
+  // 显示名编辑（2026-08-14）
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const saveDisplayName = async () => {
+    if (!nameDraft.trim()) return;
+    const token = await getToken();
+    const res = await fetch(`${API_BASE}/v1/account/me`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ display_name: nameDraft.trim() }),
+    });
+    if (res.ok) {
+      setEditingName(false);
+      globalThis.location.reload();
+    }
+  };
+
+  // 工作空间切换（2026-08-14）
+  const { switchWorkspace } = useAuth();
+  const onSwitchWorkspace = async (e) => {
+    const wsId = e.target.value;
+    if (!wsId || wsId === auth?.workspaceId) return;
+    const res = await switchWorkspace(wsId);
+    if (res.ok) globalThis.location.reload();
+  };
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       <div className="space-y-6">
@@ -194,19 +282,47 @@ function AccountHome() {
           <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">{zh ? '个人资料' : 'Profile'}</h3>
           <dl className="space-y-2 text-xs">
             <div><dt className="text-[var(--color-muted)]">{zh ? '邮箱' : 'Email'}</dt><dd className="mt-0.5 font-mono text-[var(--color-text)]">{auth?.principal?.email || '—'}</dd></div>
-            <div><dt className="text-[var(--color-muted)]">{zh ? '显示名' : 'Display name'}</dt><dd className="mt-0.5 text-[var(--color-text)]">{auth?.principal?.display_name || '—'}</dd></div>
-            <div><dt className="text-[var(--color-muted)]">{zh ? '当前工作空间' : 'Workspace'}</dt><dd className="mt-0.5 text-[var(--color-text)]">{currentWs?.name || auth?.workspaceId}</dd></div>
+            <div>
+              <dt className="text-[var(--color-muted)]">{zh ? '显示名' : 'Display name'}</dt>
+              <dd className="mt-0.5 flex items-center gap-2 text-[var(--color-text)]">
+                {editingName ? (
+                  <>
+                    <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+                      className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-0.5 text-xs text-[var(--color-text)]" />
+                    <button type="button" onClick={saveDisplayName} className="text-[10px] text-[var(--color-primary)] hover:underline">{zh ? '保存' : 'Save'}</button>
+                    <button type="button" onClick={() => setEditingName(false)} className="text-[10px] text-[var(--color-muted)] hover:underline">{zh ? '取消' : 'Cancel'}</button>
+                  </>
+                ) : (
+                  <>
+                    <span>{auth?.principal?.display_name || '—'}</span>
+                    <button type="button" onClick={() => { setNameDraft(auth?.principal?.display_name || ''); setEditingName(true); }}
+                      className="text-[10px] text-[var(--color-primary)] hover:underline">{zh ? '编辑' : 'Edit'}</button>
+                  </>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--color-muted)]">{zh ? '当前工作空间' : 'Workspace'}</dt>
+              <dd className="mt-0.5 text-[var(--color-text)]">
+                {(auth?.workspaces?.length || 0) > 1 ? (
+                  <select value={auth?.workspaceId || ''} onChange={onSwitchWorkspace}
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-0.5 text-xs text-[var(--color-text)]">
+                    {auth.workspaces.map((w) => (
+                      <option key={w.workspace_id} value={w.workspace_id}>{w.name}（{w.role}）</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span>{currentWs?.name || auth?.workspaceId}</span>
+                )}
+              </dd>
+            </div>
             <div><dt className="text-[var(--color-muted)]">{zh ? '组织' : 'Organization'}</dt><dd className="mt-0.5 text-[var(--color-text)]">{currentWs?.organization_name || '—'}</dd></div>
             <div><dt className="text-[var(--color-muted)]">{zh ? '角色' : 'Role'}</dt><dd className="mt-0.5 text-[var(--color-text)]">{currentWs?.role || '—'}</dd></div>
           </dl>
-          {auth?.workspaces?.length > 1 && (
-            <p className="mt-3 text-[10px] text-[var(--color-muted)]">
-              {zh ? `所属 ${auth.workspaces.length} 个工作空间（当前显示首个）` : `${auth.workspaces.length} workspaces (showing first)`}
-            </p>
-          )}
         </section>
         <SubscriptionCard zh={zh} workspaceId={auth?.workspaceId} role={role} getToken={getToken} onPlanChanged={loadUsage} />
         <PasswordChangeForm zh={zh} getToken={getToken} />
+        <SessionsSection zh={zh} getToken={getToken} />
       </div>
 
       <UsageBars
