@@ -1167,10 +1167,22 @@ function MarkdownText({ text, streaming }) {
   const els = [];
   let key = 0;
 
-  for (const line of lines) {
-    const trimmed = line.trim();
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
     if (!trimmed) {
       els.push(<div key={key++} className="h-2" />);
+    } else if (trimmed.startsWith('|')) {
+      // GFM 表格块：连续表格行，容忍行之间的空行（LLM 常见输出格式）
+      const block = [trimmed];
+      let j = i + 1;
+      while (j < lines.length) {
+        const t = lines[j].trim();
+        if (t.startsWith('|')) { block.push(t); j++; }
+        else if (!t && j + 1 < lines.length && lines[j + 1].trim().startsWith('|')) { j++; }
+        else break;
+      }
+      i = j - 1;
+      els.push(<MarkdownTable key={key++} block={block} />);
     } else if (trimmed.startsWith('### ')) {
       els.push(<h4 key={key++} className="mb-1 mt-3 text-[12px] font-semibold text-[var(--color-text)]">{trimmed.slice(4)}</h4>);
     } else if (trimmed.startsWith('## ')) {
@@ -1192,12 +1204,81 @@ function MarkdownText({ text, streaming }) {
   );
 }
 
+// ─── Markdown 表格渲染（2026-08-14）：支持分隔行对齐标记与行内 **加粗**/反引号 ───
+
+function splitRow(line) {
+  return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+}
+
+function MarkdownTable({ block }) {
+  const isSep = (row) => row.every((c) => /^:?-{3,}:?$/.test(c));
+  const rows = block.map(splitRow);
+  let header = null;
+  let aligns = null;
+  let bodyRows = rows;
+  if (rows.length > 1 && isSep(rows[1])) {
+    header = rows[0];
+    aligns = rows[1].map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : 'left'));
+    bodyRows = rows.slice(2);
+  } else if (rows.length === 1) {
+    // 流式未完成：仅首行，当表头展示
+    header = rows[0];
+    bodyRows = [];
+  }
+
+  const cellAlign = (idx) => (aligns && aligns[idx]) || 'left';
+
+  return (
+    <div className="my-2 overflow-x-auto rounded-lg border border-[var(--color-border)]">
+      <table className="w-full border-collapse text-[12px]">
+        {header && (
+          <thead>
+            <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-hover)]">
+              {header.map((h, ci) => (
+                <th
+                  key={ci}
+                  style={{ textAlign: cellAlign(ci) }}
+                  className="whitespace-nowrap px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text)]"
+                >
+                  {renderInline(h)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {bodyRows.map((row, ri) => (
+            <tr key={ri} className="border-b border-[var(--color-border)] last:border-b-0">
+              {row.map((c, ci) => (
+                <td
+                  key={ci}
+                  style={{ textAlign: cellAlign(ci) }}
+                  className="px-3 py-1.5 align-top leading-5 text-[var(--color-muted)]"
+                >
+                  {renderInline(c)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function renderInline(text) {
-  // Handle **bold** markers
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  // Handle **bold** markers and `code` markers
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={i} className="font-medium text-[var(--color-text)]">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return (
+        <code key={i} className="rounded bg-[var(--color-panel)] px-1 py-0.5 font-mono text-[11px] text-[var(--color-primary)]">
+          {part.slice(1, -1)}
+        </code>
+      );
     }
     return part;
   });
