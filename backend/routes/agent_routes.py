@@ -207,7 +207,15 @@ async def run_agent(
         )
 
         # Log execution to database (best-effort, off the event loop)
-        await asyncio.get_running_loop().run_in_executor(None, _log_execution, report)
+        # P1-1：身份随日志落库（workspace/principal 归属计量）
+        await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: _log_execution(
+                report,
+                workspace_id=principal.get("workspace_id"),
+                principal_id=principal.get("sub"),
+            ),
+        )
 
         return AgentRunResponse(report=report, status=report.status)
 
@@ -241,14 +249,14 @@ async def run_agent_async(
     })
 
     # Launch background task (keep a strong reference so it isn't GC'd)
-    task = asyncio.create_task(_execute_async_task(task_id, request))
+    task = asyncio.create_task(_execute_async_task(task_id, request, principal))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
     return AgentAsyncResponse(task_id=task_id, status=WorkflowStatus.RUNNING)
 
 
-async def _execute_async_task(task_id: str, request: AgentRunRequest) -> None:
+async def _execute_async_task(task_id: str, request: AgentRunRequest, principal: dict | None = None) -> None:
     """Background task executor for async agent runs."""
     orchestrator = get_orchestrator()
 
@@ -282,7 +290,14 @@ async def _execute_async_task(task_id: str, request: AgentRunRequest) -> None:
             report=report_dict,
             progress="Completed",
         )
-        await asyncio.get_running_loop().run_in_executor(None, _log_execution, report)
+        await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: _log_execution(
+                report,
+                workspace_id=(principal or {}).get("workspace_id"),
+                principal_id=(principal or {}).get("sub"),
+            ),
+        )
     except Exception as exc:
         logger.error("Async agent task %s failed: %s", task_id, exc, exc_info=True)
         _update_task(
@@ -421,6 +436,9 @@ async def chat_stream(
                 final_report["_session_id"] = request.session_id
                 final_report["_history"] = history
                 final_report["_answer"] = final_answer
+                # P1-1：身份私有键（落库前由 _log_execution_dict 取出）
+                final_report["_workspace_id"] = principal.get("workspace_id")
+                final_report["_principal_id"] = principal.get("sub")
                 await asyncio.get_running_loop().run_in_executor(
                     None, _log_execution_dict, final_report
                 )
@@ -701,6 +719,10 @@ _AGENT_LOG_COLUMN_MIGRATIONS = (
     ("history_json", "ALTER TABLE agent_execution_log ADD COLUMN history_json TEXT"),
     ("turn_count", "ALTER TABLE agent_execution_log ADD COLUMN turn_count INTEGER"),
     ("answer_text", "ALTER TABLE agent_execution_log ADD COLUMN answer_text TEXT"),
+    # P1-1 计量加固（2026-08-14）：按 workspace/principal 归属计量，
+    # 支撑账户中心用量看板与后续套餐配额
+    ("workspace_id", "ALTER TABLE agent_execution_log ADD COLUMN workspace_id TEXT"),
+    ("principal_id", "ALTER TABLE agent_execution_log ADD COLUMN principal_id TEXT"),
 )
 
 
@@ -801,8 +823,11 @@ async def get_experience_summary(
     return build_experience_summary(days=days)
 
 
-def _log_execution(report) -> None:
-    """Log agent execution to database (best-effort, non-blocking)."""
+def _log_execution(report, *, workspace_id=None, principal_id=None) -> None:
+    """Log agent execution to database (best-effort, non-blocking).
+
+    P1-1（2026-08-14）：workspace_id/principal_id 落库，支撑按租户计量。
+    """
     try:
         from deps import get_db
 
@@ -812,8 +837,8 @@ def _log_execution(report) -> None:
             _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
-                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count, workspace_id, principal_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     report.id,
                     report.query,
@@ -837,6 +862,8 @@ def _log_execution(report) -> None:
                     None,
                     None,
                     1,
+                    workspace_id,
+                    principal_id,
                 ),
             )
             conn.commit()
@@ -860,6 +887,9 @@ def _log_execution_dict(report: dict) -> None:
         session_id = report.pop("_session_id", None)
         history = report.pop("_history", None) or []
         answer_text = report.pop("_answer", None) or ""
+        # P1-1：会话路径的身份私有键（落库前取出，不混入 report_json）
+        workspace_id = report.pop("_workspace_id", None)
+        principal_id = report.pop("_principal_id", None)
         turn_count = len(history) + 1
 
         db = get_db()
@@ -868,8 +898,8 @@ def _log_execution_dict(report: dict) -> None:
             _ensure_agent_log_table(cursor)
             cursor.execute(
                 "INSERT INTO agent_execution_log "
-                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count, answer_text) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, query, market, region, workflow_type, status, steps_json, report_json, total_duration_ms, trajectory_json, session_id, history_json, turn_count, answer_text, workspace_id, principal_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     report.get("id"),
                     report.get("query", ""),
@@ -889,6 +919,8 @@ def _log_execution_dict(report: dict) -> None:
                     json.dumps(history, ensure_ascii=False, default=str),
                     turn_count,
                     answer_text,
+                    workspace_id,
+                    principal_id,
                 ),
             )
             conn.commit()

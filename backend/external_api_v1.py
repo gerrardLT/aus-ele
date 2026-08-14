@@ -26,6 +26,16 @@ PLAN_DAILY_UNIT_LIMITS = {
     "enterprise": None,
 }
 
+# Agent 运行日配额（P1-2 商业化，2026-08-14）；软配额只展示不阻断，
+# 硬阻断待支付就绪后开启。前端硬编码需与此对齐。
+AGENT_RUN_DAILY_LIMITS = {
+    "starter": 50,
+    "growth": 200,
+    "pro": 1000,
+    "internal": None,
+    "enterprise": None,
+}
+
 PLAN_PRICE_PER_1000_UNITS_USD = {
     "starter": 2.0,
     "growth": 1.0,

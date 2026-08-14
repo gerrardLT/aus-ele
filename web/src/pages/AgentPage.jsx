@@ -260,6 +260,8 @@ export default function AgentPage() {
           break;
         case 'done':
           patchActive({ status_line: '', streaming: false });
+          // P2-3 Onboarding 信号：完成一次 AI 分析（2026-08-14）
+          try { import('../lib/onboarding.js').then((m) => m.markOnboardingStep('agent')); } catch { /* ignore */ }
           break;
         default:
           break;

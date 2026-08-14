@@ -254,6 +254,12 @@ class DatabaseManager:
     WORKSPACE_POLICY_TABLE = "workspace_policy"
     WORKSPACE_INVITE_TABLE = "workspace_invite"
     MEMBERSHIP_INVITE_TABLE = "membership_invite"
+    WORKSPACE_SUBSCRIPTION_TABLE = "workspace_subscription"
+    # P2 留存增值（2026-08-14）
+    NOTIFICATION_TABLE = "notification"
+    SAVED_REPORT_TABLE = "saved_report"
+    USER_PREFERENCE_TABLE = "user_preference"
+    FEEDBACK_TABLE = "feedback"
     OIDC_PROVIDER_TABLE = "oidc_provider"
     ORGANIZATION_DOMAIN_TABLE = "organization_domain"
 
@@ -3037,6 +3043,37 @@ class DatabaseManager:
             "updated_at": row[8],
         }
 
+    def list_external_api_clients(self, workspace_id: str | None = None) -> list[dict]:
+        """P0 账户中心（2026-08-13）：列出 API 客户端（可按 workspace 过滤）。"""
+        with self.get_connection() as conn:
+            self.ensure_external_api_tables(conn)
+            cursor = conn.cursor()
+            query = f"""
+                SELECT client_id, api_key, client_name, plan, organization_id, workspace_id, enabled, created_at, updated_at
+                FROM {self.API_CLIENT_TABLE}
+            """
+            params: list = []
+            if workspace_id:
+                query += " WHERE workspace_id = ?"
+                params.append(workspace_id)
+            query += " ORDER BY created_at ASC"
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        return [
+            {
+                "client_id": row[0],
+                "api_key": row[1],
+                "client_name": row[2],
+                "plan": row[3],
+                "organization_id": row[4],
+                "workspace_id": row[5],
+                "enabled": bool(row[6]),
+                "created_at": row[7],
+                "updated_at": row[8],
+            }
+            for row in rows
+        ]
+
     def insert_external_api_usage(
         self,
         *,
@@ -3526,6 +3563,31 @@ class DatabaseManager:
                 ORDER BY created_at ASC
                 """,
                 (workspace_id,),
+            ).fetchall()
+        return [
+            {
+                "membership_id": row[0],
+                "workspace_id": row[1],
+                "principal_id": row[2],
+                "role": row[3],
+                "created_at": row[4],
+                "updated_at": row[5],
+            }
+            for row in rows
+        ]
+
+    def list_workspace_memberships_by_principal(self, principal_id: str) -> list[dict]:
+        """P0 账户中心（2026-08-13）：列出某 principal 的全部 workspace 成员关系。"""
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT membership_id, workspace_id, principal_id, role, created_at, updated_at
+                FROM {self.WORKSPACE_MEMBERSHIP_TABLE}
+                WHERE principal_id = ?
+                ORDER BY created_at ASC
+                """,
+                (principal_id,),
             ).fetchall()
         return [
             {
@@ -4059,6 +4121,396 @@ class DatabaseManager:
             )
             conn.commit()
         return self.fetch_workspace_invite(record["invite_id"])
+
+    def list_workspace_invites(self, workspace_id: str) -> list[dict]:
+        """P0 账户中心（2026-08-13）：列出某 workspace 的全部邀请。"""
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT invite_id, workspace_id, email, role, invite_token, invited_by_principal_id,
+                       created_at, updated_at, revoked, accepted_at
+                FROM {self.WORKSPACE_INVITE_TABLE}
+                WHERE workspace_id = ?
+                ORDER BY created_at DESC
+                """,
+                (workspace_id,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "invite_id": row[0],
+                "workspace_id": row[1],
+                "email": row[2],
+                "role": row[3],
+                "invite_token": row[4],
+                "invited_by_principal_id": row[5],
+                "created_at": row[6],
+                "updated_at": row[7],
+                "revoked": bool(row[8]),
+                "accepted_at": row[9],
+            }
+            for row in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Workspace subscription（P1-2 商业化，2026-08-14；payment_* 为支付网关预留）
+    # ------------------------------------------------------------------
+
+    def ensure_workspace_subscription_table(self, conn) -> None:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.WORKSPACE_SUBSCRIPTION_TABLE} (
+                workspace_id TEXT PRIMARY KEY,
+                plan TEXT NOT NULL DEFAULT 'starter',
+                status TEXT NOT NULL DEFAULT 'active',
+                payment_provider TEXT,
+                payment_ref TEXT,
+                started_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            )
+            """
+        )
+        conn.commit()
+
+    def fetch_workspace_subscription(self, workspace_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_workspace_subscription_table(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT workspace_id, plan, status, payment_provider, payment_ref, started_at, updated_at
+                FROM {self.WORKSPACE_SUBSCRIPTION_TABLE}
+                WHERE workspace_id = ?
+                """,
+                (workspace_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "workspace_id": row[0],
+            "plan": row[1],
+            "status": row[2],
+            "payment_provider": row[3],
+            "payment_ref": row[4],
+            "started_at": row[5],
+            "updated_at": row[6],
+        }
+
+    def upsert_workspace_subscription(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_workspace_subscription_table(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.WORKSPACE_SUBSCRIPTION_TABLE} (
+                    workspace_id, plan, status, payment_provider, payment_ref, started_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, now(), now())
+                ON CONFLICT(workspace_id) DO UPDATE SET
+                    plan=excluded.plan,
+                    status=excluded.status,
+                    payment_provider=excluded.payment_provider,
+                    payment_ref=excluded.payment_ref,
+                    updated_at=now()
+                """,
+                (
+                    record["workspace_id"],
+                    record.get("plan", "starter"),
+                    record.get("status", "active"),
+                    record.get("payment_provider"),
+                    record.get("payment_ref"),
+                ),
+            )
+            conn.commit()
+        return self.fetch_workspace_subscription(record["workspace_id"])
+
+    # ------------------------------------------------------------------
+    # P2 留存增值（2026-08-14）：通知/保存报告/用户偏好/反馈
+    # ------------------------------------------------------------------
+
+    def ensure_p2_tables(self, conn) -> None:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.NOTIFICATION_TABLE} (
+                notification_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                principal_id TEXT,
+                title TEXT NOT NULL,
+                body_json TEXT NOT NULL DEFAULT '{{}}',
+                link TEXT,
+                read INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.NOTIFICATION_TABLE}_ws_read
+            ON {self.NOTIFICATION_TABLE} (workspace_id, read, created_at DESC)
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.SAVED_REPORT_TABLE} (
+                report_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                market TEXT,
+                region TEXT,
+                year INTEGER,
+                payload_json TEXT NOT NULL DEFAULT '{{}}',
+                created_by TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.SAVED_REPORT_TABLE}_ws_time
+            ON {self.SAVED_REPORT_TABLE} (workspace_id, created_at DESC)
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.USER_PREFERENCE_TABLE} (
+                preference_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value_json TEXT NOT NULL DEFAULT '{{}}',
+                updated_at TEXT NOT NULL,
+                UNIQUE(workspace_id, principal_id, key)
+            )
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.FEEDBACK_TABLE} (
+                feedback_id TEXT PRIMARY KEY,
+                email TEXT,
+                workspace_id TEXT,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+    # --- notification ---
+
+    def insert_notification(self, record: dict):
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.NOTIFICATION_TABLE} (
+                    notification_id, workspace_id, principal_id, title, body_json, link, read, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    record["notification_id"],
+                    record["workspace_id"],
+                    record.get("principal_id"),
+                    record["title"],
+                    json.dumps(record.get("body") or {}, ensure_ascii=False),
+                    record.get("link"),
+                    record["created_at"],
+                ),
+            )
+            conn.commit()
+
+    def list_notifications_by_workspace(self, workspace_id: str, *, limit: int = 50) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT notification_id, workspace_id, principal_id, title, body_json, link, read, created_at
+                FROM {self.NOTIFICATION_TABLE}
+                WHERE workspace_id = ?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (workspace_id, max(1, min(int(limit), 200))),
+            ).fetchall()
+        return [
+            {
+                "notification_id": row[0],
+                "workspace_id": row[1],
+                "principal_id": row[2],
+                "title": row[3],
+                "body": json.loads(row[4] or "{}"),
+                "link": row[5],
+                "read": bool(row[6]),
+                "created_at": row[7],
+            }
+            for row in rows
+        ]
+
+    def count_unread_notifications(self, workspace_id: str) -> int:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM {self.NOTIFICATION_TABLE} WHERE workspace_id = ? AND read = 0",
+                (workspace_id,),
+            ).fetchone()
+        return int((row[0] if row else 0) or 0)
+
+    def mark_notification_read(self, notification_id: str, workspace_id: str) -> bool:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            cur = conn.execute(
+                f"UPDATE {self.NOTIFICATION_TABLE} SET read = 1 WHERE notification_id = ? AND workspace_id = ?",
+                (notification_id, workspace_id),
+            )
+            conn.commit()
+            return (getattr(cur, "rowcount", None) or 0) > 0
+
+    def mark_all_notifications_read(self, workspace_id: str) -> int:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            cur = conn.execute(
+                f"UPDATE {self.NOTIFICATION_TABLE} SET read = 1 WHERE workspace_id = ? AND read = 0",
+                (workspace_id,),
+            )
+            conn.commit()
+            return int(getattr(cur, "rowcount", None) or 0)
+
+    # --- saved_report ---
+
+    def insert_saved_report(self, record: dict):
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.SAVED_REPORT_TABLE} (
+                    report_id, workspace_id, title, market, region, year, payload_json, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["report_id"],
+                    record["workspace_id"],
+                    record["title"],
+                    record.get("market"),
+                    record.get("region"),
+                    record.get("year"),
+                    json.dumps(record.get("payload") or {}, ensure_ascii=False),
+                    record.get("created_by"),
+                    record["created_at"],
+                ),
+            )
+            conn.commit()
+
+    def list_saved_reports(self, workspace_id: str, *, limit: int = 50) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT report_id, workspace_id, title, market, region, year, created_by, created_at
+                FROM {self.SAVED_REPORT_TABLE}
+                WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?
+                """,
+                (workspace_id, max(1, min(int(limit), 200))),
+            ).fetchall()
+        return [
+            {
+                "report_id": row[0],
+                "workspace_id": row[1],
+                "title": row[2],
+                "market": row[3],
+                "region": row[4],
+                "year": row[5],
+                "created_by": row[6],
+                "created_at": row[7],
+            }
+            for row in rows
+        ]
+
+    def fetch_saved_report(self, report_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT report_id, workspace_id, title, market, region, year, payload_json, created_by, created_at
+                FROM {self.SAVED_REPORT_TABLE} WHERE report_id = ?
+                """,
+                (report_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "report_id": row[0],
+            "workspace_id": row[1],
+            "title": row[2],
+            "market": row[3],
+            "region": row[4],
+            "year": row[5],
+            "payload": json.loads(row[6] or "{}"),
+            "created_by": row[7],
+            "created_at": row[8],
+        }
+
+    def delete_saved_report(self, report_id: str, workspace_id: str) -> bool:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            cur = conn.execute(
+                f"DELETE FROM {self.SAVED_REPORT_TABLE} WHERE report_id = ? AND workspace_id = ?",
+                (report_id, workspace_id),
+            )
+            conn.commit()
+            return (getattr(cur, "rowcount", None) or 0) > 0
+
+    # --- user_preference ---
+
+    def upsert_user_preference(self, record: dict):
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.USER_PREFERENCE_TABLE} (
+                    preference_id, workspace_id, principal_id, key, value_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(workspace_id, principal_id, key) DO UPDATE SET
+                    value_json=excluded.value_json, updated_at=excluded.updated_at
+                """,
+                (
+                    record["preference_id"],
+                    record["workspace_id"],
+                    record["principal_id"],
+                    record["key"],
+                    json.dumps(record.get("value") or {}, ensure_ascii=False),
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+
+    def fetch_user_preference(self, workspace_id: str, principal_id: str, key: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT preference_id, value_json, updated_at
+                FROM {self.USER_PREFERENCE_TABLE}
+                WHERE workspace_id = ? AND principal_id = ? AND key = ?
+                """,
+                (workspace_id, principal_id, key),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "preference_id": row[0],
+            "key": key,
+            "value": json.loads(row[1] or "{}"),
+            "updated_at": row[2],
+        }
+
+    # --- feedback ---
+
+    def insert_feedback(self, record: dict):
+        with self.get_connection() as conn:
+            self.ensure_p2_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.FEEDBACK_TABLE} (feedback_id, email, workspace_id, message, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    record["feedback_id"],
+                    record.get("email"),
+                    record.get("workspace_id"),
+                    record["message"],
+                    record["created_at"],
+                ),
+            )
+            conn.commit()
 
     def fetch_workspace_invite(self, invite_id: str) -> dict | None:
         with self.get_connection() as conn:

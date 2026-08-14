@@ -16,6 +16,10 @@ import { useFilters } from '../contexts/FilterContext';
 import { useStageSummaries } from '../hooks/useStageSummaries';
 import AnomalyBadge from '../components/AnomalyBadge';
 import AnalystChat from '../components/AnalystChat';
+import NotificationBell from '../components/NotificationBell';
+import OnboardingChecklist from '../components/OnboardingChecklist';
+import SavedViewsBar from '../components/SavedViewsBar';
+import { markOnboardingStep, visitMarket } from '../lib/onboarding.js';
 import { fetchJson } from '../lib/apiClient';
 import { getApiBase } from '../lib/apiBase';
 
@@ -32,6 +36,12 @@ export default function MarketPage({ market }) {
   const [lang, setLang] = useState(() => {
     try { return localStorage.getItem('app_lang') || 'zh'; } catch { return 'zh'; }
   });
+
+  // P2-3 Onboarding 信号：浏览市场页 + 市场访问记录（双市场均访问后解锁切换步骤）
+  useEffect(() => {
+    markOnboardingStep('browse');
+    visitMarket(market);
+  }, [market]);
 
   // Active tab index (persisted per market)
   const [activeTabIndex, setActiveTabIndex] = useState(() => {
@@ -154,6 +164,8 @@ export default function MarketPage({ market }) {
             📊 {filters.dayType}
           </span>
         )}
+        {/* P2-6：保存视图（个性化） */}
+        <SavedViewsBar market={market} lang={lang} />
         <div className="ml-auto">
           <AnomalyBadge lang={lang} onNavigate={(stageId) => {
             const idx = config.stages.findIndex(s => s.id === stageId);
@@ -247,6 +259,10 @@ export default function MarketPage({ market }) {
 
       {/* U6: AI Analyst Chat FAB */}
       <AnalystChat lang={lang} />
+
+      {/* P2：站内通知铃铛 + 新手引导（2026-08-14） */}
+      <NotificationBell lang={lang} />
+      <OnboardingChecklist lang={lang} />
 
     </PageShell>
   );

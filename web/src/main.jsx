@@ -23,6 +23,13 @@ const FinlandPage = lazy(() => import('./pages/FinlandPage.jsx'))
 const FingridPage = lazy(() => import('./pages/FingridPage.jsx'))
 const DeveloperPortalPage = lazy(() => import('./pages/DeveloperPortalPage.jsx'))
 const AgentPage = lazy(() => import('./pages/AgentPage.jsx'))
+const LoginPage = lazy(() => import('./pages/LoginPage.jsx'))
+const InviteAcceptPage = lazy(() => import('./pages/InviteAcceptPage.jsx'))
+const AccountPage = lazy(() => import('./pages/AccountPage.jsx'))
+const PricingPage = lazy(() => import('./pages/PricingPage.jsx'))
+const LegalPage = lazy(() => import('./pages/LegalPage.jsx'))
+const ReportsPage = lazy(() => import('./pages/ReportsPage.jsx'))
+const HelpPage = lazy(() => import('./pages/HelpPage.jsx'))
 
 function BootFallback() {
   return (
@@ -44,7 +51,21 @@ const rootElement = rootPage === 'wem'
         ? <DeveloperPortalPage />
         : rootPage === 'agent'
           ? <AgentPage />
-          : <FilterProvider><MarketPage market="NEM" /></FilterProvider>
+          : rootPage === 'login'
+            ? <LoginPage />
+            : rootPage === 'invite'
+              ? <InviteAcceptPage />
+              : rootPage === 'account'
+                ? <AccountPage />
+                : rootPage === 'pricing'
+                  ? <PricingPage />
+                  : rootPage === 'legal'
+                    ? <LegalPage />
+                    : rootPage === 'reports'
+                      ? <ReportsPage />
+                      : rootPage === 'help'
+                        ? <HelpPage />
+                        : <FilterProvider><MarketPage market="NEM" /></FilterProvider>
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from urllib import request
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now_iso() -> str:
@@ -97,6 +100,86 @@ def evaluate_rule(db, rule: dict) -> dict:
     raise ValueError(f"Unsupported alert rule_type: {rule_type}")
 
 
+def _write_inapp_notification(db, rule: dict, delivery_payload: dict) -> None:
+    """站内通知降级/直投：写入 notification 表（workspace 全员可见，2026-08-14 P2）。
+
+    审计加固（2026-08-14）：写入前校验 workspace 真实存在，拦截向不存在
+    租户注入；既有无鉴权规则创建端点的彻底收紧待 server.py 端点改造。
+    """
+    import uuid
+
+    workspace_id = rule.get("workspace_id")
+    if not workspace_id:
+        return
+    try:
+        if not db.fetch_workspace(workspace_id):
+            logger.warning("inapp alert skipped: unknown workspace %s", workspace_id)
+            return
+    except Exception:  # noqa: BLE001 — 查询失败不阻断投递决策
+        return
+    db.insert_notification(
+        {
+            "notification_id": f"ntf_{uuid.uuid4().hex[:16]}",
+            "workspace_id": workspace_id,
+            "principal_id": None,
+            "title": f"告警触发：{rule['name']}",
+            "body": {
+                "rule_type": rule["rule_type"],
+                "market": rule["market"],
+                "region_or_zone": rule.get("region_or_zone"),
+                "value": (delivery_payload.get("result") or {}).get("value"),
+            },
+            "link": "/account/alerts",
+            "created_at": _utc_now_iso(),
+        }
+    )
+
+
+def _deliver_alert(db, rule: dict, delivery_payload: dict, sender) -> dict:
+    """按 channel_type 分发（2026-08-14 P2）：webhook / inapp / email。
+
+    email 未配置或失败时降级写站内通知，delivery_log 记 degraded。
+    返回 {delivery_status, response_code, response_text}。
+    """
+    channel_type = (rule.get("channel_type") or "webhook").lower()
+    target = rule["channel_target"]
+
+    if channel_type == "inapp":
+        _write_inapp_notification(db, rule, delivery_payload)
+        return {"delivery_status": "sent", "response_code": None, "response_text": "inapp"}
+
+    if channel_type == "email":
+        from services.email_sender import send_email
+
+        result = send_email(
+            to=target,
+            subject=f"[告警] {rule['name']}（{rule['market']}）",
+            body=(
+                f"规则：{rule['name']}（{rule['rule_type']}）\n"
+                f"市场：{rule['market']} / {rule.get('region_or_zone') or '-'}\n"
+                f"触发值：{(delivery_payload.get('result') or {}).get('value')}\n"
+                f"评估时间：{delivery_payload.get('evaluated_at')}"
+            ),
+        )
+        if result.get("delivered"):
+            return {"delivery_status": "sent", "response_code": 200, "response_text": "email"}
+        # 降级：写站内通知，避免告警静默丢失
+        _write_inapp_notification(db, rule, delivery_payload)
+        return {
+            "delivery_status": "degraded",
+            "response_code": None,
+            "response_text": f"email_fallback_inapp: {result.get('reason')}",
+        }
+
+    # webhook（默认，既有行为）
+    response = sender(target, delivery_payload) or {}
+    return {
+        "delivery_status": "sent",
+        "response_code": response.get("status_code"),
+        "response_text": response.get("response_text"),
+    }
+
+
 def evaluate_alert_rules(db, *, sender=None, workspace_id: str | None = None) -> dict:
     sender = sender or default_webhook_sender
     rules = db.fetch_alert_rules(enabled_only=True, workspace_id=workspace_id)
@@ -136,16 +219,16 @@ def evaluate_alert_rules(db, *, sender=None, workspace_id: str | None = None) ->
                 "result": result,
                 "evaluated_at": now_iso,
             }
-            response = sender(rule["channel_target"], delivery_payload)
+            delivery = _deliver_alert(db, rule, delivery_payload, sender)
             sent += 1
             db.insert_alert_delivery_log(
                 {
                     "rule_id": rule["rule_id"],
-                    "delivery_status": "sent",
+                    "delivery_status": delivery["delivery_status"],
                     "target": rule["channel_target"],
                     "payload": delivery_payload,
-                    "response_code": response.get("status_code"),
-                    "response_text": response.get("response_text"),
+                    "response_code": delivery["response_code"],
+                    "response_text": delivery["response_text"],
                     "organization_id": rule.get("organization_id"),
                     "workspace_id": rule.get("workspace_id"),
                     "delivered_at": now_iso,

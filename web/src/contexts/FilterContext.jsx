@@ -54,6 +54,8 @@ export function FilterProvider({ children }) {
 
   const setFilter = useCallback((key, value) => {
     dispatch({ type: 'SET_FILTER', key, value });
+    // P2-3 Onboarding 信号：使用筛选器（2026-08-14）
+    try { import('../lib/onboarding.js').then((m) => m.markOnboardingStep('filter')); } catch { /* ignore */ }
   }, []);
 
   const resetFilters = useCallback(() => {

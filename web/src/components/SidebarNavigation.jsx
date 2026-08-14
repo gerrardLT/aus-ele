@@ -1,4 +1,5 @@
 import { motion, useReducedMotion } from 'framer-motion';
+import { readAuth } from '../lib/authStore.js';
 
 /**
  * SidebarNavigation — 侧边栏导航（2026-08-13 重排）
@@ -30,9 +31,19 @@ export default function SidebarNavigation({
     },
     {
       title: lang === 'zh' ? '系统' : 'SYSTEM',
-      links: [{ id: 'developer', label: lang === 'zh' ? '开发者门户' : 'Developer', path: '/developer' }],
+      links: [
+        { id: 'account', label: lang === 'zh' ? '账户中心' : 'Account', path: '/account' },
+        { id: 'developer', label: lang === 'zh' ? '开发者门户' : 'Developer', path: '/developer' },
+        { id: 'reports', label: lang === 'zh' ? '报告中心' : 'Reports', path: '/reports' },
+        { id: 'pricing', label: lang === 'zh' ? '定价与套餐' : 'Pricing', path: '/pricing' },
+        { id: 'help', label: lang === 'zh' ? '帮助与反馈' : 'Help', path: '/help' },
+      ],
     },
   ];
+
+  // 已登录用户信息（页面级导航，每次整页加载时读取，2026-08-13）
+  const storedAuth = readAuth();
+  const userEmail = storedAuth?.principal?.email;
 
   return (
     <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 overflow-y-auto border-r border-white/8 bg-[#13161A] px-4 py-5 text-[#F3F5F7] md:block max-[1100px]:hidden">
@@ -104,6 +115,20 @@ export default function SidebarNavigation({
           </div>
         </div>
       ))}
+
+      {/* 已登录用户块（2026-08-13） */}
+      {userEmail && (
+        <div className="relative mt-4 border-t border-white/8 pt-3">
+          <div className="flex items-center justify-between rounded-md bg-white/4 px-3 py-2">
+            <div className="min-w-0">
+              <div className="truncate text-[11px] text-white/70">{userEmail}</div>
+              <a href="/account" className="text-[10px] text-[#8AB7FF] hover:underline">
+                {lang === 'zh' ? '账户中心 →' : 'Account →'}
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

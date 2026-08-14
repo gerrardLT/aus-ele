@@ -2,19 +2,23 @@
 // AI Agent API client for workflow orchestration
 
 import { getApiBase } from './apiBase.js';
+import { getValidAccessToken, tryRefreshToken } from './authStore.js';
 
 const API_BASE = getApiBase();
 const AGENT_BASE = `${API_BASE}/v1/agent`;
 
-// ─── Web 会话引导（后端 P0 加固后 agent 端点要求 JWT Bearer） ────────────────
-// 前端启动后向 /auth/web-session 引导一个短期令牌并缓存。
-// 后端门控（2026-08-09）：同站点 Origin/Referer 自动放行（dev 代理/生产
-// 直连均满足）；VITE_BOOTSTRAP_SECRET 仅在配置时作为显式共享密钥附加，
-// 用于无 Origin 的调用方，未配置不影响 web UI 取令牌。
+// ─── 双令牌策略（2026-08-13 P0 账户中心） ──────────────────────────────
+// 优先级：已登录用户 token（authStore）→ 静默刷新 → 匿名 web-session 引导。
+// 未登录访客仍走匿名引导（同站点 Origin/Referer 门控），不破坏无账户访问。
 let _token = null;
 let _tokenExp = 0;
 
 async function ensureAuthToken() {
+  const userToken = getValidAccessToken();
+  if (userToken) return userToken;
+  const refreshed = await tryRefreshToken();
+  if (refreshed) return refreshed;
+
   const now = Math.floor(Date.now() / 1000);
   if (_token && _tokenExp > now + 30) return _token;
   try {

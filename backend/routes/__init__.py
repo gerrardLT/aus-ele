@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 ROUTE_MODULES = [
     "routes.auth_routes",
+    "routes.account_routes",
+    "routes.p2_routes",
     "routes.price_routes",
     "routes.revenue_routes",
     "routes.investment_routes",
