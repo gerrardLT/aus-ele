@@ -31,6 +31,6 @@ jobs:
           command_timeout: 5m
           script: |
             set -e
-            cd "${APP_DIR}"
-            docker compose -f docker-compose.prod.yml exec -T backend \
+            cd /www/wwwroot/aus-ele
+            docker compose -f /www/wwwroot/aus-ele/docker-compose.prod.yml exec -T backend \
               python scripts/seed_admin.py --email "${{ github.event.inputs.email }}"
