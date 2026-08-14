@@ -32,5 +32,6 @@ jobs:
           script: |
             set -e
             cd /www/wwwroot/aus-ele
-            docker compose -f /www/wwwroot/aus-ele/docker-compose.prod.yml exec -T backend \
+            docker compose --env-file /www/wwwroot/aus-ele/.env.prod \
+              -f /www/wwwroot/aus-ele/docker-compose.prod.yml exec -T backend \
               python scripts/seed_admin.py --email "${{ github.event.inputs.email }}"
