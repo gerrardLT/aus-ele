@@ -21,6 +21,7 @@ import {
   deleteExecution,
   clearAllHistory,
 } from '../lib/agentApi.js';
+import { stripFailedTurn } from '../lib/agentChatSupport.js';
 import ChartRenderer from '../components/ChartRenderer.jsx';
 import ExportPreviewModal from '../components/ExportPreviewModal.jsx';
 // Agentic 信任模式组件（DESIGN-v2.md v1.0，2026-08-24 落地）
@@ -32,11 +33,6 @@ import AuditTimeline, { useAuditLog } from '../components/agent/AuditTimeline.js
 import EscalationCard from '../components/agent/EscalationCard.jsx';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const MARKETS = [
-  { id: 'NEM', label: 'NEM', sub: '国家电力市场' },
-  { id: 'WEM', label: 'WEM', sub: '西澳电力市场' },
-];
 
 const REGIONS_NEM = ['NSW1', 'QLD1', 'SA1', 'TAS1', 'VIC1'];
 const REGIONS_WEM = ['WEM'];
@@ -102,26 +98,22 @@ function attributeError(toolName, errorMsg) {
 let msgSeq = 0;
 const nextId = () => `m${Date.now()}_${msgSeq++}`;
 
-// 分析模式（工具子集暴露 PoC 灰度，2026-08-07）：
-// full=全量动作空间（默认，行为不变）；routed=意图路由（后端自动分类，
-// 无法归类回落全量）；其余=显式阶段子集（无路由风险）。
-const TOOL_MODES = [
-  { id: 'full', label: '全量工具空间' },
-  { id: 'routed', label: '智能路由（灰度）' },
-  { id: 'stage1_screening', label: '市场筛选子集' },
-  { id: 'stage2_revenue', label: '收入分析子集' },
-  { id: 'stage4_outlook', label: '风险前瞻子集' },
-  { id: 'stage6_financial', label: '财务建模子集' },
-  { id: 'multi_region_decision', label: '多区域对比子集' },
-  { id: 'data_exploration', label: '数据探索子集' },
-];
+// 会话 id 生成（惰性 useState 初始化器，避免渲染期写 ref，P0 lint 清偿）
+const newSessionId = () =>
+  typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `s_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+// 工具暴露模式（PoC 灰度，2026-08-07）：UI 控件从未渲染且无调用方，
+// 死状态已清理（P0 2026-08-24），请求恒走全量工具空间；
+// 后端 enable_tool_routing/tool_profile 能力保留，未来重开只需新增控件。
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AgentPage() {
-  const [market, setMarket] = useState('NEM');
   const [region, setRegion] = useState('NSW1');
-  const [toolMode, setToolMode] = useState('full');
+  // 市场由区域推导（P0 2026-08-24 死状态清理）：原 market state 唯一写入点即区域切换
+  const market = region === 'WEM' ? 'WEM' : 'NEM';
   // 信任组件状态提升（DESIGN-v2.md v1.0）：自主性档位 + 操作审计时间线
   const [autonomyTier, setAutonomyTier] = useAutonomyTier();
   const audit = useAuditLog();
@@ -131,7 +123,8 @@ export default function AgentPage() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState(null);
+  // 侧栏操作失败本地提示（全局 error 条移除后不静默，P0 2026-08-24）
+  const [sidebarError, setSidebarError] = useState(null);
   const [workflows, setWorkflows] = useState([]);
   const [history, setHistory] = useState([]);
   const [showParams, setShowParams] = useState(false);
@@ -142,20 +135,24 @@ export default function AgentPage() {
     discount_rate: 0.08,
   });
   const [compareList, setCompareList] = useState([]);
-  const sessionIdRef = useRef(null);
-  if (!sessionIdRef.current) {
-    sessionIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `s_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-  }
+  const [sessionId, setSessionId] = useState(newSessionId);
 
   // Abort controller for the in-flight SSE stream (stop button / unmount).
   const abortRef = useRef(null);
   // Id of the assistant message currently being streamed.
   const activeMsgRef = useRef(null);
   const scrollRef = useRef(null);
+  // sticky-bottom（P0 2026-08-24）：仅用户贴底时流式跟随，向上翻历史不被拽走
+  const pinnedRef = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  // Load workflows & history on mount
+  const refreshHistory = useCallback(() => {
+    getAgentHistory(10)
+      .then((data) => setHistory(data.executions || []))
+      .catch(() => {});
+  }, []);
+
+  // Load workflows & history on mount（refreshHistory 先声明后使用，P0 lint 清偿）
   useEffect(() => {
     listWorkflows()
       .then((data) => setWorkflows(data.workflows || []))
@@ -167,21 +164,31 @@ export default function AgentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-scroll to the newest content while streaming.
+  // Auto-scroll to the newest content while streaming（仅贴底时跟随，P0 2026-08-24）.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // 用户滚动监听：距底 ≤80px 视为贴底；离开底部显示「回到最新」浮钮
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight <= 80;
+    pinnedRef.current = pinned;
+    setShowJumpToLatest(!pinned);
+  }, []);
+
+  const jumpToLatest = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    pinnedRef.current = true;
+    setShowJumpToLatest(false);
+  }, []);
 
   // 区域合并市场语义（2026-08-11 精简）：WEM 作为区域选项，市场由区域推导，
   // 移除独立的 NEM/WEM 开关（原双控件互为冗余）
   const regions = [...REGIONS_NEM, ...REGIONS_WEM];
-
-  const refreshHistory = useCallback(() => {
-    getAgentHistory(10)
-      .then((data) => setHistory(data.executions || []))
-      .catch(() => {});
-  }, []);
 
   // Patch the currently-streaming assistant message immutably.
   const patchActive = useCallback((patch) => {
@@ -269,7 +276,7 @@ export default function AgentPage() {
             status_line: '',
             answer: m.answer || '',
           }));
-          setError(event.message);
+          // 错误归属所属消息（P0 2026-08-24）：不再写全局条，消息内附重试
           break;
         case 'done':
           patchActive({ status_line: '', streaming: false });
@@ -284,14 +291,18 @@ export default function AgentPage() {
   );
 
   const sendMessage = useCallback(
-    async ({ text, workflowId }) => {
+    async ({ text, workflowId, baseMessages }) => {
       const query = (text || '').trim();
       if (!query || streaming) return;
 
-      setError(null);
+      // 新发送强制回贴底部（新 assistant 消息来源统一语义，P0 2026-08-24）
+      pinnedRef.current = true;
+      setShowJumpToLatest(false);
 
       // Build conversation history (finalized turns only) to send to backend.
-      const historyPayload = messages
+      // baseMessages：重试路径传入已裁剪快照（闭包内 messages 是裁剪前旧值）
+      const source = baseMessages || messages;
+      const historyPayload = source
         .filter((m) => (m.role === 'user' || m.role === 'assistant') && (m.content || m.answer))
         .map((m) => ({
           role: m.role,
@@ -324,13 +335,8 @@ export default function AgentPage() {
         workflow_template: workflowId || undefined,
         max_steps: 15,
         params_override: bessParams,
-        session_id: sessionIdRef.current,
-        // 工具暴露模式：routed=开启意图路由；显式子集直传 profile；full=缺省全量
-        ...(toolMode === 'routed'
-          ? { enable_tool_routing: true }
-          : toolMode !== 'full'
-            ? { tool_profile: toolMode }
-            : {}),
+        session_id: sessionId,
+        // 工具暴露恒走全量空间（UI 死状态已清理，后端路由能力保留，P0 2026-08-24）
       };
 
       try {
@@ -342,7 +348,7 @@ export default function AgentPage() {
         if (err.name === 'AbortError') {
           patchActive({ status_line: '已停止', streaming: false, aborted: true });
         } else {
-          setError(err.message || '流式对话失败');
+          // 错误归属消息（P0 2026-08-24）：不再写全局 error 条
           patchActive({ error: err.message || '流式对话失败', status_line: '', streaming: false });
         }
       } finally {
@@ -353,12 +359,29 @@ export default function AgentPage() {
         refreshHistory();
       }
     },
-    [messages, streaming, market, region, bessParams, toolMode, handleEvent, patchActive, refreshHistory],
+    [messages, streaming, market, region, bessParams, sessionId, handleEvent, patchActive, refreshHistory],
   );
 
   const handleSend = useCallback(() => {
     sendMessage({ text: input });
   }, [input, sendMessage]);
+
+  // 重试（P0 2026-08-24）：成对移除失败轮次后用原问题重发；
+  // 按当前区域与参数执行（接受语义，按钮 title 已注明）；手动停止(aborted)不提供重试
+  const handleRetry = useCallback(
+    (failedId) => {
+      if (streaming) return;
+      const idx = messages.findIndex((m) => m.id === failedId);
+      if (idx < 0) return;
+      const prev = idx > 0 ? messages[idx - 1] : null;
+      const query = prev && prev.role === 'user' ? prev.content : '';
+      if (!query) return;
+      const stripped = stripFailedTurn(messages, failedId);
+      setMessages(stripped);
+      sendMessage({ text: query, baseMessages: stripped });
+    },
+    [messages, streaming, sendMessage],
+  );
 
   const handleStop = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
@@ -369,16 +392,26 @@ export default function AgentPage() {
     // 操作审计（Action Audit & Undo）：清空对话可逆，撤销恢复消息快照
     if (messages.length > 0) {
       const snapshot = messages;
-      auditLog({ action: '清空对话', reversible: true, onUndo: () => setMessages(snapshot) });
+      const prevSessionId = sessionId;
+      auditLog({
+        action: '清空对话',
+        reversible: true,
+        // 撤销是整批替换 → 强制回贴底部；同时恢复原会话 id（撤销后不脱离原历史分组，P0 2026-08-24）
+        onUndo: () => {
+          pinnedRef.current = true;
+          setShowJumpToLatest(false);
+          setMessages(snapshot);
+          setSessionId(prevSessionId);
+        },
+      });
     }
+    pinnedRef.current = true;
+    setShowJumpToLatest(false);
     setMessages([]);
-    setError(null);
     setCompareList([]);
     // 新对话 = 新会话（多轮持久化分组依赖，2026-08-11）
-    sessionIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `s_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-  }, [messages, auditLog]);
+    setSessionId(newSessionId());
+  }, [messages, auditLog, sessionId]);
 
   const handleCompare = useCallback((report) => {
     setCompareList((prev) => {
@@ -389,11 +422,12 @@ export default function AgentPage() {
 
   const handleDeleteHistory = useCallback((ids) => {
     // 乐观移除：立即从列表消失，不让后端补满窗口造成"删不掉"错觉（2026-08-11 修复）；
-    // 支持会话分组整组删除（ids 为数组）；失败时回滚并提示。
+    // 支持会话分组整组删除（ids 为数组）；失败时回滚并侧栏提示（P0 2026-08-24）。
     const idList = Array.isArray(ids) ? ids : [ids];
+    setSidebarError(null);
     setHistory((prev) => prev.filter((h) => !idList.includes(h.id)));
     Promise.all(idList.map((id) => deleteExecution(id))).catch((e) => {
-      setError(`删除历史失败: ${e.message || e}`);
+      setSidebarError(`删除历史失败: ${e.message || e}`);
       refreshHistory();
     });
   }, [refreshHistory]);
@@ -401,9 +435,10 @@ export default function AgentPage() {
   const handleClearHistory = useCallback(() => {
     // 清空全部（2026-08-11）：二次确认 + 乐观清空 + 失败回滚
     if (!window.confirm('确定清空全部会话历史？此操作不可恢复。')) return;
+    setSidebarError(null);
     setHistory([]);
     clearAllHistory().catch((e) => {
-      setError(`清空历史失败: ${e.message || e}`);
+      setSidebarError(`清空历史失败: ${e.message || e}`);
       refreshHistory();
     });
   }, [refreshHistory]);
@@ -411,6 +446,7 @@ export default function AgentPage() {
   const handleLoadHistory = useCallback(
     async (item) => {
       if (streaming) return;
+      setSidebarError(null);
       try {
         const detail = await getExecutionDetail(item.id);
         if (!detail || !detail.report) return;
@@ -446,8 +482,11 @@ export default function AgentPage() {
           answerDone: true,
         });
         setMessages(msgs);
+        // 整批替换 → 回贴底部（P0 2026-08-24）
+        pinnedRef.current = true;
+        setShowJumpToLatest(false);
         // 追问续接该会话（而非当前页面会话）
-        if (detail.session_id) sessionIdRef.current = detail.session_id;
+        if (detail.session_id) setSessionId(detail.session_id);
       } catch {
         // silently ignore load failures
       }
@@ -457,9 +496,11 @@ export default function AgentPage() {
 
   const handleKeyDown = useCallback(
     (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-        handleSend();
-      }
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      // IME 组合守门：中文输入中按 Enter 是候选确认而非发送（keyCode 229 兼容兜底）
+      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      handleSend();
     },
     [handleSend],
   );
@@ -478,12 +519,8 @@ export default function AgentPage() {
 
   return (
     <AgentLayout
-      market={market}
-      setMarket={setMarket}
       region={region}
       setRegion={setRegion}
-      toolMode={toolMode}
-      setToolMode={setToolMode}
       autonomyTier={autonomyTier}
       setAutonomyTier={setAutonomyTier}
       audit={audit}
@@ -492,13 +529,17 @@ export default function AgentPage() {
       setInput={setInput}
       messages={messages}
       streaming={streaming}
-      error={error}
+      sidebarError={sidebarError}
       workflows={workflows}
       history={historyGroups}
       scrollRef={scrollRef}
+      onScroll={handleScroll}
+      showJumpToLatest={showJumpToLatest}
+      onJumpToLatest={jumpToLatest}
       onSend={handleSend}
       onStop={handleStop}
       onReset={handleReset}
+      onRetry={handleRetry}
       onKeyDown={handleKeyDown}
       onLoadHistory={handleLoadHistory}
       showParams={showParams}
@@ -534,12 +575,8 @@ function resultPatch(event) {
 // ─── Layout ───────────────────────────────────────────────────────────────
 
 function AgentLayout({
-  market,
-  setMarket,
   region,
   setRegion,
-  toolMode,
-  setToolMode,
   autonomyTier,
   setAutonomyTier,
   audit,
@@ -548,13 +585,17 @@ function AgentLayout({
   setInput,
   messages,
   streaming,
-  error,
+  sidebarError,
   workflows,
   history,
   scrollRef,
+  onScroll,
+  showJumpToLatest,
+  onJumpToLatest,
   onSend,
   onStop,
   onReset,
+  onRetry,
   onKeyDown,
   onWorkflow,
   onLoadHistory,
@@ -620,6 +661,12 @@ function AgentLayout({
           {history.length === 0 && (
             <p className="px-1 text-[11px] text-white/30">暂无记录</p>
           )}
+          {/* 侧栏操作失败本地提示（全局 error 条移除后的归属，P0 2026-08-24） */}
+          {sidebarError && (
+            <p className="mb-2 rounded border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-2 py-1.5 text-[10px] leading-4 text-[#F87171]">
+              {sidebarError}
+            </p>
+          )}
           {/* 会话分组视图（2026-08-11）：每组=一次多轮会话，展示首轮问题+轮数；
               点击回载最新轮（含完整对话上下文），× 整组删除 */}
           <div className="grid gap-1">
@@ -627,10 +674,18 @@ function AgentLayout({
               const latest = group[0];
               const first = group[group.length - 1];
               return (
-                <button
+                // 外层 div（非法 button 嵌 button 修复，P0 2026-08-24）：
+                // 载入目标 role=button + 键盘可达，删除为平级真按钮
+                <div
                   key={latest.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onLoadHistory(latest)}
-                  className="group relative w-full rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70"
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return; // 忽略删除按钮上的按键冒泡
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLoadHistory(latest); }
+                  }}
+                  className="group relative w-full cursor-pointer rounded-md px-2 py-1.5 text-left text-[11px] text-white/50 transition-colors hover:bg-white/6 hover:text-white/70 focus:outline-none focus:ring-1 focus:ring-white/30"
                 >
                   <div className="flex items-start gap-1.5">
                     <span className="mt-0.5 inline-flex w-3 shrink-0 justify-center text-[9px]" style={{ color: STATUS_MAP[latest.status]?.color || '#6B7280' }}>
@@ -646,16 +701,18 @@ function AgentLayout({
                       ? `${(latest.total_duration_ms / 1000).toFixed(1)}s`
                       : '—'}
                   </div>
-                  {/* 删除按钮：常显且提高对比度（原 opacity 过低用户找不到，2026-08-11） */}
-                  <span
-                    role="button"
+                  {/* 删除按钮：常显且提高对比度（原 opacity 过低用户找不到，2026-08-11）；
+                      平级真按钮（原 span role=button 嵌于 button 内为非法嵌套，P0 2026-08-24） */}
+                  <button
+                    type="button"
                     title="删除此会话"
+                    aria-label="删除此会话"
                     onClick={(e) => { e.stopPropagation(); onDeleteHistory(group.map((g) => g.id)); }}
                     className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-[12px] text-white/60 transition-colors hover:bg-white/15 hover:text-white"
                   >
                     ×
-                  </span>
-                </button>
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -670,11 +727,8 @@ function AgentLayout({
           <span className="h-4 w-px bg-[var(--color-border)]" />
           <select
             value={region}
-            onChange={(e) => {
-              const v = e.target.value;
-              setRegion(v);
-              setMarket(v === 'WEM' ? 'WEM' : 'NEM');
-            }}
+            // 市场由区域推导（market 死状态已清理，P0 2026-08-24）
+            onChange={(e) => setRegion(e.target.value)}
             disabled={streaming}
             title="分析区域（选 WEM 自动切换西澳市场语义）"
             className="rounded border border-[var(--color-border)] bg-transparent px-2.5 py-1 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] disabled:opacity-40"
@@ -763,8 +817,9 @@ function AgentLayout({
           </div>
         )}
 
-        {/* Conversation */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-6">
+        {/* Conversation（sticky-bottom 包裹层：浮钮不随内容滚动，P0 2026-08-24） */}
+        <div className="relative flex-1 overflow-hidden">
+        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-8 py-6">
           {/* Comparison panel */}
           {compareList.length > 0 && (
             <ComparisonPanel reports={compareList} onClear={() => setCompareList([])} />
@@ -777,27 +832,41 @@ function AgentLayout({
                 m.role === 'user' ? (
                   <UserBubble key={m.id} text={m.content} />
                 ) : (
-                  <AssistantMessage key={m.id} message={m} onCompare={onCompare} onSuggest={onSuggest} audit={audit} />
+                  <AssistantMessage key={m.id} message={m} onCompare={onCompare} onSuggest={onSuggest} onAudit={audit?.log} onRetry={onRetry} retryDisabled={streaming} />
                 ),
               )}
             </div>
           )}
+          {/* 操作审计：页级唯一实例（P0 2026-08-24，原每条消息轨迹 tab 重复渲染）；
+              放在 messages 三元分支之外——清空对话后仍可撤销恢复 */}
+          {audit && audit.entries.length > 0 && (
+            <div className="mx-auto mt-6 max-w-[1200px] 2xl:max-w-[1360px]">
+              <AuditTimeline entries={audit.entries} onUndo={audit.undo} />
+            </div>
+          )}
+        </div>
+        {/* 非贴底时提供回到最新（sticky-bottom，P0 2026-08-24） */}
+        {showJumpToLatest && (
+          <button
+            onClick={onJumpToLatest}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[11px] text-[var(--color-muted)] shadow-sm transition-colors hover:border-[var(--color-text)] hover:text-[var(--color-text)]"
+          >
+            ↓ 回到最新
+          </button>
+        )}
         </div>
 
         {/* Composer：固定首屏底部，发送按钮内嵌输入框右下角（2026-08-11） */}
         <div className="border-t border-[var(--color-border)] px-8 py-3">
           <div className="mx-auto max-w-[1200px] 2xl:max-w-[1360px]">
-            {error && (
-              <div className="mb-2 rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2 text-xs text-[var(--color-error)]">
-                {error}
-              </div>
-            )}
+            {/* 全局 error 条已移除（P0 2026-08-24）：流式错误归属所属消息 + 重试；
+                侧栏操作失败在历史区 sidebarError 提示 */}
             <div className="relative">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder={`向分析引擎提问或追问... 例如：对 ${region} 做一次完整投资可行性分析（Ctrl+Enter 发送）`}
+                placeholder={`向分析引擎提问或追问... 例如：对 ${region} 做一次完整投资可行性分析（Enter 发送 · Shift+Enter 换行）`}
                 rows={2}
                 className="min-h-[52px] w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-3 pl-4 pr-12 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]/50 outline-none transition-colors focus:border-[var(--color-primary)]"
               />
@@ -813,7 +882,7 @@ function AgentLayout({
                 <button
                   onClick={onSend}
                   disabled={!input.trim()}
-                  title="发送（Ctrl+Enter）"
+                  title="发送（Enter）"
                   className="absolute bottom-2.5 right-2.5 flex h-7 w-7 items-center justify-center rounded-md bg-[var(--color-inverted)] text-[var(--color-inverted-text)] transition-opacity hover:opacity-90 disabled:opacity-40"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -863,7 +932,7 @@ function UserBubble({ text }) {
   );
 }
 
-function AssistantMessage({ message, onCompare, onSuggest, audit }) {
+function AssistantMessage({ message, onCompare, onSuggest, onAudit, onRetry, retryDisabled }) {
   const { answer, trace, status_line, error, report, streaming, answerDone, plan, charts, downloadLink } = message;
   const degraded = report && report.metadata && report.metadata.llm_degraded;
   const hasEvidence = (trace && trace.length > 0) || report || (charts && charts.length > 0) || downloadLink;
@@ -922,12 +991,23 @@ function AssistantMessage({ message, onCompare, onSuggest, audit }) {
           {error && (
             <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-2.5 text-xs text-[var(--color-error)]">
               {error}
+              {/* 错误归属消息 + 重试（P0 2026-08-24）；手动停止(aborted)不提供 */}
+              {onRetry && !message.aborted && (
+                <button
+                  onClick={() => onRetry(message.id)}
+                  disabled={retryDisabled}
+                  title="按当前区域与参数重发同一问题"
+                  className="ml-3 rounded border border-[var(--color-error)]/40 px-2 py-0.5 text-[10px] transition-colors hover:bg-[var(--color-error)]/10 disabled:opacity-40"
+                >
+                  ↺ 重试
+                </button>
+              )}
             </div>
           )}
         </div>
 
         {hasEvidence && (
-          <EvidencePanel message={message} onCompare={onCompare} onSuggest={onSuggest} audit={audit} />
+          <EvidencePanel message={message} onCompare={onCompare} onSuggest={onSuggest} onAudit={onAudit} />
         )}
       </div>
     </div>
@@ -1009,15 +1089,18 @@ function DegradedBanner({ reason }) {
 }
 
 // ─── Evidence panel（动态 Tab：轨迹/[图表]/报告；工具清单唯一展示位，2026-08-10 去重重构）───
+// 具名导出供 vitest 守门（报告不抢 tab，P0 2026-08-24）；组件导出不影响 fast refresh
 
-function EvidencePanel({ message, onCompare, onSuggest, audit }) {
+export function EvidencePanel({ message, onCompare, onSuggest, onAudit }) {
   const { trace, report, charts, totalSteps, downloadLink } = message;
   const [tab, setTab] = useState('trace');
+  // 用户手动选过 tab 后，报告到达不再抢焦点（P0 2026-08-24）；
+  // 历史回载消息带 report 挂载时 untouched → 仍自动切（保持原行为）
+  const [userTouched, setUserTouched] = useState(false);
 
-  // 报告生成后自动切换到报告 tab
   useEffect(() => {
-    if (report) setTab('report');
-  }, [report]);
+    if (report && !userTouched) setTab('report');
+  }, [report, userTouched]);
 
   // 动态 Tab：图表仅在存在时展示；证据已并入轨迹（去重）
   const tabs = [
@@ -1035,7 +1118,7 @@ function EvidencePanel({ message, onCompare, onSuggest, audit }) {
           return (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => { setUserTouched(true); setTab(t.id); }}
               disabled={disabled}
               className={`rounded-t px-2.5 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-30 ${
                 active
@@ -1044,6 +1127,10 @@ function EvidencePanel({ message, onCompare, onSuggest, audit }) {
               }`}
             >
               {t.label}
+              {/* 报告就绪指示渲染在 disabled tab 上（流式期间 count=0 tab 禁用，否则指示不可见） */}
+              {t.id === 'report' && report && !active && (
+                <span className="ml-1" style={{ color: 'var(--color-status-ok)' }}>●</span>
+              )}
               {t.id !== 'report' && t.count > 0 && (
                 <span className="ml-1 font-mono tabular-nums text-[10px]">({t.count})</span>
               )}
@@ -1053,11 +1140,7 @@ function EvidencePanel({ message, onCompare, onSuggest, audit }) {
       </div>
       <div className="max-h-[600px] overflow-y-auto p-3">
         {tab === 'trace' && (
-          <>
-            <ToolTrace trace={trace || []} totalSteps={totalSteps} downloadLink={downloadLink} />
-            {/* 操作审计分区（Action Audit & Undo）：并入轨迹 tab，不新建 Evidence tab（2026-08-10 去重原则） */}
-            {audit && <AuditTimeline entries={audit.entries} onUndo={audit.undo} />}
-          </>
+          <ToolTrace trace={trace || []} totalSteps={totalSteps} downloadLink={downloadLink} />
         )}
         {tab === 'charts' && (
           <div className="flex flex-col gap-3">
@@ -1068,7 +1151,7 @@ function EvidencePanel({ message, onCompare, onSuggest, audit }) {
         )}
         {tab === 'report' && report && (
           <div className="agent-report-print rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <ReportView report={report} answer={message.answer} trace={trace} onCompare={onCompare} onSuggest={onSuggest} onAudit={audit?.log} />
+            <ReportView report={report} answer={message.answer} trace={trace} onCompare={onCompare} onSuggest={onSuggest} onAudit={onAudit} />
           </div>
         )}
       </div>
