@@ -99,6 +99,7 @@ function SubscriptionCard({ zh, workspaceId, role, getToken, onPlanChanged }) {
         <h3 className="text-sm font-semibold text-[var(--color-text)]">{zh ? '订阅与配额' : 'Subscription & quota'}</h3>
         {role === 'owner' ? (
           <select value={sub.plan} onChange={changePlan} disabled={busy}
+            aria-label={zh ? '订阅套餐' : 'Subscription plan'}
             className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1 text-xs text-[var(--color-text)]">
             <option value="starter">starter</option>
             <option value="growth">growth</option>
@@ -153,9 +154,9 @@ function PasswordChangeForm({ zh, getToken }) {
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">{zh ? '修改密码' : 'Change password'}</h3>
       <form onSubmit={submit} className="space-y-2">
-        <input type="password" required placeholder={zh ? '当前密码' : 'Current password'} value={current} onChange={(e) => setCurrent(e.target.value)} className={inputCls} />
-        <input type="password" required minLength={8} placeholder={zh ? '新密码（至少 8 位）' : 'New password (min 8 chars)'} value={next} onChange={(e) => setNext(e.target.value)} className={inputCls} />
-        <input type="password" required placeholder={zh ? '确认新密码' : 'Confirm new password'} value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputCls} />
+        <input type="password" required placeholder={zh ? '当前密码' : 'Current password'} aria-label={zh ? '当前密码' : 'Current password'} value={current} onChange={(e) => setCurrent(e.target.value)} className={inputCls} autoComplete="current-password" />
+        <input type="password" required minLength={8} placeholder={zh ? '新密码（至少 8 位）' : 'New password (min 8 chars)'} aria-label={zh ? '新密码（至少 8 位）' : 'New password (min 8 chars)'} value={next} onChange={(e) => setNext(e.target.value)} className={inputCls} autoComplete="new-password" />
+        <input type="password" required placeholder={zh ? '确认新密码' : 'Confirm new password'} aria-label={zh ? '确认新密码' : 'Confirm new password'} value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputCls} autoComplete="new-password" />
         <div className="flex items-center gap-3">
           <button type="submit" disabled={busy} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
             {busy ? (zh ? '提交中…' : 'Saving…') : (zh ? '修改密码' : 'Change')}
@@ -288,6 +289,7 @@ function AccountHome() {
                 {editingName ? (
                   <>
                     <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+                      aria-label={zh ? '显示名' : 'Display name'}
                       className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-0.5 text-xs text-[var(--color-text)]" />
                     <button type="button" onClick={saveDisplayName} className="text-[10px] text-[var(--color-primary)] hover:underline">{zh ? '保存' : 'Save'}</button>
                     <button type="button" onClick={() => setEditingName(false)} className="text-[10px] text-[var(--color-muted)] hover:underline">{zh ? '取消' : 'Cancel'}</button>
@@ -306,6 +308,7 @@ function AccountHome() {
               <dd className="mt-0.5 text-[var(--color-text)]">
                 {(auth?.workspaces?.length || 0) > 1 ? (
                   <select value={auth?.workspaceId || ''} onChange={onSwitchWorkspace}
+                    aria-label={zh ? '切换工作空间' : 'Switch workspace'}
                     className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-0.5 text-xs text-[var(--color-text)]">
                     {auth.workspaces.map((w) => (
                       <option key={w.workspace_id} value={w.workspace_id}>{w.name}（{w.role}）</option>

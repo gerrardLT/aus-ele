@@ -3,7 +3,7 @@
  *
  * Covers:
  * - Property 2: Dynamic stage rendering matches config
- *   - 2a: Stage count matches expected (NEM=6, WEM=5)
+ *   - 2a: Stage count matches expected (NEM=7, WEM=5)
  *   - 2b: All enabled modules have entries in MODULE_REGISTRY
  *   - 2c: DynamicStage renders modules in loadPriority order
  *   - 2d: Disabled modules are filtered out
@@ -39,15 +39,15 @@ function simulateDynamicStageOutput(stageDefinition) {
 
 // ---------------------------------------------------------------------------
 // Property 2a: For each market, verify config.stages.length matches expected
-// NEM = 6 stages, WEM = 5 stages
+// NEM = 7 stages, WEM = 5 stages（NEM 新增 investment-decision 阶段，2026-08-20 同步）
 // **Validates: Requirements 1.2, 1.3**
 // ---------------------------------------------------------------------------
 
 describe('Property 2a: Stage count matches expected per market', () => {
-  test('NEM config has exactly 6 stages', () => {
+  test('NEM config has exactly 7 stages', () => {
     const config = getMarketConfig('NEM');
-    assert.equal(config.stages.length, 6,
-      `NEM should have 6 stages, got ${config.stages.length}`);
+    assert.equal(config.stages.length, 7,
+      `NEM should have 7 stages, got ${config.stages.length}`);
   });
 
   test('WEM config has exactly 5 stages', () => {

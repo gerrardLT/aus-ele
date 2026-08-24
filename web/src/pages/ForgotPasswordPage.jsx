@@ -82,9 +82,11 @@ export default function ForgotPasswordPage() {
           {isReset ? (
             <form onSubmit={doReset} className="space-y-4">
               <input type="password" required minLength={8} value={pw} onChange={(e) => setPw(e.target.value)}
-                placeholder={zh ? '新密码（至少 8 位）' : 'New password (min 8 chars)'} className={inputCls} />
+                aria-label={zh ? '新密码（至少 8 位）' : 'New password (min 8 chars)'}
+                placeholder={zh ? '新密码（至少 8 位）' : 'New password (min 8 chars)'} className={inputCls} autoComplete="new-password" />
               <input type="password" required value={confirm} onChange={(e) => setConfirm(e.target.value)}
-                placeholder={zh ? '确认新密码' : 'Confirm new password'} className={inputCls} />
+                aria-label={zh ? '确认新密码' : 'Confirm new password'}
+                placeholder={zh ? '确认新密码' : 'Confirm new password'} className={inputCls} autoComplete="new-password" />
               {msg && (
                 <div className={`rounded-lg px-3 py-2 text-xs ${msg.ok ? 'bg-[var(--color-status-success)]/10 text-[var(--color-status-success)]' : 'bg-[var(--color-status-error)]/10 text-[var(--color-status-error)]'}`}>
                   {msg.text}
@@ -98,7 +100,8 @@ export default function ForgotPasswordPage() {
           ) : (
             <form onSubmit={requestReset} className="space-y-4">
               <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                placeholder={zh ? '账户邮箱' : 'Account email'} className={inputCls} />
+                aria-label={zh ? '账户邮箱' : 'Account email'}
+                placeholder={zh ? '账户邮箱' : 'Account email'} className={inputCls} autoComplete="email" />
               {msg && (
                 <div className={`rounded-lg px-3 py-2 text-xs ${msg.ok ? 'bg-[var(--color-status-success)]/10 text-[var(--color-status-success)]' : 'bg-[var(--color-status-error)]/10 text-[var(--color-status-error)]'}`}>
                   {msg.text}

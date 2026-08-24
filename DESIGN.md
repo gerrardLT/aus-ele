@@ -1,6 +1,8 @@
 # AEMO BESS 投资仪表板 — 设计系统
 
 > 本文档是项目的设计系统源文件（Single Source of Truth），所有前端决策应参照此文件。
+> 组件/令牌级 Stitch 格式规格以 `docs/design/DESIGN-v2.md`（正式，v1.0，2026-08-24 转正）为权威源；
+> v1 Stitch 规格已归档至 `docs/_archive/DESIGN-v1.md`。
 
 ---
 
@@ -43,6 +45,9 @@
 ---
 
 ## 3. 色彩系统
+
+> **2026-08-20 更新**：色彩令牌已升级为 **oklch 双主题**（dark-first 默认暗色，`[data-theme="dark"]`/`light` 切换），
+> 以 `web/src/index.css` 的主题令牌块为唯一实现源（SSOT）；本节 hex 值保留为语义参考。
 
 ### 3.1 CSS 变量定义
 
@@ -99,18 +104,20 @@ const CHART_PALETTE = {
 ### 4.1 字体栈
 
 ```css
---font-sans:  'Inter', ui-sans-serif, system-ui, sans-serif;
---font-serif: 'Playfair Display', ui-serif, Georgia, serif;
+--font-sans:  'Archivo', ui-sans-serif, system-ui, sans-serif;
+--font-serif: 'Source Serif 4', ui-serif, Georgia, serif;
 ```
+
+> 2026-08-20：Inter/Playfair Display 替换为 Archivo/Source Serif 4（单链加载，见 `web/index.html`）。
 
 | 用途 | 字体 | 权重 | 间距 |
 |------|------|------|------|
-| **页面标题 (h1)** | Playfair Display | 600 (Semi-Bold) | -0.02em |
-| **章节标题 (h2)** | Playfair Display | 400 (Regular) | -0.02em |
-| **模块标题 (h3-h4)** | Inter | 700 (Bold) | 0.05em, UPPERCASE |
-| **正文/数据** | Inter | 400 | 0 |
-| **标签/辅助文字** | Inter | 500-600 | 0.08em, UPPERCASE |
-| **数据数值** | Inter (font-mono) | 700 | 0 |
+| **页面标题 (h1)** | Source Serif 4 | 700 (Bold) | -0.02em |
+| **章节标题 (h2)** | Source Serif 4 | 600 (Semi-Bold) | -0.02em |
+| **模块标题 (h3-h4)** | Archivo | 700 (Bold) | 0.05em, UPPERCASE |
+| **正文/数据** | Archivo | 400 | 0 |
+| **标签/辅助文字** | Archivo | 500-600 | 0.08em, UPPERCASE |
+| **数据数值** | Archivo (font-mono) | 700 | 0 |
 
 ### 4.2 字号规模
 
@@ -134,10 +141,11 @@ text-3xl:  30px  — 章节标题 (h2)
 .grid-container {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 24px;
-  max-width: 1440px;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: none;              /* 2026-08-20：工作台全宽，不再限 1440px */
   margin: 0 auto;
-  padding: 0 32px;
+  padding: 0 clamp(28px, 3vw, 56px);  /* 响应式边距 */
 }
 ```
 
@@ -279,18 +287,24 @@ text-3xl:  30px  — 章节标题 (h2)
 
 ## 9. 反模式清单 (AI Slop)
 
-以下模式在本项目中**严格禁止**：
+以下模式在本项目中**严格禁止**（2026-08-20 改为带白名单规则）：
 
 | 反模式 | 替代方案 |
 |--------|---------|
 | 渐变文字 | 纯色文字 + 语义色 |
 | 发光边框/光晕效果 | 1px 实线边框 |
 | 弹性/回弹动画 | ease-out 减速 |
-| 深色模式 + 霓虹色 | 纯白背景 + 黑色/蓝色 |
+| 深色模式 + 霓虹色 | 双主题令牌（oklch dark-first）+ 语义色 |
 | 玻璃拟态 (blur) | 实色背景 |
-| 装饰性图标 (大圆角矩形+图标) | 文字 + 数字 |
+| 装饰性图标 (大圆角矩形+图标) | 文字 + 数字（小尺寸 lucide 图标 11-12px 可用） |
 | 卡片嵌套卡片 | 扁平层级 |
 | "Hero metric" 模板 | 内联 KPI 卡片组 |
+
+**白名单例外**：
+- 内容面板/图表区：**禁止** blur/玻璃拟态/半透明背景，一律实色背景；
+- sticky 工具条（如 FilterBar、sticky 表头）：允许 `backdrop-blur-sm` **一档**，且背景需接近实色；
+- 全屏模态遮罩（如 OnboardingTour）：允许 `backdrop-blur-sm` 一档（遮罩非内容面板，2026-08-24 裁定）；
+- 双主题下暗色模式是默认形态，不属于“深色模式 + 霓虹色”反模式（需配语义色而非霓虹色）。
 
 ---
 
@@ -299,3 +313,6 @@ text-3xl:  30px  — 章节标题 (h2)
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | 1.0 | 2026-04-09 | 初始设计系统文档化 |
+| 1.1 | 2026-08-20 | WQS 审计修复：字体栈更新为 Archivo/Source Serif 4；承认 oklch 双主题令牌（以 index.css 为准）；网格改全宽 + clamp 边距；反模式清单增加 sticky 工具条 blur 白名单 |
+| 1.2 | 2026-08-24 | 设计漂移修复：清除 glow/panel-glass/panel-depth 违规效果；白名单补模态遮罩豁免与 sticky 表头同类条款；字体 SSOT 同步至 docs/design/DESIGN-v2.md |
+| 1.3 | 2026-08-24 | V2 转正：docs/design/DESIGN-v2.md 升级正式（version 1.0）；v1 物理归档至 docs/_archive/DESIGN-v1.md；designmd export dtcg 重生成 design_tokens.json 双源合一 |

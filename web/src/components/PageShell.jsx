@@ -32,6 +32,36 @@ export default function PageShell({
 
         <div className="min-w-0 flex-1 pl-1 pt-1">
           <main className="grid-container">
+            {/* 窄视口导航条（批次6）：SidebarNavigation 在 <1100px 隐藏，此处提供横向 <a> 导航兜底。
+                链接与 SidebarNavigation 保持一致，修改时需同步。抽屉式移动导航推迟。 */}
+            <nav aria-label={lang === 'zh' ? '主导航' : 'Main navigation'} className="col-span-12 mt-3 min-[1101px]:hidden">
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] pb-2">
+                {[
+                  { label: 'NEM', path: '/', id: 'aemo' },
+                  { label: 'WEM', path: '/wem', id: 'wem' },
+                  { label: lang === 'zh' ? '天枢 AI' : 'Agent', path: '/agent', id: 'agent' },
+                  { label: 'Finland', path: '/finland', id: 'finland' },
+                  { label: lang === 'zh' ? '账户' : 'Account', path: '/account', id: 'account' },
+                  { label: lang === 'zh' ? '帮助' : 'Help', path: '/help', id: 'help' },
+                ].map((item) => {
+                  const isActive = item.id === activePage;
+                  return (
+                    <a
+                      key={item.id}
+                      href={item.path}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                        isActive
+                          ? 'border-[var(--color-inverted)] bg-[var(--color-inverted)] text-[var(--color-inverted-text)]'
+                          : 'border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-text)] hover:text-[var(--color-text)]'
+                      }`}
+                    >
+                      {item.label}
+                    </a>
+                  );
+                })}
+              </div>
+            </nav>
             {/* Header */}
             <div className="col-span-12 mt-4 mb-2 flex items-center justify-between">
               <div>

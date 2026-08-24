@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { MapPin, CalendarDays, BarChart3 } from 'lucide-react';
 import PageShell from '../components/PageShell';
 import DynamicStage from '../components/funnel/DynamicStage';
 import { getMarketConfig, DEFAULT_BESS_PARAMS } from '../lib/marketConfig';
@@ -20,7 +21,7 @@ import OnboardingTour from '../components/OnboardingTour';
 import SavedViewsBar from '../components/SavedViewsBar';
 import { markOnboardingStep, visitMarket } from '../lib/onboarding.js';
 import { fetchJson } from '../lib/apiClient';
-import { getApiBase } from '../lib/apiBase';
+import { getApiBase, apiUrl } from '../lib/apiBase';
 
 const API_BASE = getApiBase();
 
@@ -96,6 +97,21 @@ export default function MarketPage({ market }) {
   const handleTabClick = useCallback((index) => {
     setActiveTabIndex(index);
   }, []);
+
+  // 无障碍（批次6）：tablist 键盘漫游 — ArrowLeft/Right/Home/End
+  const tabRefs = useRef([]);
+  const handleTabKeyDown = useCallback((e) => {
+    const count = config.stages.length;
+    let next = null;
+    if (e.key === 'ArrowRight') next = (activeTabIndex + 1) % count;
+    else if (e.key === 'ArrowLeft') next = (activeTabIndex - 1 + count) % count;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = count - 1;
+    if (next === null) return;
+    e.preventDefault();
+    setActiveTabIndex(next);
+    tabRefs.current[next]?.focus();
+  }, [activeTabIndex, config.stages.length]);
   
   // Language toggle
   const handleLangToggle = useCallback(() => {
@@ -120,8 +136,8 @@ export default function MarketPage({ market }) {
     const doPrefetch = () => {
       prefetchDone.current.add(nextStage.id);
       deps.forEach(url => {
-        const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
-        fetch(fullUrl, { method: 'HEAD', cache: 'force-cache' }).catch(() => {});
+        const fullUrl = url.startsWith('http') ? url : apiUrl(url);
+        fetch(fullUrl, { method: 'HEAD', cache: 'force-cache' }).catch(e => console.debug('[prefetch]', url, e));
       });
     };
 
@@ -153,14 +169,14 @@ export default function MarketPage({ market }) {
       {/* S6/F3: Persistent context bar + U4: Anomaly badge */}
       <div data-tour="filters" className="flex items-center gap-3 mb-2 px-1 text-xs text-[var(--color-muted)]">
         <span className="inline-flex items-center gap-1 rounded bg-[var(--color-border)] px-2 py-0.5 font-medium">
-          📍 {filters.region}
+          <MapPin size={11} aria-hidden="true" /> {filters.region}
         </span>
         <span className="inline-flex items-center gap-1 rounded bg-[var(--color-border)] px-2 py-0.5 font-medium">
-          📅 {filters.year || '—'}
+          <CalendarDays size={11} aria-hidden="true" /> {filters.year || '—'}
         </span>
         {filters.dayType && (
           <span className="inline-flex items-center gap-1 rounded bg-[var(--color-border)] px-2 py-0.5 font-medium">
-            📊 {filters.dayType}
+            <BarChart3 size={11} aria-hidden="true" /> {filters.dayType}
           </span>
         )}
         {/* P2-6：保存视图（个性化） */}
@@ -175,7 +191,7 @@ export default function MarketPage({ market }) {
 
       {/* Tab Navigation Bar */}
       <div data-tour="stages" className="sticky top-0 z-20 -mx-1 mb-3 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 backdrop-blur-sm">
-        <div className="flex min-w-max gap-0" role="tablist" aria-label={lang === 'zh' ? '分析阶段' : 'Analysis Stages'}>
+        <div className="flex min-w-max gap-0" role="tablist" aria-label={lang === 'zh' ? '分析阶段' : 'Analysis Stages'} onKeyDown={handleTabKeyDown}>
           {config.stages.map((stage, index) => {
             const isActive = index === activeTabIndex;
             const title = stage.title[lang] || stage.title.zh;
@@ -183,6 +199,10 @@ export default function MarketPage({ market }) {
               <button
                 key={stage.id}
                 type="button"
+                ref={(el) => { tabRefs.current[index] = el; }}
+                id={`stage-tab-${index}`}
+                aria-controls={`stage-tabpanel-${index}`}
+                tabIndex={isActive ? 0 : -1}
                 onClick={() => handleTabClick(index)}
                 className={`
                   relative flex items-center gap-2 px-4 min-h-[44px] text-sm font-sans whitespace-nowrap transition-colors
@@ -219,16 +239,24 @@ export default function MarketPage({ market }) {
 
       {/* Active Stage Content — only render the selected tab */}
       {activeStage && (
-        <DynamicStage
-          key={activeStage.id}
-          stageDefinition={activeStage}
-          stageNumber={activeTabIndex + 1}
-          config={config}
-          lang={lang}
-          onVisible={() => {}}
-          conclusionData={summaries[activeStage.id] || null}
-          isSummaryLoading={summaryLoading[activeStage.id] ?? false}
-        />
+        <div
+          role="tabpanel"
+          id={`stage-tabpanel-${activeTabIndex}`}
+          tabIndex={0}
+          aria-labelledby={`stage-tab-${activeTabIndex}`}
+          className="outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
+        >
+          <DynamicStage
+            key={activeStage.id}
+            stageDefinition={activeStage}
+            stageNumber={activeTabIndex + 1}
+            config={config}
+            lang={lang}
+            onVisible={() => {}}
+            conclusionData={summaries[activeStage.id] || null}
+            isSummaryLoading={summaryLoading[activeStage.id] ?? false}
+          />
+        </div>
       )}
 
       {/* Navigation hints */}

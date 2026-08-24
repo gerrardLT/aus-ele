@@ -17,8 +17,9 @@ test('main entry can render developer portal page', () => {
   assert.match(source, /DeveloperPortalPage/);
 });
 
-test('App exposes a navigation entry to the developer portal', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+test('sidebar navigation exposes a developer portal entry', () => {
+  // 2026-08-20：导航入口从 App.jsx 迁移到 SidebarNavigation
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/SidebarNavigation.jsx'), 'utf8');
   assert.match(source, /\/developer/);
 });
 

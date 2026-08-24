@@ -58,22 +58,22 @@ function InviteForm() {
   return (
     <form onSubmit={submit} className="space-y-4">
       <div>
-        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+        <label htmlFor="invite-display-name" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
           {zh ? '显示名' : 'Display name'}
         </label>
-        <input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} className={inputCls} />
+        <input id="invite-display-name" required value={displayName} onChange={(e) => setDisplayName(e.target.value)} className={inputCls} />
       </div>
       <div>
-        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+        <label htmlFor="invite-password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
           {zh ? '设置密码（至少 8 位）' : 'Password (min 8 chars)'}
         </label>
-        <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} autoComplete="new-password" />
+        <input id="invite-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} autoComplete="new-password" />
       </div>
       <div>
-        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+        <label htmlFor="invite-confirm" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
           {zh ? '确认密码' : 'Confirm password'}
         </label>
-        <input type="password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputCls} autoComplete="new-password" />
+        <input id="invite-confirm" type="password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputCls} autoComplete="new-password" />
       </div>
       {error && (
         <div className="rounded-lg border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/10 px-3 py-2 text-xs text-[var(--color-status-error)]">

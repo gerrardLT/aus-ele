@@ -157,6 +157,10 @@ components:
     padding: 12px
 ---
 
+> ⚠️ **已取代并归档（2026-08-24）**：本文件为 v1 规格，已归档至 `docs/_archive/DESIGN-v1.md`，仅作历史参考。现行 Stitch 格式规格（正式，v1.0）以
+> [DESIGN-v2.md](../design/DESIGN-v2.md) 为准；运行期实现指南（白名单/反模式/版本记录）以根目录
+> `DESIGN.md` 为准。请勿再依据本文件实施新变更。
+
 # AEMO Intelligence Terminal
 
 ## Overview

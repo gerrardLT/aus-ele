@@ -10,9 +10,7 @@ import { motion } from 'framer-motion';
 import { AlertTriangle, CheckCircle2, Clock, XCircle, TrendingUp, Shield } from 'lucide-react';
 import { useFilters } from '../../contexts/FilterContext';
 import { fetchJson } from '../../lib/apiClient';
-import { getApiBase } from '../../lib/apiBase';
-
-const API_BASE = getApiBase();
+import { apiUrl } from '../../lib/apiBase';
 
 const REC_CONFIG = {
   GO: { icon: CheckCircle2, color: '#22C55E', label: { zh: '建议投资', en: 'GO' }, pulse: true },
@@ -42,7 +40,7 @@ export default function DecisionTerminal({ lang = 'zh', region, year }) {
       battery: { power_mw: 100, duration_hours: 4 },
       backtest_years: [year || filters.year || 2025],
     };
-    fetchJson(`${API_BASE}/api/investment-analysis`, {
+    fetchJson(apiUrl('/investment-analysis'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -54,7 +52,7 @@ export default function DecisionTerminal({ lang = 'zh', region, year }) {
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center panel-glass">
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
         <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-primary)]" />
         <p className="text-sm text-[var(--color-muted)]">
           {lang === 'zh' ? '正在生成投资决策...' : 'Generating investment decision...'}
@@ -69,7 +67,7 @@ export default function DecisionTerminal({ lang = 'zh', region, year }) {
   const RecIcon = rec.icon;
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 panel-glass">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
       {/* Recommendation badge */}
       <div className="flex items-center gap-4 mb-6">
         <motion.div
@@ -105,7 +103,7 @@ export default function DecisionTerminal({ lang = 'zh', region, year }) {
       <div className="grid grid-cols-3 gap-3 mb-5">
         <div className="rounded-lg bg-[var(--color-background)] p-3 text-center">
           <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)]">NPV/MW</p>
-          <p className="text-sm font-bold font-mono glow-kpi text-[var(--color-text)]">
+          <p className="text-sm font-bold font-mono text-[var(--color-text)]">
             ${Math.round(data.npv_per_mw).toLocaleString()}
           </p>
         </div>

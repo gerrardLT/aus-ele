@@ -103,8 +103,10 @@ on:
 2. `actions/setup-node@v4`（Node 20，npm 缓存）
 3. `npm ci --no-audit --no-fund`
 4. `npm run lint`（ESLint）
-5. `node --test src/lib/*.test.js`（前端测试，当前非阻断）
-6. `npm run build`（构建验证）
+5. `node --test src/lib/*.test.js`（前端测试，2026-08-20 起为阻断门禁，失败即阻断 frontend job 及下游 build-push/CD 链）
+   - 双 runner 边界（2026-08-24 收口）：`src/lib/*.test.js` = node:test；`src/test/` 与 `**/__tests__/` = vitest（`npm test`），禁止纳入 node --test
+6. `npm test`（vitest 守卫，2026-08-24 新增，稳定期非阻断）
+7. `npm run build`（构建验证）
 
 ### 6.3 build-push（构建并推送镜像）
 

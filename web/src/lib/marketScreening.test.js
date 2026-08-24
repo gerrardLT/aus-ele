@@ -7,11 +7,8 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test('App mounts a Market Screening section', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  assert.match(source, /MarketScreening/);
-  assert.match(source, /sec-screening/);
-});
+// 2026-08-20：App.jsx 单页外壳已移除，MarketScreening 不再挂载（漏斗化重构后
+// 筛选能力由 market-screening 阶段的 RegionalRanking 等模块承接），死断言删除。
 
 test('MarketScreening component consumes ranked screening fields', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/MarketScreening.jsx'), 'utf8');

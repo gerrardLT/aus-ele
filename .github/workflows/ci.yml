@@ -101,10 +101,22 @@ jobs:
         run: npm run lint || echo "::warning::ESLint reported issues (non-blocking until lint debt is resolved)"
 
       - name: Run frontend tests
-        run: node --test src/lib/*.test.js || echo "::warning::frontend tests have failures (legacy test debt, non-blocking until resolved)"
+        # 2026-08-20：陈旧测试外科完成，node --test 全绿，移除容忍恢复真实 CI 信号
+        # 双 runner 边界：src/lib/*.test.js = node:test；src/test/ 与 **/__tests__/ = vitest（npm test），禁止纳入 node --test
+        run: node --test src/lib/*.test.js
+
+      # vitest 守卫（2026-08-24 审查修复）：src/test/ 与 **/__tests__/ 归 vitest 所有权，
+      # 此前 CI 无 npm test 步骤导致新守卫静默不执行；稳定期非阻断，稳定后移除 || echo
+      - name: Run vitest guards
+        run: npm test || echo "::warning::vitest guards reported issues (non-blocking during stabilization)"
 
       - name: Build frontend
         run: npm run build
+
+      # 体积预算守门（批次4）：入口初始 JS 体积 + PDF 栈不得进关键路径。
+      # 首两周非阻断（warning），稳定后移除 || echo 转强制。
+      - name: Check bundle budget
+        run: node scripts/check_bundle_budget.mjs || echo "::warning::bundle budget check reported issues (non-blocking during stabilization)"
 
       # 可观测性（R9.2/R9.5）：向作业摘要写入阶段状态（成功/失败/跳过）。
       - name: 阶段状态汇总

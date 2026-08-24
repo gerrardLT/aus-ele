@@ -7,50 +7,8 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test('App demotes secondary outlook analytics and re-homes reserve and revenue modules under BESS Decision', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  const outlookStart = source.indexOf('id="stage-24h-outlook"');
-  const outlookEnd = source.indexOf('id="stage-bess-decision"');
-  const outlookSection = source.slice(outlookStart, outlookEnd);
-  const bessSection = source.slice(outlookEnd);
-
-  assert.match(source, /id="sec-outlook-secondary"/);
-  assert.match(source, /id="sec-bess-supporting"/);
-  assert.match(source, /id="sec-bess-diagnostics"/);
-  assert.match(outlookSection, /<GridForecast/);
-  assert.match(outlookSection, /id="sec-outlook-secondary"[\s\S]*?<PeakAnalysis/);
-  assert.match(outlookSection, /id="sec-outlook-secondary"[\s\S]*?<ChargingWindow/);
-  assert.doesNotMatch(outlookSection, /<FcasAnalysis/);
-  assert.doesNotMatch(outlookSection, /<RevenueStacking/);
-  assert.match(bessSection, /<FcasAnalysis/);
-  assert.match(bessSection, /<RevenueStacking/);
-  assert.match(bessSection, /<BessSimulator/);
-  assert.match(bessSection, /<CycleCost/);
-});
-
-test('App keeps the conclusion stage primary and elevates investment into a supporting readiness view', () => {
-  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  const investmentSource = fs.readFileSync(path.resolve(__dirname, '../components/InvestmentAnalysis.jsx'), 'utf8');
-  const bessStart = appSource.indexOf('id="stage-bess-decision"');
-  const bessSection = appSource.slice(bessStart);
-
-  assert.match(bessSection, /<P3BessDecisionPanel/);
-  assert.match(bessSection, /<InvestmentAnalysis[\s\S]*showDecisionPanel=\{false\}/);
-  assert.ok(bessSection.indexOf('<P3BessDecisionPanel') < bessSection.indexOf('<InvestmentAnalysis'));
-  assert.doesNotMatch(investmentSource, /<P3BessDecisionPanel[\s\S]*initialPayload=\{result\?\.p3_decision \|\| null\}/);
-});
-
-test('conclusion stage reads in conclusion order: primary conclusion, readiness support, then revenue and reserve evidence', () => {
-  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  const translationSource = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
-  const bessStart = appSource.indexOf('id="stage-bess-decision"');
-  const bessSection = appSource.slice(bessStart);
-
-  assert.match(translationSource, /bessSupportingTitle: 'Revenue And Reserve Support'/);
-  assert.match(translationSource, /bessCapitalTitle: 'Project Returns'/);
-  assert.ok(bessSection.indexOf('id="sec-decision"') < bessSection.indexOf('id="sec-investment"'));
-  assert.ok(bessSection.indexOf('id="sec-investment"') < bessSection.indexOf('id="sec-bess-supporting"'));
-});
+// 2026-08-20：旧 App.jsx 阶段外壳（stage-24h-outlook / stage-bess-decision 等）已随漏斗化重构移除，
+// 对应死断言删除；模块挂载现由 ModuleRenderer + marketConfig 测试覆盖。
 
 test('P3 decision copy and backend contract expose conclusion, readiness, and scope semantics', () => {
   const p3Source = fs.readFileSync(path.resolve(__dirname, './p3Decision.js'), 'utf8');

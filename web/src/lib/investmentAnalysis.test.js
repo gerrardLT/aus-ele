@@ -102,6 +102,8 @@ test('InvestmentAnalysis component avoids hardcoded primary English UI labels', 
 
 test('InvestmentAnalysis avoids hardcoded secondary English labels for finance and diagnostics', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/InvestmentAnalysis.jsx'), 'utf8');
+  // 2026-08-20：蒙特卡洛分位数文案已拆到子组件 MonteCarloPanel
+  const monteCarloSource = fs.readFileSync(path.resolve(__dirname, '../components/investment/MonteCarloPanel.jsx'), 'utf8');
 
   for (const phrase of [
     'Project Finance',
@@ -131,13 +133,12 @@ test('InvestmentAnalysis avoids hardcoded secondary English labels for finance a
     assert.equal(source.includes(phrase), false, `component should not hardcode "${phrase}"`);
   }
 
-  assert.match(source, /copy\.tableHeaders\.arbitrage/);
-  assert.match(source, /copy\.tableHeaders\.fcas/);
-  assert.match(source, /copy\.tableHeaders\.capacity/);
+  // 2026-08-20：收益分解表（tableHeaders.arbitrage/fcas/capacity）已随 bde113b 重构移除，
+  // translations 中亦无对应键，陈旧断言删除
   assert.match(source, /copy\.statuses\.hidden/);
-  assert.match(source, /copy\.monteCarloLabels\.p90/);
-  assert.match(source, /copy\.monteCarloLabels\.p50/);
-  assert.match(source, /copy\.monteCarloLabels\.p10/);
+  assert.match(monteCarloSource, /copy\.monteCarloLabels\.p90/);
+  assert.match(monteCarloSource, /copy\.monteCarloLabels\.p50/);
+  assert.match(monteCarloSource, /copy\.monteCarloLabels\.p10/);
   assert.equal(source.includes("|| 'FCAS Revenue Mode'"), false);
   assert.equal(source.includes("|| 'Auto'"), false);
   assert.equal(source.includes("|| 'Manual'"), false);
@@ -179,7 +180,5 @@ test('InvestmentAnalysis cash-flow views consume structured backtest-driven fiel
   assert.match(source, /decision_adjusted_cash_flows/);
   assert.match(source, /total_revenue/);
   assert.match(source, /cumulative_cash_flow/);
-  assert.match(source, /revenue_arbitrage/);
-  assert.match(source, /revenue_fcas/);
-  assert.match(source, /revenue_capacity/);
+  // 2026-08-20：revenue_arbitrage/fcas/capacity 字段随收益分解表移除（bde113b），陈旧断言删除
 });

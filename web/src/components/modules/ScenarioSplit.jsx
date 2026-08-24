@@ -9,10 +9,8 @@ import { useState, useCallback, useEffect, useRef, Fragment } from 'react';
 import { Pin } from 'lucide-react';
 import { useFilters } from '../../contexts/FilterContext';
 import { fetchJson } from '../../lib/apiClient';
-import { getApiBase } from '../../lib/apiBase';
+import { apiUrl } from '../../lib/apiBase';
 import { useDebounce } from '../../hooks/useDebounce';
-
-const API_BASE = getApiBase();
 
 const METRICS = [
   { key: 'npv', label: 'NPV', format: v => `$${Math.round(v).toLocaleString()}` },
@@ -34,7 +32,7 @@ export default function ScenarioSplit({ lang = 'zh', region }) {
     if (!r) return;
     setLoading(true);
     try {
-      const res = await fetchJson(`${API_BASE}/api/investment-analysis`, {
+      const res = await fetchJson(apiUrl('/investment-analysis'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,7 +67,7 @@ export default function ScenarioSplit({ lang = 'zh', region }) {
   }
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 panel-glass">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
       <div className="flex items-center justify-between mb-4">
         <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--color-muted)]">
           {lang === 'zh' ? 'What-if 对比' : 'What-if Comparison'}

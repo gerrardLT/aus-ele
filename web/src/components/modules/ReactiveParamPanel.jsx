@@ -30,7 +30,7 @@ export default function ReactiveParamPanel({ params, setParams, onRun, lang = 'z
   }, [debouncedParams, onRun]);
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 panel-glass">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="mb-3 flex items-center justify-between">
         <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--color-muted)]">
           {lang === 'zh' ? '快速调参' : 'Quick Tune'}
@@ -51,7 +51,7 @@ export default function ReactiveParamPanel({ params, setParams, onRun, lang = 'z
           <div key={key}>
             <div className="mb-1 flex items-center justify-between text-xs">
               <span className="text-[var(--color-muted)]">{label[lang] || label.en}</span>
-              <span className="font-mono font-bold text-[var(--color-text)] glow-kpi">
+              <span className="font-mono font-bold text-[var(--color-text)]">
                 {params[key]} <span className="font-normal text-[var(--color-muted)]">{unit}</span>
               </span>
             </div>

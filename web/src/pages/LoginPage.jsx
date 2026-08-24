@@ -57,16 +57,16 @@ function LoginForm() {
   return (
     <form onSubmit={submit} className="space-y-4">
       <div>
-        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+        <label htmlFor="login-email" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
           {zh ? '邮箱' : 'Email'}
         </label>
-        <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} autoComplete="email" />
+        <input id="login-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} autoComplete="email" />
       </div>
       <div>
-        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+        <label htmlFor="login-password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
           {zh ? '密码' : 'Password'}
         </label>
-        <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} autoComplete="current-password" />
+        <input id="login-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} autoComplete="current-password" />
       </div>
       {error && (
         <div className="rounded-lg border border-[var(--color-status-error)]/40 bg-[var(--color-status-error)]/10 px-3 py-2 text-xs text-[var(--color-status-error)]">
@@ -138,8 +138,8 @@ function SsoBlock({ zh }) {
       </button>
       {open && (
         <div className="mt-3 space-y-2">
-          <input placeholder={zh ? '组织 ID（org_xxx）' : 'Organization ID (org_xxx)'} value={orgId} onChange={(e) => setOrgId(e.target.value)} className={inputCls} />
-          <select value={provider} onChange={(e) => setProvider(e.target.value)} className={inputCls}>
+          <input placeholder={zh ? '组织 ID（org_xxx）' : 'Organization ID (org_xxx)'} aria-label={zh ? '组织 ID' : 'Organization ID'} value={orgId} onChange={(e) => setOrgId(e.target.value)} className={inputCls} />
+          <select value={provider} aria-label={zh ? 'SSO 提供商' : 'SSO provider'} onChange={(e) => setProvider(e.target.value)} className={inputCls}>
             <option value="google">Google</option>
             <option value="microsoft">Microsoft</option>
           </select>

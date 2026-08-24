@@ -66,7 +66,7 @@ export default function StageConclusion({ data, isLoading, loadingMessage }) {
 
   return (
     <div className={`border-l-4 ${borderClass} pl-4 py-3`}>
-      {/* 一句话摘要 — serif 字体 (Playfair Display) */}
+      {/* 一句话摘要 — serif 字体 (Source Serif 4) */}
       <p className="font-serif text-base text-[var(--color-text)]">
         {summary_text}
       </p>

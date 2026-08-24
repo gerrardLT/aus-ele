@@ -23,6 +23,13 @@ import {
 } from '../lib/agentApi.js';
 import ChartRenderer from '../components/ChartRenderer.jsx';
 import ExportPreviewModal from '../components/ExportPreviewModal.jsx';
+// Agentic 信任模式组件（DESIGN-v2.md v1.0，2026-08-24 落地）
+import ConfidenceBadge from '../components/agent/ConfidenceBadge.jsx';
+import IntentPreview from '../components/agent/IntentPreview.jsx';
+import AutonomyDial, { useAutonomyTier } from '../components/agent/AutonomyDial.jsx';
+import RationalePanel from '../components/agent/RationalePanel.jsx';
+import AuditTimeline, { useAuditLog } from '../components/agent/AuditTimeline.jsx';
+import EscalationCard from '../components/agent/EscalationCard.jsx';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -115,6 +122,12 @@ export default function AgentPage() {
   const [market, setMarket] = useState('NEM');
   const [region, setRegion] = useState('NSW1');
   const [toolMode, setToolMode] = useState('full');
+  // 信任组件状态提升（DESIGN-v2.md v1.0）：自主性档位 + 操作审计时间线
+  const [autonomyTier, setAutonomyTier] = useAutonomyTier();
+  const audit = useAuditLog();
+  // 解构稳定引用（log 为 useCallback 常量）：audit 对象整体每次渲染重建，
+  // 直接入依赖数组会导致 handleReset 频繁重建
+  const auditLog = audit.log;
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [streaming, setStreaming] = useState(false);
@@ -353,6 +366,11 @@ export default function AgentPage() {
 
   const handleReset = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
+    // 操作审计（Action Audit & Undo）：清空对话可逆，撤销恢复消息快照
+    if (messages.length > 0) {
+      const snapshot = messages;
+      auditLog({ action: '清空对话', reversible: true, onUndo: () => setMessages(snapshot) });
+    }
     setMessages([]);
     setError(null);
     setCompareList([]);
@@ -360,7 +378,7 @@ export default function AgentPage() {
     sessionIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : `s_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-  }, []);
+  }, [messages, auditLog]);
 
   const handleCompare = useCallback((report) => {
     setCompareList((prev) => {
@@ -466,6 +484,9 @@ export default function AgentPage() {
       setRegion={setRegion}
       toolMode={toolMode}
       setToolMode={setToolMode}
+      autonomyTier={autonomyTier}
+      setAutonomyTier={setAutonomyTier}
+      audit={audit}
       regions={regions}
       input={input}
       setInput={setInput}
@@ -519,6 +540,9 @@ function AgentLayout({
   setRegion,
   toolMode,
   setToolMode,
+  autonomyTier,
+  setAutonomyTier,
+  audit,
   regions,
   input,
   setInput,
@@ -662,6 +686,9 @@ function AgentLayout({
             ))}
           </select>
 
+          {/* 自主性拨盘（DESIGN-v2.md v1.0）：界面偏好持久化，执行门控待后端契约 */}
+          <AutonomyDial value={autonomyTier} onChange={setAutonomyTier} />
+
           {workflows.length > 0 && (
             <div className="flex flex-1 flex-wrap items-center gap-1.5">
               {workflows.map((wf) => (
@@ -750,7 +777,7 @@ function AgentLayout({
                 m.role === 'user' ? (
                   <UserBubble key={m.id} text={m.content} />
                 ) : (
-                  <AssistantMessage key={m.id} message={m} onCompare={onCompare} onSuggest={onSuggest} />
+                  <AssistantMessage key={m.id} message={m} onCompare={onCompare} onSuggest={onSuggest} audit={audit} />
                 ),
               )}
             </div>
@@ -836,7 +863,7 @@ function UserBubble({ text }) {
   );
 }
 
-function AssistantMessage({ message, onCompare, onSuggest }) {
+function AssistantMessage({ message, onCompare, onSuggest, audit }) {
   const { answer, trace, status_line, error, report, streaming, answerDone, plan, charts, downloadLink } = message;
   const degraded = report && report.metadata && report.metadata.llm_degraded;
   const hasEvidence = (trace && trace.length > 0) || report || (charts && charts.length > 0) || downloadLink;
@@ -855,6 +882,16 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
 
       {/* 降级横幅（DESIGN.md Screen 5 Pattern B：细条琥珀色，不阻断工作区） */}
       {degraded && <DegradedBanner reason={report.metadata.llm_degraded_reason} />}
+
+      {/* 升级路径（Escalation Pathway）：message 带 escalation 负载时渲染（后端事件未就绪，2026-08-24） */}
+      {message.escalation && (
+        <EscalationCard
+          ambiguity={message.escalation.ambiguity}
+          options={message.escalation.options}
+          onResolve={(opt) => onSuggest?.(opt)}
+          onEscalate={() => onSuggest?.('请将当前问题标记给人工分析师处理')}
+        />
+      )}
 
       {/* Plan view */}
       {plan && <PlanView plan={plan} />}
@@ -890,7 +927,7 @@ function AssistantMessage({ message, onCompare, onSuggest }) {
         </div>
 
         {hasEvidence && (
-          <EvidencePanel message={message} onCompare={onCompare} onSuggest={onSuggest} />
+          <EvidencePanel message={message} onCompare={onCompare} onSuggest={onSuggest} audit={audit} />
         )}
       </div>
     </div>
@@ -973,7 +1010,7 @@ function DegradedBanner({ reason }) {
 
 // ─── Evidence panel（动态 Tab：轨迹/[图表]/报告；工具清单唯一展示位，2026-08-10 去重重构）───
 
-function EvidencePanel({ message, onCompare, onSuggest }) {
+function EvidencePanel({ message, onCompare, onSuggest, audit }) {
   const { trace, report, charts, totalSteps, downloadLink } = message;
   const [tab, setTab] = useState('trace');
 
@@ -1016,7 +1053,11 @@ function EvidencePanel({ message, onCompare, onSuggest }) {
       </div>
       <div className="max-h-[600px] overflow-y-auto p-3">
         {tab === 'trace' && (
-          <ToolTrace trace={trace || []} totalSteps={totalSteps} downloadLink={downloadLink} />
+          <>
+            <ToolTrace trace={trace || []} totalSteps={totalSteps} downloadLink={downloadLink} />
+            {/* 操作审计分区（Action Audit & Undo）：并入轨迹 tab，不新建 Evidence tab（2026-08-10 去重原则） */}
+            {audit && <AuditTimeline entries={audit.entries} onUndo={audit.undo} />}
+          </>
         )}
         {tab === 'charts' && (
           <div className="flex flex-col gap-3">
@@ -1027,7 +1068,7 @@ function EvidencePanel({ message, onCompare, onSuggest }) {
         )}
         {tab === 'report' && report && (
           <div className="agent-report-print rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <ReportView report={report} answer={message.answer} trace={trace} onCompare={onCompare} onSuggest={onSuggest} />
+            <ReportView report={report} answer={message.answer} trace={trace} onCompare={onCompare} onSuggest={onSuggest} onAudit={audit?.log} />
           </div>
         )}
       </div>
@@ -1410,7 +1451,7 @@ function KpiCard({ label, value, unit, fmt, source }) {
 
 // 部分成功信息已由轨迹 Tab 完整承载（2026-08-10 去重），PartialSuccessStrip 移除。
 
-function ReportView({ report, answer, trace, onCompare, onSuggest }) {
+function ReportView({ report, answer, trace, onCompare, onSuggest, onAudit }) {
   const status = STATUS_MAP[report.status] || STATUS_MAP.running;
   const kpis = extractKpis(report);
   const meta = report.metadata || {};
@@ -1418,6 +1459,18 @@ function ReportView({ report, answer, trace, onCompare, onSuggest }) {
   // PDF 导出（2026-08-11 改造）：预览弹窗 → 确认 → html2pdf 生成下载，
   // 不再直接 window.print 跳转浏览器打印页
   const [exportOpen, setExportOpen] = useState(false);
+  // 意图预览（Intent Preview）：导出前的有意摩擦点，确认后才开预览弹窗
+  const [intentOpen, setIntentOpen] = useState(false);
+
+  // 意图预览遮罩无障碍：Esc 关闭（对齐 ExportPreviewModal 批次6 标准，2026-08-24 审查修复）
+  useEffect(() => {
+    if (!intentOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setIntentOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [intentOpen]);
 
   return (
     <div className="space-y-5">
@@ -1451,7 +1504,7 @@ function ReportView({ report, answer, trace, onCompare, onSuggest }) {
           </span>
         )}
         <button
-          onClick={() => setExportOpen(true)}
+          onClick={() => setIntentOpen(true)}
           className="ml-auto rounded border border-[var(--color-border)] px-2.5 py-1 text-[10px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-text)] hover:text-[var(--color-text)] print:hidden"
         >
           导出 PDF
@@ -1464,8 +1517,40 @@ function ReportView({ report, answer, trace, onCompare, onSuggest }) {
           trace={trace}
           kpis={kpis}
           onClose={() => setExportOpen(false)}
+          // 审计写入真实导出完成时（2026-08-24 审查修复）：预览弹窗取消不再虚报
+          onExported={() => onAudit?.({ action: '导出 PDF 报告', reversible: false })}
         />
       )}
+      {intentOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="导出确认"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6 print:hidden"
+          onClick={(e) => { if (e.target === e.currentTarget) setIntentOpen(false); }}
+        >
+          <div className="w-full max-w-md">
+            <IntentPreview
+              title="导出 PDF 报告"
+              steps={[
+                '基于当前参数与结论生成报告快照',
+                '调用 html2pdf 渲染 PDF 并触发下载',
+                '写入操作审计时间线',
+              ]}
+              notice="导出不可逆，请确认报告内容无误后再继续"
+              onConfirm={() => {
+                setIntentOpen(false);
+                setExportOpen(true);
+              }}
+              onEdit={() => setIntentOpen(false)}
+              onCancel={() => setIntentOpen(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 推理轨迹（Explainable Rationale）：默认折叠，sanitized 展示 */}
+      {trace && trace.length > 0 && <RationalePanel trace={trace} />}
 
       {/* KPI 卡仅打印可见（屏幕上的唯一展示位在左栏结论区，去重；PDF 导出保持完整） */}
       {kpis.length > 0 && (
@@ -1492,8 +1577,8 @@ function ReportView({ report, answer, trace, onCompare, onSuggest }) {
           </h3>
           <p className="text-sm leading-6 text-[var(--color-text)]">{report.recommendation}</p>
           {report.confidence_level && (
-            <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[10px] text-[var(--color-muted)]">
-              置信度: {report.confidence_level}
+            <div className="mt-3">
+              <ConfidenceBadge level={report.confidence_level} />
             </div>
           )}
         </section>
@@ -1688,7 +1773,9 @@ function ComparisonPanel({ reports, onClear }) {
               )}
               <div className="space-y-1 text-[11px] text-[var(--color-muted)]">
                 <div>状态: {STATUS_MAP[r.status]?.label || r.status}</div>
-                <div>置信度: {r.confidence_level}</div>
+                <div className="flex items-center gap-1.5">
+                  置信度: <ConfidenceBadge level={r.confidence_level} showLabel={false} />
+                </div>
                 {r.executive_summary && (
                   <div className="line-clamp-3">{r.executive_summary}</div>
                 )}

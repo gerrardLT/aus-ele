@@ -1,9 +1,10 @@
-# Stitch Prompt 包：AEMO Intelligence Agent 界面（2026-08-08）
+# Stitch Prompt 包：AEMO Intelligence Agent 界面（2026-08-24 增补 v2）
 
 > 用法：在 stitch.withgoogle.com 标准模式（Web 画布）逐屏生成；
 > 依据 Stitch 最佳实践：**英文 prompt 生成更稳**，生成后可用中文指令微调语言/细节；
-> 每次生成后对照 `docs/design/DESIGN.md` 的 Do's and Don'ts 人工复核；
-> 建议先在 Stitch 中导入本项目的 DESIGN.md（Import design rules），使生成结果遵循 token。
+> 每次生成后对照 `docs/design/DESIGN-v2.md` 的 Do's and Don'ts 人工复核；
+> 建议先在 Stitch 中导入本项目的 DESIGN-v2.md（Import design rules），使生成结果遵循 token；
+> 校验命令：`npx -p @google/design.md designmd lint DESIGN-v2.md`（Windows 用 designmd 别名）。
 > 每条 prompt 末尾的 ANTI-PATTERN 段是"防 AI 味"反模式指令（来源：Stitch 实践指南）。
 
 ---
@@ -77,6 +78,36 @@ ANTI-PATTERN: do not squeeze tables below readable width; no bottom navigation b
 
 ---
 
+## Screen 7：意图预览 + 自主性拨盘（v2 信任模式核心屏）
+
+```
+Design a dark-themed agent workspace moment on the same instrument terminal theme: the AI agent has just proposed a plan BEFORE executing it.
+CENTER: an intent preview card on surface tone — plain-language plan title "SA1 BESS 投资分析计划", four sequential numbered steps in monospaced numerals (1. 拉取价格数据 2. 市场筛选 3. FCAS 收入建模 4. 财务测算), a monospaced estimate "预计 3–5 分钟 · 12 个工具调用", and a footer with exactly THREE actions: one near-white filled primary button "继续执行", and two ghost buttons "修改计划" and "我自己处理".
+TOP CONTROL BAR: a four-option segmented autonomy dial labeled 仅提醒 / 计划需确认 / 确认后执行 / 自动执行, with "计划需确认" active (surface-hover fill), options on panel tone, 4px radius.
+No red anywhere. Monospaced tabular figures for the step numbers and duration.
+ANTI-PATTERN: no auto-dismissing toasts for the plan preview; no modal blocking the conversation; no color-only state encoding; no purple-blue gradients; no drop shadows.
+```
+
+## Screen 8：置信度信号 + 升级求助（v2 信任模式状态屏）
+
+```
+Design two trust patterns on the same dark terminal theme:
+PATTERN A (confidence signal): an analysis conclusion block — a headline KPI row (NPV, IRR, payback) in monospaced tabular figures, each headline KPI carrying a small confidence badge pill: green check icon + "置信度 0.86" for the NPV card, amber question-mark icon + "置信度 0.62" for the IRR card; below, a conclusion sentence with an inline confidence badge on the verdict phrase. Green for high confidence, amber for low — never red.
+PATTERN B (escalation): an escalation card with a 2px amber left border on panel tone — title "需要您确认", a plain statement of the ambiguity "NSW1 与 QLD1 数据完整度差异较大，无法自动选择基准区域", and three ghost option buttons "以 NSW1 为基准" / "以 QLD1 为基准" / "标记给分析师".
+ANTI-PATTERN: no full-width red error banners; no emoji; no color-only confidence encoding; no drop shadows.
+```
+
+## Screen 9：行动审计时间线 + 撤销（v2 信任模式安全网屏）
+
+```
+Design the Evidence tab extended with an action audit timeline on the same dark terminal theme:
+a vertical chronological list of agent-initiated actions, each row (panel tone, 4px radius, monospaced durations) shows: timestamp, action description in plain language ("导出 SA1 投资报告 PDF", "覆盖保存视图 我的基准", "删除过期回测运行"), a status badge with icon (✓ 已完成 / ↺ 已撤销), and a ghost "撤销" button ONLY where reversal is possible — rows for irreversible actions show muted text "不可撤销（已在执行前告知）" instead.
+Top of the timeline: filter chips 全部 / 可撤销 / 不可逆.
+ANTI-PATTERN: no destructive actions without a prior intent preview; no hover-lift transforms on rows; no color-only status; no emoji.
+```
+
+---
+
 ## 生成后验收清单（人工复核）
 
 1. 所有数字是否等宽表格数字（tabular figures）？
@@ -85,4 +116,7 @@ ANTI-PATTERN: do not squeeze tables below readable width; no bottom navigation b
 4. 负值是否三重编码（红+负号+括号）？
 5. 是否出现紫蓝渐变/阴影/emoji 等 AI 味元素？
 6. 报告屏是否为浅色（打印态）？
-7. 对照 DESIGN.md token 色值抽查主色/背景/状态三色是否一致。
+7. 对照 DESIGN-v2.md token 色值抽查主色/背景/状态三色是否一致。
+8. （v2）意图预览是否提供 继续/修改/自己处理 三选一并默认不自动执行？
+9. （v2）低置信度是否为琥珀色+问号图标（绝不红色）？
+10. （v2）审计行是否只在可逆操作上出现撤销按钮？

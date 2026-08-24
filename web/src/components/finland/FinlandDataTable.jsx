@@ -47,7 +47,7 @@ export default function FinlandDataTable({
         <div className="max-h-[28rem] overflow-auto">
           <table className="min-w-full border-separate border-spacing-0 text-left text-sm tabular-nums">
             <thead className="sticky top-0 z-20">
-              <tr className="bg-[var(--color-surface)]/95 text-[var(--color-muted)] backdrop-blur">
+              <tr className="bg-[var(--color-surface)]/95 text-[var(--color-muted)] backdrop-blur-sm">
                 {columns.map((column, index) => {
                   const isSelected = selectedFieldIds.includes(column.field_key);
                   const isSelectable = isFinlandBoardSelectableColumn(column);

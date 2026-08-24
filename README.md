@@ -201,7 +201,13 @@ Frontend checks:
 
 ```bash
 cd web
-node --test src/lib/*.test.js
+node --test src/lib/*.test.js   # 或 npm run test:node
 npm run lint
 npm run build
 ```
+
+前端测试双 runner 边界（2026-08-24 收口）：
+
+- `src/lib/*.test.js` → node:test（`node --test src/lib/*.test.js`，CI 同款命令）
+- `src/test/` 与 `**/__tests__/` → vitest（`npm test`）
+- 禁用裸 `node --test`：其默认探测会误拾取 `src/test/` 下的 vitest 文件导致报错

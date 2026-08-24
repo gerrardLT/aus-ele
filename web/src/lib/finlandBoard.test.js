@@ -428,7 +428,8 @@ test('Finland board helpers derive dictionary jumps, selected field details, and
 test('main.jsx mounts a real FinlandPage import for the finland root page', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../main.jsx'), 'utf8');
 
-  assert.match(source, /import FinlandPage from '\.\/pages\/FinlandPage\.jsx'/);
+  // 2026-08-20：main.jsx 已改为 React.lazy 按需加载页面
+  assert.match(source, /const FinlandPage = lazy\(\(\) => import\('\.\/pages\/FinlandPage\.jsx'\)\)/);
   assert.match(source, /rootPage === 'finland'/);
   assert.match(source, /<FinlandPage \/>/);
   assert.doesNotMatch(source, /const FinlandPage = App/);
@@ -438,13 +439,14 @@ test('frontend pages use shared api base resolution instead of hard-coded dev or
   const finlandSource = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
   const fingridSource = fs.readFileSync(path.resolve(__dirname, '../pages/FingridPage.jsx'), 'utf8');
   const portalSource = fs.readFileSync(path.resolve(__dirname, '../pages/DeveloperPortalPage.jsx'), 'utf8');
-  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  // 2026-08-20：App.jsx 已移除；市场主页的 api base 收口由 MarketPage 承接
+  const marketSource = fs.readFileSync(path.resolve(__dirname, '../pages/MarketPage.jsx'), 'utf8');
   const apiBaseSource = fs.readFileSync(path.resolve(__dirname, './apiBase.js'), 'utf8');
 
   assert.match(finlandSource, /getApiBase/);
   assert.match(fingridSource, /getApiBase/);
   assert.match(portalSource, /getApiBase/);
-  assert.match(appSource, /getApiBase/);
+  assert.match(marketSource, /apiUrl|getApiBase/);
   assert.match(apiBaseSource, /return '\/api'/);
 });
 
@@ -736,11 +738,11 @@ test('finland board hero and workbench avoid hard-coded dark cinematic gradients
 });
 
 test('app shell and translations include Finland navigation entry and localized board copy', () => {
-  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  // 2026-08-20：Finland 导航入口从 App.jsx 迁移到 SidebarNavigation
+  const sidebarSource = fs.readFileSync(path.resolve(__dirname, '../components/SidebarNavigation.jsx'), 'utf8');
   const translationsSource = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
 
-  assert.match(appSource, /href="\/finland"/);
-  assert.match(appSource, /t\.nav\.finland/);
+  assert.match(sidebarSource, /path: '\/finland'/);
   assert.match(translationsSource, /translations\.zh\.nav = \{/);
   assert.match(translationsSource, /finland:/);
   assert.match(translationsSource, /translations\.zh\.finlandBoard = \{/);
@@ -753,7 +755,7 @@ test('Finland translations keep readable zh copy and correct language toggles', 
   assert.equal(translations.zh.finlandBoard.title, '芬兰市场看板');
   assert.equal(
     translations.zh.finlandBoard.subtitle,
-    '先读取真实的 overview 与 readiness 接口，再把表格工作台、字段词典和联动分析接入到统一看板。',
+    '芬兰电力市场实时看板：储备价格、就绪状态与联动分析。',
   );
   assert.equal(translations.zh.finlandBoard.toggleLanguage, 'EN / 中');
   assert.equal(translations.en.finlandBoard.toggleLanguage, '中 / EN');

@@ -2,6 +2,12 @@
 // 认证状态持久化（localStorage）——AuthContext 与 agentApi 共享。
 // 登录后存储会话（access token + session token）；agentApi 优先使用用户
 // token，未登录时回落到匿名 web-session bootstrap（不破坏匿名访问）。
+//
+// 安全说明（2026-08-20 WQS 审计）：
+// - localStorage 中的 token 可被 XSS 窃取，这是当前方案的已知风险。
+// - 现有缓解：短期 access token + session token（refresh/logout），缩短暴露窗口；
+//   配合 CSP Report-Only（deploy/nginx/default.conf）逐步收紧。
+// - 后续 epic：迁移到 httpOnly cookie 存储（需后端配合 CSRF 防护），本轮不做。
 
 import { getApiBase } from './apiBase.js';
 

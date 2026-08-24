@@ -17,7 +17,8 @@ const DAY_TYPES = ['ALL', 'WEEKDAY', 'WEEKEND'];
 
 export default function FilterBar({ config, years, lang }) {
   const { filters, setFilter } = useFilters();
-  const [showAdvanced, setShowAdvanced] = useState(true);
+  // 默认折叠：首屏让给数据图表，context chips（MarketPage）提供当前筛选摘要
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const isFirstRender = useRef(true);
   const t = translations[lang]?.filters || {};
 
@@ -26,7 +27,7 @@ export default function FilterBar({ config, years, lang }) {
   const btnInactive = 'bg-transparent text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-text)]';
 
   return (
-    <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-md p-4">
+    <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
       {/* Primary row: Year + Region */}
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">

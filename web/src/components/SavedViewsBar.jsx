@@ -94,7 +94,7 @@ export default function SavedViewsBar({ market = 'NEM', lang = 'zh' }) {
   };
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-2">
       {marketViews.length > 0 && (
         <select
           value=""
@@ -113,7 +113,8 @@ export default function SavedViewsBar({ market = 'NEM', lang = 'zh' }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder={zh ? '视图名' : 'View name'}
-        className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-1.5 py-0.5 text-[10px] text-[var(--color-text)]"
+        className="w-24 rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-1.5 py-0.5 text-[10px] text-[var(--color-text)]"
+        aria-label={zh ? '视图名称' : 'View name'}
       />
       <button
         type="button"
@@ -130,6 +131,7 @@ export default function SavedViewsBar({ market = 'NEM', lang = 'zh' }) {
           onClick={() => removeView(marketViews[marketViews.length - 1].name)}
           className="rounded px-1 py-0.5 text-[10px] text-[var(--color-status-error)] hover:opacity-80"
           title={zh ? '删除最近保存的视图' : 'Remove last saved view'}
+          aria-label={zh ? '删除最近保存的视图' : 'Remove last saved view'}
         >
           ✕
         </button>

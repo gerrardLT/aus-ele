@@ -7,16 +7,17 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const componentsDir = path.resolve(__dirname, '..', 'components');
-const appPath = path.resolve(__dirname, '..', 'App.jsx');
+const rendererPath = path.resolve(__dirname, '..', 'components', 'funnel', 'ModuleRenderer.jsx');
 
 function countOccurrences(source, pattern) {
   return (source.match(pattern) || []).length;
 }
 
-test('app mounts one standalone GridForecast section and no top-level EventContextPanel', () => {
-  const appSource = fs.readFileSync(appPath, 'utf8');
-  assert.equal(countOccurrences(appSource, /<GridForecast\b/g), 1);
-  assert.equal(countOccurrences(appSource, /<EventContextPanel\b/g), 0);
+test('module renderer registers one lazy GridForecast and no top-level EventContextPanel', () => {
+  // 2026-08-20：App.jsx 直挂改为 ModuleRenderer lazy 注册，归属文件同步更新
+  const rendererSource = fs.readFileSync(rendererPath, 'utf8');
+  assert.equal(countOccurrences(rendererSource, /GridForecast: lazy\(/g), 1);
+  assert.equal(countOccurrences(rendererSource, /EventContextPanel/g), 0);
 
   for (const name of ['PeakAnalysis.jsx', 'FcasAnalysis.jsx', 'RevenueStacking.jsx', 'CycleCost.jsx']) {
     const source = fs.readFileSync(path.join(componentsDir, name), 'utf8');

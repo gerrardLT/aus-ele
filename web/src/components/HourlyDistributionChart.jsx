@@ -46,7 +46,7 @@ const HourlyDistributionChart = ({ data, t }) => {
               dataKey="hour"
               axisLine={false}
               tickLine={false}
-              tick={{ fontSize: 10, fill: 'var(--color-muted)', fontFamily: 'Inter, sans-serif' }}
+              tick={{ fontSize: 10, fill: 'var(--color-muted)', fontFamily: 'var(--font-sans)' }}
               dy={10}
             />
             <Tooltip

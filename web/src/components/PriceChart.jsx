@@ -96,6 +96,16 @@ const PriceChart = ({ data, t, overlay, locale = 'en', onWindowDataChange }) => 
     return referenceAreas.filter((area) => visibleTimeSet.has(area.x1) || visibleTimeSet.has(area.x2) || visibleData.some((point) => point.time >= area.x1 && point.time <= area.x2));
   }, [referenceAreas, visibleData]);
 
+  // Y 轴 p99 封顶：极端尖峰不再把整条曲线压扁；Tooltip 仍展示原值，Brush 不动
+  const yDomain = useMemo(() => {
+    const prices = visibleData.map((p) => Number(p.price)).filter(Number.isFinite);
+    if (!prices.length) return ['auto', 'auto'];
+    const sorted = [...prices].sort((a, b) => a - b);
+    const p99 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))];
+    if (p99 <= 0) return ['auto', 'auto']; // 全负价/异常窗口保持自动轴
+    return [Math.min(0, sorted[0]), Math.ceil(p99 * 1.08)];
+  }, [visibleData]);
+
   useEffect(() => {
     if (typeof onWindowDataChange === 'function') {
       onWindowDataChange(visibleData);
@@ -148,7 +158,8 @@ const PriceChart = ({ data, t, overlay, locale = 'en', onWindowDataChange }) => 
               minTickGap={60}
             />
             <YAxis
-              domain={['auto', 'auto']}
+              domain={yDomain}
+              allowDataOverflow
               tick={{ fill: '#8E8E8E', fontSize: 11, fontFamily: 'var(--font-sans)' }}
               axisLine={false}
               tickLine={false}

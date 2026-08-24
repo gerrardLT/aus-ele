@@ -25,6 +25,9 @@ export const MODULE_REGISTRY = {
   InvestmentAnalysis: { category: 'shared', description: 'NPV/IRR investment analysis' },
   CycleCost: { category: 'nem', description: 'Battery cycle cost analysis' },
   ReportPreview: { category: 'nem', description: 'Investment report preview' },
+  // 决策阶段模块（U3/U5，2026-08-20 补登）
+  DecisionTerminal: { category: 'shared', description: 'Final investment decision terminal' },
+  ScenarioSplit: { category: 'shared', description: 'What-if scenario split explorer' },
   // 叙事层模块 (Investment Narrative Layer)
   ForwardSpreadCurve: { category: 'shared', description: '20-year forward spread curve with three scenarios' },
   EventAnnotationOverlay: { category: 'shared', description: 'Reusable event annotation overlay for time-series charts' },

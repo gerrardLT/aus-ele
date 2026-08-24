@@ -81,7 +81,7 @@ export default function CollapsibleModule({
   }
 
   return (
-    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden panel-glass panel-depth">
+    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
       {/* 折叠行：标题 + 指标摘要 + 展开图标 */}
       <button
         type="button"

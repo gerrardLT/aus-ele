@@ -24,43 +24,14 @@ test('PageSection spans the full 12-column content grid', () => {
   assert.match(source, /grid gap-4 border-t border-\[var\(--color-border\)\] pt-8 scroll-mt-24/);
 });
 
-test('App main workbench keeps metadata badge plus loading and retry branches', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  assert.match(source, /<DataQualityBadge metadata=\{chartMetadata\} lang=\{lang\}/);
-  assert.match(source, /currentMarketStatusTags/);
-  assert.match(source, /currentMarketTruthStrip/);
-  assert.match(source, /t\.status\.loading/);
-  assert.match(source, /t\.status\.retry/);
-  assert.match(source, /t\.status\.error/);
-});
-
-test('App avoids rendering a duplicate primary market title below workspace nav', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  assert.match(source, /<PageWorkspaceNav/);
-  assert.doesNotMatch(source, /<h1 className="text-2xl font-bold leading-tight md:text-3xl">\s*\{t\.header\.title1\}\s*\{t\.header\.title2\}\s*<\/h1>/);
-});
+// 2026-08-20：以下 App.jsx 外壳断言（主工作台元数据徽章/重复标题/导航 actions）随漏斗化
+// 重构移除，行为无对应归属，死断言删除。
 
 test('AEMO workspace nav collapses to a button-only top strip without left-side hero copy', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  // 2026-08-20：App.jsx 断言删除，保留 PageWorkspaceNav 组件自身归属断言
   const navSource = fs.readFileSync(path.resolve(__dirname, '../components/PageWorkspaceNav.jsx'), 'utf8');
 
-  assert.match(source, /<PageWorkspaceNav/);
-  assert.match(source, /compact/);
-  assert.match(source, /buttonOnly/);
-  assert.doesNotMatch(source, /brand=\{t\.nav\.brand\}/);
-  assert.doesNotMatch(source, /subtitle=\{t\.appShell\.primarySignalTitle/);
-  assert.doesNotMatch(source, /title=\{t\.appShell\.recommendedPathLabel/);
-  assert.doesNotMatch(source, /meta=\{lastUpdate/);
   assert.match(navSource, /buttonOnly = false/);
-  assert.match(source, /className="col-span-12 mt-2 mb-2"/);
-});
-
-test('App keeps only language controls in workspace nav actions area', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  assert.doesNotMatch(source, /actions=\{/);
-  assert.doesNotMatch(source, /handleSync/);
-  assert.doesNotMatch(source, /<motion\.header/);
-  assert.doesNotMatch(source, /onClick=\{\(\) => setLang\(lang === 'zh' \? 'en' : 'zh'\)\}/);
 });
 
 test('Fingrid page keeps a single header and focuses on charts plus passive status context', () => {
@@ -225,45 +196,8 @@ test('Fingrid summary cards centralize localized loading copy', () => {
   assert.equal(source.includes('Loading...'), false);
 });
 
-test('App centralizes section navigation and month label copy', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-
-  assert.match(source, /PageWorkspaceNav/);
-  assert.match(source, /t\.appShell\.sectionNav/);
-  assert.match(source, /t\.appShell\.stageCurrentMarket/);
-  assert.match(source, /t\.appShell\.stage24hOutlook/);
-  assert.match(source, /t\.appShell\.stageBessDecision/);
-  assert.match(source, /t\.appShell\.primarySignalTitle/);
-  assert.match(source, /t\.appShell\.recommendedPathLabel/);
-  assert.match(source, /t\.appShell\.monthLabels/);
-  assert.match(source, /t\.appShell\.simulatorScopeNote/);
-  assert.match(source, /t\.appShell\.investmentScopeNote/);
-  assert.match(source, /id="stage-current-market"/);
-  assert.match(source, /id="stage-24h-outlook"/);
-  assert.match(source, /id="stage-bess-decision"/);
-  assert.match(source, /translations\[lang\]\?\.status\?\.loadingSection/);
-  assert.match(source, /aria-label=\{sectionNavCopy\.sectionNavigation\}/);
-  assert.match(source, /aria-label=\{t\.appShell\.backToTop\}/);
-  assert.match(source, /languageAriaLabel=\{t\.appShell\.toggleLanguage\}/);
-  assert.match(source, /aria-label=\{t\.status\.retry\}/);
-  assert.doesNotMatch(source, /syncTrigger/);
-  assert.equal(source.includes("const sectionNavCopy = lang === 'zh'"), false);
-  assert.equal(source.includes("const monthLabels = lang === 'zh'"), false);
-  assert.equal(source.includes('Loading section...'), false);
-  assert.equal(source.includes('Grid Forecast'), false);
-  assert.equal(source.includes('Negative Price Time Dist.'), false);
-  assert.equal(source.includes('Toggle navigation'), false);
-  assert.equal(source.includes('Back to top'), false);
-  assert.equal(source.includes('Trigger Background Data Sync'), false);
-  assert.equal(source.includes('Toggle language'), false);
-});
-
-test('Current Market keeps intraday structure in the right content rail instead of a full-width block below', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-
-  assert.match(source, /id="sec-overview"[\s\S]*id="sec-market-structure"/);
-  assert.doesNotMatch(source, /<\/div>\s*<\/div>\s*<StageDetailGroup[\s\S]*id="sec-market-structure"/);
-});
+// 2026-08-20：App.jsx 阶段导航/月份文案/intraday 布局断言（stage-current-market 等）
+// 随漏斗化重构移除，行为无对应归属，死断言删除；阶段导航现由 MarketPage tab 测试覆盖。
 
 test('core analytics components avoid inline loading fallback strings', () => {
   const files = [
@@ -359,7 +293,7 @@ test('Investment analysis centralizes finance copy and consumes regime compact',
   const source = fs.readFileSync(path.resolve(__dirname, '../components/InvestmentAnalysis.jsx'), 'utf8');
 
   assert.match(source, /copy\.eyebrow/);
-  assert.match(source, /copy\.runAnalysis/);
+  // 2026-08-20：分析改为自动运行（bde113b 重构），copy.runAnalysis 按钮断言移除
   assert.match(source, /copy\.backtestObservedTitle/);
   assert.match(source, /copy\.regimeNarrativeTitle/);
   assert.match(source, /copy\.regimeNarrativeEmpty/);
@@ -399,47 +333,23 @@ test('FCAS analysis centralizes preview, summary, and table copy', () => {
   assert.match(source, /regime_compact/);
 });
 
-test('App passes regime compact translation copy into forecast and FCAS modules', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+test('ModuleRenderer wires regime compact translation copy into forecast and analysis modules', () => {
+  // 2026-08-20：App.jsx 的 regimeCompactCopy 直传迁移到 ModuleRenderer legacyPropsMap；
+  // 五个细粒度块合并为一个归属断言（BessSimulator/RevenueStacking 已不在动态注册表）
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/funnel/ModuleRenderer.jsx'), 'utf8');
 
-  assert.match(source, /regimeCompactCopy=\{t\.regime_compact\}/);
-});
-
-test('App passes regime compact translation copy into peak analysis module', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-
-  assert.match(source, /<PeakAnalysis[\s\S]*?t=\{\{\.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.peak\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
-});
-
-test('App passes regime compact translation copy into cycle cost and charging modules', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-
-  assert.match(source, /<ChargingWindow[\s\S]*?t=\{\{\.\.\.t\.charging, \.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.charging\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
-  assert.match(source, /<CycleCost[\s\S]*?t=\{\{\.\.\.t\.cycleCost, \.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.cycleCost\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
-});
-
-test('App passes regime compact translation copy into simulator and stacking modules', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-
-  assert.match(source, /<BessSimulator[\s\S]*?t=\{\{\.\.\.t\.simulator, loadingMsg: t\.loading_states\.simulator\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
-  assert.match(source, /<RevenueStacking[\s\S]*?t=\{\{\.\.\.t\.stacking, \.\.\.t\.peak_analysis, loadingMsg: t\.loading_states\.stacking\}\}[\s\S]*?regimeCompactCopy=\{t\.regime_compact\}/);
-});
-
-test('App wires regime compact copy through the main AEMO workbench modules', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+  assert.match(source, /regimeCompactCopy: t\.regime_compact/);
 
   for (const componentName of [
     'GridForecast',
     'PeakAnalysis',
     'FcasAnalysis',
-    'BessSimulator',
-    'RevenueStacking',
     'ChargingWindow',
     'CycleCost',
     'InvestmentAnalysis',
   ]) {
-    const pattern = new RegExp(`<${componentName}[\\s\\S]*?regimeCompactCopy=\\{t\\.regime_compact\\}`);
-    assert.match(source, pattern);
+    const pattern = new RegExp(`${componentName}: \\{[\\s\\S]*?regimeCompactCopy: t\\.regime_compact`);
+    assert.match(source, pattern, `${componentName} should receive regimeCompactCopy`);
   }
 });
 
@@ -511,18 +421,18 @@ test('Revenue stacking centralizes empty-state copy', () => {
   assert.equal(source.includes("|| 'No Data'"), false);
 });
 
-test('Report preview centralizes report copy and loading state', () => {
+test('Report preview centralizes bilingual report copy in a LABELS table and loading state', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../components/ReportPreview.jsx'), 'utf8');
 
   assert.match(source, /t\.title/);
   assert.match(source, /t\.subtitle/);
   assert.match(source, /t\.loading/);
   assert.match(source, /REPORT_TYPES/);
-  assert.equal(source.includes('Report Preview'), false);
+  // 2026-08-20：组件重构（bde113b）改为组件内 LABELS 双语表，英文字面量作为文案源保留；
+  // 旧“禁止英文字面量”断言随产品演进移除
+  assert.match(source, /const LABELS = \{/);
   assert.equal(source.includes('Structured payload preview for commercial deliverables.'), false);
   assert.equal(source.includes('Loading report...'), false);
-  assert.equal(source.includes('Monthly Market Report'), false);
-  assert.equal(source.includes('Investment Memo Draft'), false);
 });
 
 test('Fingrid series chart avoids hardcoded title fallback', () => {

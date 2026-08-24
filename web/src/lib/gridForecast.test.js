@@ -138,12 +138,13 @@ test('GridForecast component avoids hardcoded desk labels and mojibake copy', ()
   assert.match(source, /payload\.regime_compact/);
 });
 
-test('app shell and translations avoid known mojibake fragments', () => {
-  const appSource = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+test('page shell and translations avoid known mojibake fragments', () => {
+  // 2026-08-20：App.jsx 已移除，外壳乱码检查改读 PageShell
+  const appSource = fs.readFileSync(path.resolve(__dirname, '../components/PageShell.jsx'), 'utf8');
   const translationsSource = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');
 
   for (const phrase of ['鐢电', '鍛ㄦ湡', '閲嶇疆', '姝ｅ湪', '鍌ㄨ兘', '鍏呯數']) {
-    assert.equal(appSource.includes(phrase), false, `App should not contain "${phrase}"`);
+    assert.equal(appSource.includes(phrase), false, `PageShell should not contain "${phrase}"`);
     assert.equal(translationsSource.includes(phrase), false, `translations should not contain "${phrase}"`);
   }
 });
@@ -185,15 +186,14 @@ test('translations expose readable Chinese labels for high-visibility dashboard 
   assert.equal(translations.zh.cycleCost.ccTitle, '循环成本 vs 盈利性分析');
 });
 
-test('App uses readable localized labels for nav and month reset controls without manual sync UI', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+test('navigation and filter reset stay centralized without manual sync UI', () => {
+  // 2026-08-20：App.jsx 导航/重置断言迁移到 SidebarNavigation + FilterContext
+  const navSource = fs.readFileSync(path.resolve(__dirname, '../components/SidebarNavigation.jsx'), 'utf8');
+  const contextSource = fs.readFileSync(path.resolve(__dirname, '../contexts/FilterContext.jsx'), 'utf8');
 
-  assert.match(source, /t\.nav\.fingrid/);
-  assert.match(source, /t\.nav\.developerPortal/);
-  assert.match(source, /t\.filters\.resetFilters/);
-  assert.doesNotMatch(source, /t\.nav\.sync/);
-  assert.doesNotMatch(source, /t\.nav\.syncing/);
-  assert.equal(source.includes('閼侯剙鍙'), false);
-  assert.equal(source.includes('瀵偓閸欐垼'), false);
-  assert.equal(source.includes('闁插秶鐤'), false);
+  assert.match(navSource, /path: '\/finland'/);
+  assert.match(navSource, /path: '\/developer'/);
+  assert.doesNotMatch(navSource, /handleSync/);
+  assert.doesNotMatch(navSource, /nav\.sync/);
+  assert.match(contextSource, /resetFilters/);
 });

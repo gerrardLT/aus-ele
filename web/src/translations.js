@@ -840,7 +840,7 @@ translations.en.regime_compact = {
 translations.zh.finlandBoard = {
   brand: 'FINLAND BOARD',
   title: '\u82ac\u5170\u5e02\u573a\u770b\u677f',
-  subtitle: '\u5148\u8bfb\u53d6\u771f\u5b9e\u7684 overview \u4e0e readiness \u63a5\u53e3\uff0c\u518d\u628a\u8868\u683c\u5de5\u4f5c\u53f0\u3001\u5b57\u6bb5\u8bcd\u5178\u548c\u8054\u52a8\u5206\u6790\u63a5\u5165\u5230\u7edf\u4e00\u770b\u677f\u3002',
+  subtitle: '\u82ac\u5170\u7535\u529b\u5e02\u573a\u5b9e\u65f6\u770b\u677f\uff1a\u50a8\u5907\u4ef7\u683c\u3001\u5c31\u7eea\u72b6\u6001\u4e0e\u8054\u52a8\u5206\u6790\u3002',
   toggleLanguage: 'EN / \u4e2d',
   toggleLanguageAriaLabel: '\u5207\u6362\u82ac\u5170\u9875\u9762\u8bed\u8a00',
   meta: {
@@ -909,7 +909,7 @@ translations.zh.finlandBoard = {
 translations.en.finlandBoard = {
   brand: 'FINLAND BOARD',
   title: 'Finland Market Board',
-  subtitle: 'Load the real overview and readiness payloads first, while keeping the table and linked analysis out of scope.',
+  subtitle: 'Real-time Finland electricity market board: reserve prices, readiness status and linked analysis.',
   toggleLanguage: '中 / EN',
   toggleLanguageAriaLabel: 'Toggle Finland page language',
   meta: {

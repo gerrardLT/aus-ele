@@ -170,9 +170,10 @@ test('FingridPage still polls backend sync status for passive refreshes', () => 
   assert.match(source, /refreshNonce/);
 });
 
-test('App exposes a navigation entry to the Fingrid page', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-  assert.match(source, /\/fingrid/);
+test('Finland page exposes a navigation entry to the Fingrid raw-data view', () => {
+  // 2026-08-20：App.jsx 导航已重构；Fingrid 入口由 FinlandPage 页内导航承接
+  const source = fs.readFileSync(path.resolve(__dirname, '../pages/FinlandPage.jsx'), 'utf8');
+  assert.match(source, /href="\/fingrid"/);
 });
 
 test('FingridPage and Fingrid UI copy avoid mojibake and centralize Finland market-model copy', () => {

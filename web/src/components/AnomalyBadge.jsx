@@ -10,9 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, Zap, TrendingDown, X } from 'lucide-react';
 import { useFilters } from '../contexts/FilterContext';
-import { getApiBase } from '../lib/apiBase';
-
-const API_BASE = getApiBase();
+import { apiUrl } from '../lib/apiBase';
 
 const TYPE_ICONS = {
   price_spike: Zap,
@@ -28,7 +26,7 @@ export default function AnomalyBadge({ lang = 'zh', onNavigate }) {
   const { data } = useQuery({
     queryKey: ['anomalies', filters.region, filters.year],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v1/anomalies/${filters.region}?year=${filters.year || 2025}`);
+      const res = await fetch(apiUrl(`/v1/anomalies/${filters.region}?year=${filters.year || 2025}`));
       return res.json();
     },
     refetchInterval: 5 * 60 * 1000, // 5 min
@@ -70,7 +68,7 @@ export default function AnomalyBadge({ lang = 'zh', onNavigate }) {
             initial={{ opacity: 0, y: -4, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.95 }}
-            className="absolute right-0 top-9 z-50 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] p-3 shadow-xl panel-glass"
+            className="absolute right-0 top-9 z-50 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] p-3"
           >
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">

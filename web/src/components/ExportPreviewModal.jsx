@@ -7,7 +7,7 @@
  * 注意：html2canvas 不支持 oklch() 颜色，导出文档全部使用显式 hex 内联样式，
  * 不依赖主题 CSS 变量（主题 token 为 oklch）。
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // A4 @96dpi 宽度
 const PAGE_WIDTH = 794;
@@ -93,10 +93,48 @@ function SectionTitle({ children }) {
   );
 }
 
-export default function ExportPreviewModal({ report, answer, trace, kpis, onClose }) {
+export default function ExportPreviewModal({ report, answer, trace, kpis, onClose, onExported }) {
   const docRef = useRef(null);
+  const dialogRef = useRef(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
+
+  // 无障碍（批次6）：挂载聚焦 / 卸载归还焦点——只做一次，
+  // 避免依赖不稳定（内联 onClose / exporting 翻转）时反复重跑抢回焦点（2026-08-24 审查修复）
+  useEffect(() => {
+    const previouslyFocused = document.activeElement;
+    dialogRef.current?.focus();
+    return () => {
+      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
+    };
+  }, []);
+
+  // 键盘交互：Esc 关闭 + Tab 首尾循环，随 exporting/onClose 更新
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        if (!exporting) onClose();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const focusables = dialogRef.current.querySelectorAll(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [exporting, onClose]);
 
   const meta = report.metadata || {};
   const params = meta.params || {};
@@ -141,8 +179,6 @@ export default function ExportPreviewModal({ report, answer, trace, kpis, onClos
                   --color-status-error: #b91c1c;
                   --color-negative: #b91c1c;
                   --color-positive: #15803d;
-                  --glow-opacity: 0;
-                  --glow-color: transparent;
                 }
                 body { background: #ffffff !important; }
               `;
@@ -154,6 +190,9 @@ export default function ExportPreviewModal({ report, answer, trace, kpis, onClos
         })
         .from(docRef.current)
         .save();
+      // 真实导出完成（2026-08-24 审查修复）：审计写入从“意图确认”移至此处，
+      // 用户在预览弹窗取消时不再虚报“导出已完成”
+      onExported?.();
       onClose();
     } catch (e) {
       setError(`导出失败: ${e.message || e}`);
@@ -164,7 +203,12 @@ export default function ExportPreviewModal({ report, answer, trace, kpis, onClos
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="导出预览"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 outline-none"
       onClick={(e) => { if (e.target === e.currentTarget && !exporting) onClose(); }}
     >
       <div className="flex h-[90vh] w-full max-w-[880px] flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] shadow-2xl">

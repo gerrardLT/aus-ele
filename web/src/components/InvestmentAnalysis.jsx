@@ -171,7 +171,7 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
 
   useEffect(() => (() => { requestControllerRef.current?.abort(); }), []);
 
-  // --- Run Analysis ---
+  // --- runAnalysis ---
   async function runAnalysis(nextParams = params) {
     requestControllerRef.current?.abort();
     const controller = new AbortController();

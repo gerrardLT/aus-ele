@@ -35,22 +35,22 @@ test('shouldActivateDeferredSection only activates when section is visible and n
   );
 });
 
-test('App gates heavy market sections behind deferred visibility mounts', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
+test('heavy market modules are lazy-registered in ModuleRenderer so they mount on demand', () => {
+  // 2026-08-20：App.jsx 的 DeferredSection 包裹已迁移为 ModuleRenderer 的 React.lazy 注册
+  //（阶段 Tab 切换时才触发 import），归属文件同步更新
+  const source = fs.readFileSync(path.resolve(__dirname, '../components/funnel/ModuleRenderer.jsx'), 'utf8');
 
-  assert.match(source, /DeferredSection/);
+  assert.match(source, /lazy\(/);
 
   for (const moduleName of [
     'GridForecast',
     'PeakAnalysis',
     'FcasAnalysis',
-    'BessSimulator',
-    'RevenueStacking',
     'ChargingWindow',
     'CycleCost',
     'InvestmentAnalysis',
   ]) {
-    const pattern = new RegExp(`<DeferredSection[\\s\\S]*?<${moduleName}[\\s\\S]*?<\\/DeferredSection>`);
-    assert.match(source, pattern, `${moduleName} should not mount before its section becomes visible`);
+    const pattern = new RegExp(`${moduleName}: lazy\\(`);
+    assert.match(source, pattern, `${moduleName} should be lazy-registered in ModuleRenderer`);
   }
 });

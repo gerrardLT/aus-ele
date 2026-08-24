@@ -7,25 +7,8 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test('App keeps the AEMO home page converged into three primary stages while allowing product-facing labels to shift', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-
-  assert.match(source, /id="stage-current-market"/);
-  assert.match(source, /id="stage-24h-outlook"/);
-  assert.match(source, /id="stage-bess-decision"/);
-  assert.match(source, /t\.appShell\.stageCurrentMarket/);
-  assert.match(source, /t\.appShell\.stage24hOutlook/);
-  assert.match(source, /t\.appShell\.stageBessDecision/);
-  assert.doesNotMatch(source, /id="stage-opportunities"/);
-  assert.doesNotMatch(source, /id="stage-investment"/);
-});
-
-test('App removes Market Screening from the top-level AEMO homepage flow and nests investment under BESS Decision', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8');
-
-  assert.doesNotMatch(source, /<MarketScreening/);
-  assert.match(source, /<PageSection[\s\S]*?id="stage-bess-decision"[\s\S]*?<InvestmentAnalysis/);
-});
+// 2026-08-20：旧 App.jsx 三阶段外壳已随漏斗化重构移除（stage-current-market 等），
+// 对应死断言删除；阶段结构现由 marketConfig.test.js / dynamicRendering.test.js 覆盖。
 
 test('translations expose the new current-market, 24h outlook, and BESS decision shell copy in both languages', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../translations.js'), 'utf8');

@@ -11,6 +11,7 @@ test('fetchJson deduplicates concurrent GET requests for the same URL', async ()
     callCount += 1;
     await new Promise((resolve) => setTimeout(resolve, 10));
     return {
+      ok: true,
       json: async () => ({ rows: [{ value: 1 }] }),
     };
   };
@@ -33,6 +34,7 @@ test('fetchJson does not deduplicate POST requests', async () => {
   globalThis.fetch = async () => {
     callCount += 1;
     return {
+      ok: true,
       json: async () => ({ ok: true }),
     };
   };
@@ -52,6 +54,7 @@ test('fetchJson evicts older GET cache entries when the cache grows beyond the c
   globalThis.fetch = async (url) => {
     callCounts.set(url, (callCounts.get(url) || 0) + 1);
     return {
+      ok: true,
       json: async () => ({ url, callCount: callCounts.get(url) }),
     };
   };
