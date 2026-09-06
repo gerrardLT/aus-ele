@@ -231,6 +231,23 @@ class AlertRuleUpsert(BaseModel):
     workspace_id: str | None = None
 
 
+# R4.3：payload 契约真源已下沉到 models.api_payloads（routes 模块装饰期需要这些类，
+# 不能依赖 server —— 见 models/api_payloads.py docstring）。此处 re-export 保持
+# server.<Name> 的既有引用路径可用。
+from models.api_payloads import (  # noqa: E402
+    AcceptedJobActionPayload,
+    AlertRuleListPayload,
+    AlertRuleRecordPayload,
+    DataQualityIssueRowsPayload,
+    DataQualitySummaryPayload,
+    ExternalApiBillingSummaryPayload,
+    FinlandMarketModelPayload,
+    JobListPayload,
+    ObservabilityStatusPayload,
+    RunNextJobPayload,
+)
+
+
 class JobCreateRequest(BaseModel):
     job_type: str
     queue_name: str
@@ -240,25 +257,8 @@ class JobCreateRequest(BaseModel):
     max_attempts: int = 3
 
 
-class DataQualitySummaryPayload(BaseModel):
-    summary: dict = Field(default_factory=dict)
-    markets: dict = Field(default_factory=dict)
-
-
 class DataQualityMarketRowsPayload(BaseModel):
     items: list[dict] = Field(default_factory=list)
-
-
-class DataQualityIssueRowsPayload(BaseModel):
-    items: list[dict] = Field(default_factory=list)
-
-
-class ObservabilityStatusPayload(BaseModel):
-    sources: list[dict] = Field(default_factory=list)
-    job_summary: dict = Field(default_factory=dict)
-    telemetry: dict = Field(default_factory=dict)
-    openlineage: dict = Field(default_factory=dict)
-    collector: dict = Field(default_factory=dict)
 
 
 class ExternalApiErrorPayload(BaseModel):
@@ -374,14 +374,6 @@ class JobLineagePayload(BaseModel):
     result: dict[str, Any] = Field(default_factory=dict)
 
 
-class ExternalApiBillingSummaryPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    window: dict[str, Any] = Field(default_factory=dict)
-    totals: dict[str, Any] = Field(default_factory=dict)
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    ledger: dict[str, Any] = Field(default_factory=dict)
-
-
 class DeveloperPortalPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
     api_version: str
@@ -389,23 +381,6 @@ class DeveloperPortalPayload(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     pagination: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)
-
-
-class AlertRuleRecordPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    rule_id: str
-    name: str
-    rule_type: str
-    market: str
-    region_or_zone: str | None = None
-    config: dict[str, Any] = Field(default_factory=dict)
-    channel_type: str
-    channel_target: str
-    enabled: bool = True
-    organization_id: str | None = None
-    workspace_id: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
 
 
 class AlertEvaluationPayload(BaseModel):
@@ -424,10 +399,6 @@ class GeneratedReportPayload(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class AlertRuleListPayload(BaseModel):
-    items: list[dict[str, Any]] = Field(default_factory=list)
-
-
 class AlertStateListPayload(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -436,27 +407,8 @@ class AlertDeliveryLogListPayload(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class AcceptedJobActionPayload(BaseModel):
-    status: str
-    detail: str | None = None
-    job_id: str | None = None
-    dataset_id: str | None = None
-    mode: str | None = None
-    job: dict[str, Any] | None = None
-    result: dict[str, Any] | None = None
-
-
-class JobListPayload(BaseModel):
-    items: list[dict[str, Any]] = Field(default_factory=list)
-
-
 class JobEventListPayload(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class RunNextJobPayload(BaseModel):
-    status: str
-    result: dict[str, Any] | None = None
 
 
 class FingridDatasetCatalogPayload(BaseModel):
@@ -516,17 +468,6 @@ class GridForecastCoveragePayload(BaseModel):
     event_count: int = 0
     investment_grade: bool = False
     warnings: list[str] = Field(default_factory=list)
-
-
-class FinlandMarketModelPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    country: str
-    market: str
-    model_status: str
-    summary: dict[str, Any] = Field(default_factory=dict)
-    sources: list[dict[str, Any]] = Field(default_factory=list)
-    live_signals: list[dict[str, Any]] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # _utc_now_iso is imported from deps (shared utility)
@@ -3848,7 +3789,9 @@ def get_summary():
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/data-quality/refresh")
+# R4.3（2026-09-06）：路由由 routes.data_quality_routes 服役；原先这里的重复注册会被
+# 先注册的路由模块遮蔽，成为生产不可达的死副本。以下去装饰器仅保留实现函数。
+# （原 @app.post("/api/data-quality/refresh")）
 def refresh_data_quality():
     try:
         snapshots = compute_quality_snapshots(db)
@@ -3861,7 +3804,8 @@ def refresh_data_quality():
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/data-quality/summary", response_model=DataQualitySummaryPayload)
+# R4.3: 路由由 routes.data_quality_routes 服役（原 @app.get("/api/data-quality/summary")）。
+# 函数体被 /api/v1/data-quality 活端点复用，保留。
 def get_data_quality_summary(access_scope: Optional[dict] = None):
     try:
         rows = db.fetch_data_quality_snapshots()
@@ -3874,7 +3818,8 @@ def get_data_quality_summary(access_scope: Optional[dict] = None):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/data-quality/markets", response_model=DataQualityMarketRowsPayload)
+# R4.3: 路由由 routes.data_quality_routes 服役（原 @app.get("/api/data-quality/markets")）。
+# 函数体被 /api/v1/data-quality 活端点复用，保留。
 def get_data_quality_markets(access_scope: Optional[dict] = None):
     try:
         items = db.fetch_data_quality_snapshots(scope="market")
@@ -3886,7 +3831,8 @@ def get_data_quality_markets(access_scope: Optional[dict] = None):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/data-quality/issues", response_model=DataQualityIssueRowsPayload)
+# R4.3: 路由由 routes.data_quality_routes 服役（原 @app.get("/api/data-quality/issues")）。
+# 函数体被 /api/v1/data-quality 活端点复用，保留。
 def get_data_quality_issues(
     market: Optional[str] = Query(None, description="Optional market code filter"),
     access_scope: Optional[dict] = None,
@@ -4069,7 +4015,7 @@ def create_alert_rule_route(payload: AlertRuleUpsert, request: Request):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/alerts/rules", response_model=AlertRuleListPayload)
+# R4.3: 路由由 routes.admin_routes 服役（原 @app.get("/api/alerts/rules")），此处仅保留实现。
 def list_alert_rules_route(workspace_id: Optional[str] = Query(None), request: Request = None):
     actor = _require_alerts_actor(request)
     try:
@@ -4152,7 +4098,7 @@ def enqueue_report_route(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/jobs", response_model=AcceptedJobActionPayload)
+# R4.3: 路由由 routes.admin_routes 服役（原 @app.post("/api/jobs")），此处仅保留实现。
 def create_job_route(payload: JobCreateRequest):
     try:
         job = enqueue_job(
@@ -4169,7 +4115,7 @@ def create_job_route(payload: JobCreateRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/jobs", response_model=JobListPayload)
+# R4.3: 路由由 routes.admin_routes 服役（原 @app.get("/api/jobs")），此处仅保留实现。
 def list_jobs_route(
     status: Optional[str] = Query(None),
     queue_name: Optional[str] = Query(None),
@@ -4276,7 +4222,7 @@ def retry_job_route(job_id: str, access_scope: dict | None = None):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/api/jobs/run-next", response_model=RunNextJobPayload)
+# R4.3: 路由由 routes.admin_routes 服役（原 @app.post("/api/jobs/run-next")），此处仅保留实现。
 def run_next_job_route(queue_names: str | None = Query(None), access_scope: dict | None = None):
     try:
         queue_names_value = queue_names if isinstance(queue_names, str) else None
@@ -4295,7 +4241,7 @@ def run_next_job_route(queue_names: str | None = Query(None), access_scope: dict
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/observability/status", response_model=ObservabilityStatusPayload)
+# R4.3: 路由由 routes.admin_routes 服役（原 @app.get("/api/observability/status")），此处仅保留实现。
 def get_observability_status(access_scope: dict | None = None):
     try:
         payload = build_source_freshness_payload(db)
@@ -5278,7 +5224,7 @@ def list_audit_logs_route(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/api/admin/external-api/billing-summary", response_model=ExternalApiBillingSummaryPayload)
+# R4.3: 路由由 routes.external_api_routes 服役（原 @app.get("/api/admin/external-api/billing-summary")），此处仅保留实现。
 def get_external_api_billing_summary_route(
     client_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
@@ -5316,7 +5262,7 @@ def get_v1_status(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     )
 
 
-@app.get("/api/v1/prices", responses=EXTERNAL_API_ERROR_RESPONSES)
+# R4.3: 路由由 routes.external_api_routes 服役（原 @app.get("/api/v1/prices")），此处仅保留实现。
 def get_v1_prices(
     year: int = Query(...),
     region: str = Query(...),
@@ -5414,7 +5360,7 @@ def get_v1_events(
     return _metered_v1_call(x_api_key=x_api_key, endpoint="/api/v1/events", http_method="GET", request_units=max(1, limit // 50 or 1), handler=handler)
 
 
-@app.get("/api/v1/fcas", responses=EXTERNAL_API_ERROR_RESPONSES)
+# R4.3: 路由由 routes.external_api_routes 服役（原 @app.get("/api/v1/fcas")），此处仅保留实现。
 def get_v1_fcas(
     year: int = Query(...),
     region: str = Query(...),
@@ -6041,13 +5987,7 @@ def get_fingrid_datasets():
     return {"datasets": fingrid_catalog.list_dataset_configs()}
 
 
-@app.get(
-    "/api/finland/market-model",
-    summary="Get Finland market model context",
-    description="Returns the current Finland market model source composition. The payload makes Finland explicit as a multi-source market model rather than a single Fingrid dataset view.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-    response_model=FinlandMarketModelPayload,
-)
+# R4.3: 路由由 routes.finland_routes 服役（原 @app.get("/api/finland/market-model")），此处仅保留实现。
 def get_finland_market_model():
     fingrid_service.seed_dataset_catalog(db)
     return build_finland_market_model_payload(db)
@@ -6066,13 +6006,7 @@ def _finland_key_error_detail(exc: KeyError) -> str:
     return "Requested resource not found"
 
 
-@app.get(
-    "/api/finland/board/overview",
-    summary="Get Finland board overview",
-    description="Returns the Finland board overview cards for the requested time window.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-    response_model=FinlandBoardOverviewPayload,
-)
+# R4.3: 路由由 routes.finland_routes 服役（原 @app.get("/api/finland/board/overview")），此处仅保留实现。
 def get_finland_board_overview(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
@@ -6094,13 +6028,7 @@ def get_finland_board_overview(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get(
-    "/api/finland/board/table",
-    summary="Get Finland board table",
-    description="Returns a Finland board table view for the requested time window and timezone.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-    response_model=FinlandBoardTablePayload,
-)
+# R4.3: 路由由 routes.finland_routes 服役（原 @app.get("/api/finland/board/table")），此处仅保留实现。
 def get_finland_board_table(
     view: str = Query(..., description="Board table view key"),
     start: Optional[str] = Query(None),
@@ -6128,13 +6056,7 @@ def get_finland_board_table(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get(
-    "/api/finland/board/chart",
-    summary="Get Finland board chart",
-    description="Returns one or more Finland board chart series for the requested fields and granularity.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-    response_model=FinlandBoardChartPayload,
-)
+# R4.3: 路由由 routes.finland_routes 服役（原 @app.get("/api/finland/board/chart")），此处仅保留实现。
 def get_finland_board_chart(
     fields: list[str] = Query(..., description="One or more Finland board field keys"),
     mode: str = Query("single", description="Chart mode"),
@@ -6181,13 +6103,7 @@ def get_finland_board_field_catalog():
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get(
-    "/api/finland/board/readiness",
-    summary="Get Finland board readiness",
-    description="Returns Finland board readiness by combining the board field catalog with Finland market model source context.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-    response_model=FinlandBoardReadinessPayload,
-)
+# R4.3: 路由由 routes.finland_routes 服役（原 @app.get("/api/finland/board/readiness")），此处仅保留实现。
 def get_finland_board_readiness():
     try:
         market_model_payload = build_finland_market_model_payload(db)
@@ -6452,12 +6368,8 @@ def get_available_years():
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get(
-    "/api/price-trend",
-    summary="Get price trend analysis",
-    description="Returns historical price series, aggregate statistics, and unified metadata. The metadata object is the response contract anchor for market, timezone, unit, freshness, source_version, and methodology_version.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-)
+# R4.3: 路由由 routes.price_routes 服役（原 @app.get("/api/price-trend")），此处仅保留实现
+# （直调测试 test_non_engineering_fixes 依赖本函数）。
 def get_price_trend(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID (e.g., NSW1, QLD1)"),
@@ -6640,12 +6552,8 @@ def get_network_fees():
     return {"fees": get_all_fees()}
 
 
-@app.get(
-    "/api/peak-analysis",
-    summary="Get peak and trough spread analysis",
-    description="Returns sliding-window peak/trough spread analysis with unified metadata. Consumers should read metadata for timezone, interval_minutes, currency, source_version, and methodology_version.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-)
+# R4.3: 路由由 routes.price_routes 服役（原 @app.get("/api/peak-analysis")），此处仅保留实现
+# （直调测试 test_non_engineering_fixes 依赖本函数）。
 def get_peak_analysis(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID"),
@@ -6899,12 +6807,8 @@ def _compute_summary(daily_results: list) -> dict:
 # Hourly Price Profile (for Clock Heatmap / Charging Window)
 # ============================================================
 
-@app.get(
-    "/api/hourly-price-profile",
-    summary="Get hourly price profile",
-    description="Returns hourly average/min/max price profile data for heatmap-style views, together with unified metadata describing market, unit, freshness, and contract version fields.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-)
+# R4.3: 路由由 routes.price_routes 服役（原 @app.get("/api/hourly-price-profile")），此处仅保留实现
+# （直调测试 test_non_engineering_fixes 依赖本函数）。
 def get_hourly_price_profile(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID"),
@@ -7367,12 +7271,8 @@ def _get_wem_ess_analysis(
     }
 
 
-@app.get(
-    "/api/fcas-analysis",
-    summary="Get Reserve Opportunity analysis",
-    description="Returns Reserve Opportunity proxy outputs for FCAS upside, ESS reserve context, and unified metadata. WEM responses remain preview_only/core_only and should not be treated as investment-grade market truth.",
-    responses=OPENAPI_NOT_FOUND_AND_ERROR_RESPONSES,
-)
+# R4.3: 路由由 routes.fcas_routes 服役（原 @app.get("/api/fcas-analysis")），此处仅保留实现
+# （直调测试 test_non_engineering_fixes 与 /api/v1/fcas 活端点依赖本函数）。
 def get_fcas_analysis(
     year: int = Query(..., description="Year to query"),
     region: str = Query(..., description="Region ID (e.g., NSW1)"),
@@ -8282,12 +8182,10 @@ def run_p3_bess_decision_layer(params: P3BessDecisionParams, access_scope=None):
         logger.error("P3 BESS decision layer error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.post(
-    "/api/investment-analysis",
-    summary="Run Market Entry Readiness analysis",
-    description="Runs Market Entry Readiness analysis using standardized backtest-driven baselines when available. Response is positioned inside the market entry conclusion chain and includes decision-grade metadata for NEM plus traceability fields such as backtest_reference, backtest_observed, and backtest_fallback_used.",
-    responses=OPENAPI_ERROR_RESPONSES,
-)
+# R4.3（2026-09-06）：/api/investment-analysis 的路由由 routes.investment_routes 服役
+# （含 P0.7 跨 worker in-flight 去重与响应缓存的那份实现）。此处的重复注册原先会被
+# 静默遮蔽、成为生产不可达死副本 —— 只改它等于没改。去装饰器后函数体保留，供
+# /api/v1/investment/scenarios 外部 API 端点与直调测试复用。
 def investment_analysis(params: InvestmentParams, access_scope=None):
     """
     Compute BESS investment cash flow analysis using the new Engine Layer:

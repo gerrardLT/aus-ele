@@ -14,6 +14,11 @@ from fastapi import APIRouter, Header, Query
 
 from deps import get_db, get_cache
 
+# R4.3：server.py 去装饰器死副本后，本模块成为生产 owner，response_model 需在此
+# 声明以维持 OpenAPI $ref。payload 真源在 models.api_payloads（不能模块级依赖
+# server —— 会在 register_all_routes 递归时让本模块被 skip，见该文件 docstring）。
+from models.api_payloads import ExternalApiBillingSummaryPayload
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["external-api"])
@@ -90,7 +95,7 @@ def get_v1_fcas(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/admin/external-api/billing-summary")
+@router.get("/api/admin/external-api/billing-summary", response_model=ExternalApiBillingSummaryPayload)
 def get_external_api_billing_summary_route(
     client_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),

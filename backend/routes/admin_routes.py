@@ -15,6 +15,17 @@ from pydantic import BaseModel, Field
 
 from deps import get_db, get_cache
 
+# R4.3：server.py 去装饰器死副本后，本模块成为生产 owner，response_model 需在此
+# 声明以维持 OpenAPI $ref。payload 真源在 models.api_payloads（不能模块级依赖
+# server —— 会在 register_all_routes 递归时让本模块被 skip，见该文件 docstring）。
+from models.api_payloads import (
+    AcceptedJobActionPayload,
+    AlertRuleListPayload,
+    JobListPayload,
+    ObservabilityStatusPayload,
+    RunNextJobPayload,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
@@ -25,7 +36,7 @@ router = APIRouter(tags=["admin"])
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/observability/status")
+@router.get("/api/observability/status", response_model=ObservabilityStatusPayload)
 def get_observability_status(access_scope: dict | None = None):
     """Return observability status including source freshness, telemetry, and OpenLineage."""
     import server as _server
@@ -38,7 +49,7 @@ def get_observability_status(access_scope: dict | None = None):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/jobs")
+@router.get("/api/jobs", response_model=JobListPayload)
 def list_jobs_route(
     status: Optional[str] = Query(None),
     queue_name: Optional[str] = Query(None),
@@ -69,7 +80,7 @@ class _JobCreateRequest(BaseModel):
     max_attempts: int = 3
 
 
-@router.post("/api/jobs")
+@router.post("/api/jobs", response_model=AcceptedJobActionPayload)
 def create_job_route(payload: _JobCreateRequest):
     """Create a new job and enqueue it for processing."""
     import server as _server
@@ -82,7 +93,7 @@ def create_job_route(payload: _JobCreateRequest):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/api/jobs/run-next")
+@router.post("/api/jobs/run-next", response_model=RunNextJobPayload)
 def run_next_job_route(
     queue_names: str | None = Query(None),
     access_scope: dict | None = None,
@@ -98,7 +109,7 @@ def run_next_job_route(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/alerts/rules")
+@router.get("/api/alerts/rules", response_model=AlertRuleListPayload)
 def list_alert_rules_route(workspace_id: Optional[str] = Query(None), request: Request = None):
     """List configured alert rules, scoped to the caller's workspace (auth required)."""
     import server as _server

@@ -14,6 +14,11 @@ from fastapi import APIRouter, Query
 
 from deps import get_db, get_cache
 
+# R4.3：server.py 去装饰器死副本后，本模块成为生产 owner，response_model 需在此
+# 声明以维持 OpenAPI $ref。payload 真源在 models.api_payloads（不能模块级依赖
+# server —— 会在 register_all_routes 递归时让本模块被 skip，见该文件 docstring）。
+from models.api_payloads import FinlandMarketModelPayload
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["finland-market"])
@@ -101,7 +106,7 @@ def get_finland_board_readiness():
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/finland/market-model")
+@router.get("/api/finland/market-model", response_model=FinlandMarketModelPayload)
 def get_finland_market_model():
     """Return the current Finland market model source composition."""
     import server as _server
