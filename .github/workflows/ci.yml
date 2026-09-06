@@ -223,6 +223,28 @@ jobs:
           RETRY_MAX: "3"
           RETRY_INTERVAL_S: "10"
           WEB_BOOTSTRAP_SECRET: ${{ secrets.AUS_ELE_WEB_BOOTSTRAP_SECRET }}
+          # 前端构建期开关（R5.4/R5.1）。VITE_* 只有 docker --build-arg 这一条路能进 bundle：
+          # 运行时改 nginx 环境变量改不了已编译进 JS 的取值，所以运维能在仓库 Variables 里
+          # 看到的这一组，就是它们**唯一**的开关位置（少一个就等于线上写死）。
+          # 逐条与 web/src/lib/flags.js 注册表对齐，由 flagsGuard.test.js 断言这条链。
+          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+          VITE_DATA_RIGHTS_UI: ${{ vars.VITE_DATA_RIGHTS_UI }}
+          VITE_SUPPORT_EMAIL: ${{ vars.VITE_SUPPORT_EMAIL }}
+          VITE_LEGAL_ENTITY_NAME: ${{ vars.VITE_LEGAL_ENTITY_NAME }}
+          VITE_LEGAL_ABN: ${{ vars.VITE_LEGAL_ABN }}
+          VITE_LEGAL_JURISDICTION: ${{ vars.VITE_LEGAL_JURISDICTION }}
+          # 翻这些之前先改 /legal/dpa 第 4 条与 /legal/cookies 第 7 条的「未启用」表述。
+          VITE_ANALYTICS_ENABLED: ${{ vars.VITE_ANALYTICS_ENABLED }}
+          VITE_ANALYTICS_SDK_URL: ${{ vars.VITE_ANALYTICS_SDK_URL }}
+          VITE_ANALYTICS_TOKEN: ${{ vars.VITE_ANALYTICS_TOKEN }}
+          VITE_ANALYTICS_HOST: ${{ vars.VITE_ANALYTICS_HOST }}
+          VITE_ANALYTICS_SESSION_REPLAY: ${{ vars.VITE_ANALYTICS_SESSION_REPLAY }}
+          VITE_ANALYTICS_MASK_ALL_TEXT: ${{ vars.VITE_ANALYTICS_MASK_ALL_TEXT }}
+          VITE_ANALYTICS_MASK_ALL_INPUTS: ${{ vars.VITE_ANALYTICS_MASK_ALL_INPUTS }}
+          VITE_URL_STATE_UI: ${{ vars.VITE_URL_STATE_UI }}
+          VITE_SPA_NAV_UI: ${{ vars.VITE_SPA_NAV_UI }}
+          VITE_COMMAND_PALETTE_UI: ${{ vars.VITE_COMMAND_PALETTE_UI }}
+          VITE_MOBILE_NAV_UI: ${{ vars.VITE_MOBILE_NAV_UI }}
         run: |
           set -uo pipefail
           SHA="${{ github.sha }}"
@@ -242,9 +264,9 @@ jobs:
           }
 
           retry_build_push() {
-            local svc="$1" file="$2" attempt=1
-            local extra="${3:-}"
-            until build_push "$svc" "$file" ${extra}; do
+            local svc="$1" file="$2"; shift 2
+            local attempt=1
+            until build_push "$svc" "$file" "$@"; do
               if [ "$attempt" -ge "$RETRY_MAX" ]; then
                 echo "::error::镜像构建/推送失败（已重试 ${RETRY_MAX} 次）: ${svc}（R3.7/R3.8）"
                 return 1
@@ -256,8 +278,25 @@ jobs:
             echo "镜像构建并推送成功: ${svc}（标签 latest + ${SHA}）"
           }
 
+          # 数组而不是单个字符串：legal 主体名这类值带空格，字符串版会被词分割拆成两个
+          # --build-arg，表现是「构建成功但线上取到空值」—— 最难查的那一类。
+          WEB_ARGS=(--build-arg "VITE_BOOTSTRAP_SECRET=${WEB_BOOTSTRAP_SECRET:-}")
+          for key in VITE_API_BASE VITE_DATA_RIGHTS_UI VITE_SUPPORT_EMAIL \
+                     VITE_LEGAL_ENTITY_NAME VITE_LEGAL_ABN VITE_LEGAL_JURISDICTION \
+                     VITE_ANALYTICS_ENABLED VITE_ANALYTICS_SDK_URL VITE_ANALYTICS_TOKEN \
+                     VITE_ANALYTICS_HOST VITE_ANALYTICS_SESSION_REPLAY \
+                     VITE_ANALYTICS_MASK_ALL_TEXT VITE_ANALYTICS_MASK_ALL_INPUTS \
+                     VITE_URL_STATE_UI VITE_SPA_NAV_UI VITE_COMMAND_PALETTE_UI VITE_MOBILE_NAV_UI; do
+            value="${!key:-}"
+            # 未设置的变量整体跳过 → 落回 Dockerfile 的 ARG 默认值（一律「关」）
+            if [ -n "$value" ]; then
+              WEB_ARGS+=(--build-arg "${key}=${value}")
+            fi
+          done
+          echo "web 构建参数（已跳过未设置项）：${#WEB_ARGS[@]} 个元素"
+
           retry_build_push backend Dockerfile.backend
-          retry_build_push web web/Dockerfile "--build-arg VITE_BOOTSTRAP_SECRET=${WEB_BOOTSTRAP_SECRET:-}"
+          retry_build_push web web/Dockerfile "${WEB_ARGS[@]}"
 
       - name: 阶段状态汇总
         if: always()

@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 import json
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_job_tables, reset_pg_tables
 
 ensure_repo_import_paths()
 
@@ -20,6 +20,10 @@ class LineageTests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        reset_job_tables(self.db)
+        # build_source_freshness_payload() 读的是 data_quality_snapshot 全表，
+        # 共享库下别的测试写过的行会让同一 source_id 出现两个 computed_at。
+        reset_pg_tables(self.db, "data_quality_snapshot", "data_quality_issue")
         self.tmpdir = tempfile.TemporaryDirectory()
         self.lake = LocalArtifactLake(self.tmpdir.name)
 

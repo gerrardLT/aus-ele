@@ -11,20 +11,19 @@ Covers the audit follow-up fixes that do not require a live PostgreSQL:
 
 import sys
 import threading
-import types
 import unittest
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, stub_optional_dep
 
 ensure_repo_import_paths()
 
 # Stub heavy optional dependencies that may be absent in the test environment.
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from database import DatabaseUnavailableError, _PGConnWrapper  # noqa: E402
 from response_cache import RedisResponseCache  # noqa: E402

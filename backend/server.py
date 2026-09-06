@@ -1,5 +1,5 @@
 """
-AEMO Intelligence Platform — main API server.
+Tianshu Platform — main API server.
 
 MIGRATION STATUS (2026-06):
   Migrated to routes/ modules:
@@ -58,6 +58,9 @@ from alerts import evaluate_alert_rules as run_alert_evaluation
 from database import DatabaseManager
 from fcas_opportunity import summarize_nem_fcas_opportunity
 from sql_safe import safe_table_name, trading_price_table
+# 品牌常量层（R2.1）：OpenAPI 的 info.title 会经 /developer 页与 ⌘K 面板直接给用户看到，
+# 留着旧品牌名等于在最显眼的对外契约上漏掉改名。与 app.py:238 必须是同一个表达式。
+from brand import BRAND_DISPLAY
 import grid_events
 import grid_forecast
 from fingrid import catalog as fingrid_catalog
@@ -96,11 +99,13 @@ from access_control import (
     authenticate_session_token,
     assert_scope_allows_region_market,
     accept_workspace_invite,
+    begin_domain_verification,
     build_workspace_access_scope,
     check_organization_permission,
     check_workspace_permission,
     create_membership_invite,
     create_workspace_invite,
+    DomainVerificationUnavailable,
     ensure_organization_membership_from_domain_policy,
     issue_oidc_session,
     issue_access_token,
@@ -108,6 +113,7 @@ from access_control import (
     logout_session,
     reactivate_organization_member,
     reissue_membership_invite,
+    register_organization_domain,
     remove_organization_member,
     resolve_principal_for_oidc_claims,
     login_with_password,
@@ -122,6 +128,7 @@ from access_control import (
     seed_workspace_membership,
     suspend_organization_member,
     transfer_organization_owner,
+    verify_organization_domain,
 )
 from external_api_v1 import (
     authenticate_external_api_key,
@@ -198,6 +205,17 @@ class DomainJoinRequest(BaseModel):
     email: str
     display_name: str
     password: str
+
+
+class DomainVerifyRequest(BaseModel):
+    """域名所有权验证提交体（P0.3）。
+
+    ``method="dns_txt"`` 时 ``token`` 可留空 —— 服务端自己查 TXT 并比对，
+    客户端无从伪造；``method="email"`` 时必须回填邮箱里收到的 code。
+    """
+
+    method: str
+    token: Optional[str] = None
 
 
 class AlertRuleUpsert(BaseModel):
@@ -1653,7 +1671,10 @@ def _cacheable_param(value):
 
 def _env_flag(name: str, default: bool) -> bool:
     raw_value = os.environ.get(name)
-    if raw_value is None:
+    if raw_value is None or not raw_value.strip():
+        # 空串必须回落到 default：docker-compose 里 `FLAG=` 是声明变量但留空的常见
+        # 写法，若把空串当作真值，所有 default=False 的安全开关（CORS credentials、
+        # legacy OIDC callback）都会被一次空赋值打开。
         return default
     return raw_value.strip().lower() not in {"0", "false", "no", "off"}
 
@@ -2383,7 +2404,7 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, 'job_worker'):
         app.state.job_worker.stop()
 
-app = FastAPI(title="AEMO NEM Data API", lifespan=lifespan)
+app = FastAPI(title=f"{BRAND_DISPLAY} API", lifespan=lifespan)
 
 # Register modular route modules (spike, saturation, ranking, co-opt, wem_modules, etc.)
 from routes import register_all_routes as _register_modular_routes
@@ -4517,9 +4538,13 @@ def reissue_organization_invite_route(
 
 
 @app.post("/api/auth/organizations/invites/accept")
-def accept_organization_invite_route(invite_token: str = Query(...), display_name: str = Query(...)):
+def accept_organization_invite_route(invite_token: str = Query(...), display_name: str = Query(...),
+                                     password: str | None = Query(None)):
+    # password 可选（R1.1 一致性补齐）：组织级邀请原先建出来的是无密码账户，
+    # 与 workspace 级邀请（强制设密码）语义不一致。缺省不传时行为完全照旧。
     try:
-        return accept_membership_invite(db, invite_token=invite_token, display_name=display_name)
+        return accept_membership_invite(db, invite_token=invite_token, display_name=display_name,
+                                        password=password)
     except HTTPException:
         raise
     except Exception as exc:
@@ -4720,6 +4745,25 @@ def create_oidc_provider_route(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _public_organization_domain_view(row: dict) -> dict:
+    """组织域名的对外视图（P0.3）：剥离一次性挑战凭据。
+
+    ``verification_token`` 是「谁拥有这个域名」的证明物，绝不能出现在任何读取
+    接口里 —— 否则拿到 org 只读权限的人就能直接完成邮箱验证挑战。
+    """
+    return {
+        "domain_id": row["domain_id"],
+        "organization_id": row["organization_id"],
+        "domain": row["domain"],
+        "join_mode": row["join_mode"],
+        "verified": bool(row.get("verified")),
+        "verified_at": row.get("verified_at"),
+        "verification_requested_at": row.get("verification_requested_at"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
 @app.post("/api/admin/organizations/{organization_id}/domains")
 def create_organization_domain_route(
     organization_id: str,
@@ -4731,30 +4775,129 @@ def create_organization_domain_route(
     try:
         # 收紧（2026-08-14）：HTTP 调用需组织内 org_manage 权限；进程内直调保留旧行为
         bearer_actor = _require_bearer_actor(request)
+        audit_actor: Optional[str] = None
         if bearer_actor is not None:
-            _org_actor = authenticate_org_actor(db, organization_id, bearer_actor["principal"]["principal_id"])
+            audit_actor = bearer_actor["principal"]["principal_id"]
+            _org_actor = authenticate_org_actor(db, organization_id, audit_actor)
             check_organization_permission(_org_actor, "org_manage")
         elif isinstance(actor_principal_id, str) and actor_principal_id:
+            audit_actor = actor_principal_id
             _org_actor = authenticate_org_actor(db, organization_id, actor_principal_id)
             check_organization_permission(_org_actor, "org_manage")
-        if not db.fetch_organization(organization_id):
-            raise HTTPException(status_code=404, detail="Organization not found")
-        return db.upsert_organization_domain(
-            {
-                "domain_id": f"dom_{uuid.uuid4().hex[:12]}",
-                "organization_id": organization_id,
-                "domain": domain.strip().lower(),
-                "verified_at": None,
-                "join_mode": join_mode,
-                "created_at": _utc_timestamp(),
-                "updated_at": _utc_timestamp(),
-            }
+        # P0.3（2026-09-05）：登记不再等于授权。域名归一 + 公共邮箱域名黑名单 +
+        # 跨组织指向保护都在 register_organization_domain 内，新登记一律未验证。
+        return _public_organization_domain_view(
+            register_organization_domain(
+                db,
+                organization_id=organization_id,
+                domain=domain,
+                join_mode=join_mode,
+                actor_principal_id=audit_actor,
+            )
         )
     except HTTPException:
         raise
     except Exception as exc:
         logger.error("Create organization domain route error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/admin/organizations/{organization_id}/domains")
+def list_organization_domains_route(
+    organization_id: str,
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
+):
+    try:
+        bearer_actor = _require_bearer_actor(request)
+        if bearer_actor is not None:
+            _org_actor = authenticate_org_actor(db, organization_id, bearer_actor["principal"]["principal_id"])
+            check_organization_permission(_org_actor, "org_manage")
+        elif isinstance(actor_principal_id, str) and actor_principal_id:
+            _org_actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+            check_organization_permission(_org_actor, "org_manage")
+        items = [
+            _public_organization_domain_view(row)
+            for row in db.list_organization_domains(organization_id)
+        ]
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("List organization domains route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/domains/{domain_id}/verification")
+def begin_organization_domain_verification_route(
+    organization_id: str,
+    domain_id: str,
+    method: str = Query("dns_txt"),
+    actor_principal_id: Optional[str] = Query(None),
+    request: Request = None,
+):
+    """发起域名所有权挑战（DNS TXT 或 postmaster 邮箱，二者任一）。
+
+    邮件方式下 token 只投递到域名方邮箱，**不回 API**，否则登记即等于自证通过。
+    """
+    try:
+        bearer_actor = _require_bearer_actor(request)
+        audit_actor: Optional[str] = None
+        if bearer_actor is not None:
+            audit_actor = bearer_actor["principal"]["principal_id"]
+            _org_actor = authenticate_org_actor(db, organization_id, audit_actor)
+            check_organization_permission(_org_actor, "org_manage")
+        elif isinstance(actor_principal_id, str) and actor_principal_id:
+            audit_actor = actor_principal_id
+            _org_actor = authenticate_org_actor(db, organization_id, actor_principal_id)
+            check_organization_permission(_org_actor, "org_manage")
+        return begin_domain_verification(
+            db,
+            organization_id=organization_id,
+            domain_id=domain_id,
+            method=method,
+            actor_principal_id=audit_actor,
+        )
+    except HTTPException:
+        raise
+    except DomainVerificationUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+    except Exception as exc:
+        logger.error("Begin organization domain verification route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/organizations/{organization_id}/domains/{domain_id}/verification/verify")
+def verify_organization_domain_route(
+    organization_id: str,
+    domain_id: str,
+    body: DomainVerifyRequest,
+    request: Request = None,
+):
+    try:
+        bearer_actor = _require_bearer_actor(request)
+        audit_actor: Optional[str] = None
+        if bearer_actor is not None:
+            audit_actor = bearer_actor["principal"]["principal_id"]
+            _org_actor = authenticate_org_actor(db, organization_id, audit_actor)
+            check_organization_permission(_org_actor, "org_manage")
+        row = verify_organization_domain(
+            db,
+            organization_id=organization_id,
+            domain_id=domain_id,
+            method=body.method,
+            token=body.token,
+            actor_principal_id=audit_actor,
+        )
+        return _public_organization_domain_view(row)
+    except HTTPException:
+        raise
+    except DomainVerificationUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+    except Exception as exc:
+        logger.error("Verify organization domain route error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 
 @app.post("/api/auth/password/set")
@@ -4848,6 +4991,21 @@ def start_oidc_login_route(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _legacy_oidc_callback_enabled() -> bool:
+    """P0.5：既有的 /api/auth/oidc/callback 默认关闭。
+
+    该端点把 subject/email/email_verified/expected_state/expected_nonce 全部当作
+    客户端 query 参数，没有 code exchange、没有 token endpoint、没有 ID token 验签，
+    且 state/nonce 的两侧都由客户端提供（自证式校验）。任何能构造该 URL 的人都能
+    以任意邮箱身份换取会话令牌。
+
+    关闭零损失：因不存在 code exchange，今天没有任何真实 IdP 能通过它完成认证，
+    它提供零合法功能、只有风险。回滚 = 设环境变量为 true 重启，零代码。
+    重写为真实 code exchange + JWKS 验签已另立独立安全任务。
+    """
+    return _env_flag("AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK", False)
+
+
 @app.get("/api/auth/oidc/callback")
 def complete_oidc_callback_route(
     organization_id: str = Query(...),
@@ -4863,6 +5021,14 @@ def complete_oidc_callback_route(
     expected_nonce: str = Query(...),
 ):
     try:
+        if not _legacy_oidc_callback_enabled():
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "Legacy OIDC callback is disabled. Set "
+                    "AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK=true to re-enable it."
+                ),
+            )
         if state != expected_state:
             raise HTTPException(status_code=401, detail="Invalid OIDC state")
         if nonce != expected_nonce:

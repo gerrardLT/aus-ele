@@ -17,17 +17,19 @@ import server
 
 @contextlib.contextmanager
 def patched_server_db(db_manager: DatabaseManager):
+    """把 server 的库/缓存切到测试实例。
+
+    刻意不再碰 ``server.DB_PATH``：那是 SQLite 时代的模块全局，PG 迁移后已删除，
+    而 ``DatabaseManager`` 在 PG 下也忽略传入的 db_path（所有实例连同一个库）。
+    """
     original_db = server.db
-    original_db_path = server.DB_PATH
     original_cache = server.response_cache
     server.db = db_manager
-    server.DB_PATH = db_manager.db_path
     server.response_cache = FakeResponseCache()
     try:
         yield
     finally:
         server.db = original_db
-        server.DB_PATH = original_db_path
         server.response_cache = original_cache
 
 

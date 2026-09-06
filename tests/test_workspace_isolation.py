@@ -1,17 +1,16 @@
 import os
 import sys
 import tempfile
-import types
 import unittest
 
 from fastapi import HTTPException
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_pg_tables, stub_optional_dep
 
 ensure_repo_import_paths()
 
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from database import DatabaseManager
 import server
@@ -26,6 +25,14 @@ class WorkspaceIsolationTests(unittest.TestCase):
         self.original_orchestrator_db = server.job_orchestrator.db
         server.db = self.db
         server.job_orchestrator.db = self.db
+
+        # 清空作业表（R0b，2026-09-05）：DatabaseManager 为 PG-only、所有测试共享同一个库，
+        # 而这里用的是固定 workspace_id（ws_a/ws_b）。"列表只剩 1 条"这类断言在共享库上
+        # 天然是个计数器：每跑一次就按入队数往上累加（同一断言在不同批次里分别报 34 /
+        # 77 / 78）—— 断言失败与被测的隔离逻辑无关，纯粹是历史残留。清表而不是放宽断言：
+        # 条数正是这条测试要测的东西。
+        # 表不存在时 reset_pg_tables 会跳过（入队路径自带建表），无需先 ensure。
+        reset_pg_tables(self.db, self.db.JOB_TABLE, self.db.JOB_EVENT_TABLE)
 
         self.db.upsert_organization({"organization_id": "org_a", "name": "Org A", "created_at": "2026-04-27T00:00:00Z", "updated_at": "2026-04-27T00:00:00Z"})
         self.db.upsert_workspace({"workspace_id": "ws_a", "organization_id": "org_a", "name": "WS A", "created_at": "2026-04-27T00:00:00Z", "updated_at": "2026-04-27T00:00:00Z"})

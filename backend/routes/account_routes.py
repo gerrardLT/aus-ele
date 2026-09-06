@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 import secrets
 import uuid
 from typing import Optional
@@ -31,6 +32,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from deps import get_db
+from env_flags import env_int
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,19 @@ def _assert_workspace(actor: dict, workspace_id: str) -> None:
         raise HTTPException(status_code=403, detail="Workspace mismatch")
 
 
+def _assert_human_write(actor: dict, *, action: str) -> None:
+    """P0.1 匿名守卫（2026-09-05）：账户/权限类写操作拒绝 web-session 引导身份。
+
+    必要性：``POST /api/v1/auth/web-session`` 对任意同源浏览器请求无凭据签发
+    ``pr_websession`` token，而该身份在 ``ws_default`` 上历史持有 owner 角色 →
+    只看 ``role`` 的写端点（订阅/API Key/邀请/成员密码/会话吊销）会被匿名触达。
+    本守卫按 principal 判定，与角色解耦，故先于 P0.2 的角色降级发布。
+    """
+    from access_control import assert_human_actor
+
+    assert_human_actor(actor, action=action)
+
+
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
@@ -94,25 +109,47 @@ class InviteAcceptRequest(BaseModel):
 
 # ---------------------------------------------------------------------------
 # 邀请接受限流（2026-08-14）：防 token 探测/暴力尝试。
-# 进程内滑动窗口：同一 invite_token+IP 在 10 分钟内最多 10 次。
+# 同一 invite_token+IP 在 10 分钟内最多 10 次。
 # server.py 的 query 版端点也复用本限流器（from-import 惰性引入）。
+#
+# P0.7（2026-09-05）：窗口外置到 shared_state。原实现有三个只在多 worker 下暴露的洞：
+# 1. 每 worker 各持一份 → 10 次实际上限按 worker 数线性放大；
+# 2. 过滤后的列表写回 dict 之前没有任何互斥 → 同 worker 并发可在 check-then-append
+#    之间同时通过（TOCTOU），限流形同建议；
+# 3. 键按 ``token|IP`` 无限累积，撞限路径也照加 → 探测本身就能把内存吃满。
+# 之所以现在必须修：R1 的自助注册会把接受邀请路径推到公网入口，这个限流是它唯一的
+# token 探测防线。
 # ---------------------------------------------------------------------------
 
-_invite_accept_attempts: dict[str, list[float]] = {}
-_INVITE_ACCEPT_MAX_ATTEMPTS = 10
+_INVITE_ACCEPT_MAX_ATTEMPTS = int(os.environ.get("AUS_ELE_INVITE_ACCEPT_RATE_LIMIT", "10"))
 _INVITE_ACCEPT_WINDOW_SECONDS = 600
+_INVITE_ACCEPT_RATE_SCOPE = "invite_accept_rl"
+
+
+def _invite_accept_max_attempts() -> int:
+    """调用时读取，而不是只在 import 时读一次（便于按环境调档而不改代码）。"""
+    try:
+        return max(0, int(os.environ.get("AUS_ELE_INVITE_ACCEPT_RATE_LIMIT", str(_INVITE_ACCEPT_MAX_ATTEMPTS))))
+    except (TypeError, ValueError):
+        return _INVITE_ACCEPT_MAX_ATTEMPTS
 
 
 def check_invite_accept_rate_limit(invite_token: str, client_ip: str | None = None) -> None:
-    import time as _time
+    from shared_state import get_state_store
 
     key = f"{invite_token}|{client_ip or 'unknown'}"
-    now = _time.time()
-    recent = [t for t in _invite_accept_attempts.get(key, []) if now - t < _INVITE_ACCEPT_WINDOW_SECONDS]
-    if len(recent) >= _INVITE_ACCEPT_MAX_ATTEMPTS:
-        raise HTTPException(status_code=429, detail="Too many invite accept attempts, please retry later")
-    recent.append(now)
-    _invite_accept_attempts[key] = recent
+    allowed, retry_after = get_state_store().register_attempt(
+        _INVITE_ACCEPT_RATE_SCOPE,
+        key,
+        limit=_invite_accept_max_attempts(),
+        window_seconds=_INVITE_ACCEPT_WINDOW_SECONDS,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many invite accept attempts, please retry later",
+            headers={"Retry-After": str(max(1, int(retry_after) + 1))},
+        )
 
 
 class PasswordChangeRequest(BaseModel):
@@ -123,6 +160,7 @@ class PasswordChangeRequest(BaseModel):
 @router.post("/password")
 def change_password(body: PasswordChangeRequest, actor: dict = Depends(_get_actor)):
     """自助修改密码（2026-08-14）：验旧改新，错误语义与登录一致。"""
+    _assert_human_write(actor, action="account.password_change")
     from access_control import change_principal_password
 
     change_principal_password(
@@ -141,6 +179,46 @@ def change_password(body: PasswordChangeRequest, actor: dict = Depends(_get_acto
 
 _RESET_TOKEN_TTL_SECONDS = 30 * 60
 
+# 重置请求限流（R1.1 配套，2026-09-06）：自助注册开放前这里没有任何速率约束。
+# 为什么必须补：注册入口一开，``/password/reset-request`` 就从「邀请制下的内部功能」
+# 变成公开可刷端点 —— 每次调用都会插一行 password_reset 并走一次 SMTP 会话，
+# 等于免费送人一个「灌满别人收件箱 + 撑爆我们库表」的开关。
+_RESET_REQ_IP_SCOPE = "reset_request_ip_rl"
+_RESET_REQ_EMAIL_SCOPE = "reset_request_email_rl"
+_RESET_REQ_IP_LIMIT_DEFAULT = 20
+_RESET_REQ_IP_WINDOW_SECONDS = 3600
+_RESET_REQ_EMAIL_LIMIT_DEFAULT = 5
+_RESET_REQ_EMAIL_WINDOW_SECONDS = 900
+
+
+def _reset_req_ip_limit() -> int:
+    return env_int("AUS_ELE_RESET_REQ_IP_LIMIT", _RESET_REQ_IP_LIMIT_DEFAULT, floor=1)
+
+
+def _reset_req_email_limit() -> int:
+    return env_int("AUS_ELE_RESET_REQ_EMAIL_LIMIT", _RESET_REQ_EMAIL_LIMIT_DEFAULT, floor=1)
+
+
+def _enforce_reset_request_limits(client_ip: str, email: str) -> None:
+    """两个正交维度：IP 拦「一份邮箱列表批量灌邮件」，邮箱维度拦「盯着一个人反复轰」。
+
+    一律走 shared_state（P0.7 的外置窗口），不在本模块新建进程内 dict。
+    """
+    from shared_state import get_state_store
+
+    store = get_state_store()
+    for scope, key, limit, window in (
+        (_RESET_REQ_IP_SCOPE, client_ip, _reset_req_ip_limit(), _RESET_REQ_IP_WINDOW_SECONDS),
+        (_RESET_REQ_EMAIL_SCOPE, email, _reset_req_email_limit(), _RESET_REQ_EMAIL_WINDOW_SECONDS),
+    ):
+        allowed, retry_after = store.register_attempt(scope, key, limit=limit, window_seconds=window)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many password reset requests, please retry later",
+                headers={"Retry-After": str(max(1, int(retry_after) + 1))},
+            )
+
 
 class PasswordResetRequestBody(BaseModel):
     email: str = Field(..., description="账户邮箱")
@@ -158,10 +236,17 @@ def _reset_token_hash(token: str) -> str:
 
 
 @router.post("/password/reset-request")
-def request_password_reset(body: PasswordResetRequestBody):
-    """请求密码重置邮件（无需登录）。防枚举：无论邮箱是否存在均返回相同响应。"""
+def request_password_reset(body: PasswordResetRequestBody, request: Request = None):
+    """请求密码重置邮件（无需登录）。防枚举：无论邮箱是否存在均返回相同响应。
+
+    限流在「查邮箱」之前执行：否则被限流的探测请求仍然要先做一次 DB 查询，
+    刷限流本身就成了免费的读放大。响应体不区分邮箱是否存在（429 也不区分）。
+    """
+    from routes.auth_routes import _client_ip  # 惰性：避免 account_routes ↔ auth_routes 成环
+
     db = get_db()
     email = (body.email or "").strip().lower()
+    _enforce_reset_request_limits(_client_ip(request) if request is not None else "unknown", email)
     principal = db.fetch_principal_by_email(email) if email else None
     if principal:
         import secrets as _secrets
@@ -179,20 +264,33 @@ def request_password_reset(body: PasswordResetRequestBody):
                 "created_at": now.isoformat().replace("+00:00", "Z"),
             }
         )
-        # best-effort 发信；SMTP 未配置时静默降级（管理员可走成员管理重置）
+        # best-effort 发信；SMTP 未配置时降级（管理员可走成员管理重置）。
+        # 但降级不能静默：send_email 永不抛，只看异常会把「一封都没发出去」判成成功，
+        # 用户就卡在「说发了邮件却没收到」的死路（R1.1 修的同源问题）。
         try:
             from services.email_sender import send_email
+            from services.email_verification import public_base_url
+            from brand import BRAND_NAME_ZH, subject as email_subject
 
-            reset_url = f"/reset?token={token}"
-            send_email(
+            # 绝对 URL（既有 bug 修复）：原来是 ``/reset?token=...``，在邮件客户端里
+            # 点不开 —— 邮件没有 base URL 上下文，相对路径是死的。
+            reset_url = f"{public_base_url()}/reset?token={token}"
+            result = send_email(
                 to=email,
-                subject="[AEMO Intelligence] 密码重置",
+                subject=email_subject("密码重置"),
                 body=(
-                    "你正在重置 AEMO Intelligence 账户密码。\n"
+                    f"你正在重置 {BRAND_NAME_ZH} 账户密码。\n"
                     f"请在 30 分钟内访问以下链接完成重置：{reset_url}\n"
                     "若非本人操作，请忽略本邮件。"
                 ),
             )
+            if not (isinstance(result, dict) and result.get("delivered")):
+                logger.warning(
+                    "password reset email not delivered: principal=%s degraded=%s reason=%s",
+                    principal["principal_id"],
+                    bool((result or {}).get("degraded")) if isinstance(result, dict) else True,
+                    (result or {}).get("reason") if isinstance(result, dict) else "non-dict result",
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("password reset email failed: %s", exc)
     # 统一响应，不泄露邮箱存在性
@@ -228,6 +326,7 @@ def confirm_password_reset(body: PasswordResetConfirmBody):
 @router.post("/workspaces/{workspace_id}/login-session")
 def switch_workspace(workspace_id: str, actor: dict = Depends(_get_actor)):
     """已登录用户切换到另一个所属 workspace（免密码，完整资格校验）。"""
+    _assert_human_write(actor, action="account.workspace_switch_session")
     from access_control import switch_workspace_session
 
     session = switch_workspace_session(
@@ -249,6 +348,7 @@ class ProfileUpdateRequest(BaseModel):
 
 @router.patch("/me")
 def update_profile(body: ProfileUpdateRequest, actor: dict = Depends(_get_actor)):
+    _assert_human_write(actor, action="account.profile_update")
     db = get_db()
     principal = actor["principal"]
     updated = db.upsert_principal(
@@ -276,6 +376,7 @@ def list_sessions(actor: dict = Depends(_get_actor)):
 @router.post("/sessions/revoke-others")
 def revoke_other_sessions(actor: dict = Depends(_get_actor)):
     """登出其他设备：保留当前会话，吊销其余会话与令牌。"""
+    _assert_human_write(actor, action="account.sessions_revoke_others")
     db = get_db()
     pid = actor["principal"]["principal_id"]
     current = (actor.get("session") or {}).get("session_id")
@@ -303,6 +404,7 @@ def reset_member_password(
     actor: dict = Depends(_get_actor),
 ):
     """owner/admin 重置本 workspace 成员密码；重置后吊销目标全部会话。"""
+    _assert_human_write(actor, action="account.member_password_reset")
     _assert_workspace(actor, workspace_id)
     if actor["membership"]["role"] not in ("owner", "admin"):
         raise HTTPException(status_code=403, detail="Only owner/admin can reset member passwords")
@@ -390,6 +492,14 @@ def get_me(actor: dict = Depends(_get_actor)):
         if not ws:
             continue
         org = db.fetch_organization(ws["organization_id"]) if ws.get("organization_id") else None
+        # 组织角色逐条查：actor 自带的 organization_membership 只覆盖**当前** workspace
+        # 所属组织，而顶栏切换器要按每个空间分别判断「能不能进组织管理」。成员关系条数是
+        # 个位数（一人不会加入几十个组织），这里的额外查询比让前端猜角色换来的正确性便宜。
+        org_membership = (
+            db.fetch_organization_membership(ws["organization_id"], principal["principal_id"])
+            if ws.get("organization_id")
+            else None
+        )
         workspaces.append(
             {
                 "workspace_id": m["workspace_id"],
@@ -397,6 +507,7 @@ def get_me(actor: dict = Depends(_get_actor)):
                 "role": m["role"],
                 "organization_id": ws.get("organization_id"),
                 "organization_name": (org or {}).get("name"),
+                "organization_role": (org_membership or {}).get("role"),
             }
         )
 
@@ -470,6 +581,7 @@ def list_invites(workspace_id: str, actor: dict = Depends(_get_actor)):
 @router.post("/workspaces/{workspace_id}/invites")
 def create_invite(workspace_id: str, body: InviteCreateRequest, actor: dict = Depends(_get_actor)):
     """创建邀请（owner/admin）。返回 invite_token，前端拼 /invite?token=xxx 链接。"""
+    _assert_human_write(actor, action="account.invite_create")
     _assert_workspace(actor, workspace_id)
     role = (body.role or "").strip().lower()
     if role not in INVITABLE_ROLES:
@@ -493,6 +605,7 @@ def create_invite(workspace_id: str, body: InviteCreateRequest, actor: dict = De
 @router.post("/workspaces/{workspace_id}/invites/{invite_id}/revoke")
 def revoke_invite(workspace_id: str, invite_id: str, actor: dict = Depends(_get_actor)):
     """撤销未接受的邀请（owner/admin）。"""
+    _assert_human_write(actor, action="account.invite_revoke")
     _assert_workspace(actor, workspace_id)
     from access_control import revoke_workspace_invite
 
@@ -539,6 +652,7 @@ def list_api_keys(workspace_id: str, actor: dict = Depends(_get_actor)):
 @router.post("/workspaces/{workspace_id}/api-keys")
 def create_api_key(workspace_id: str, body: ApiKeyCreateRequest, actor: dict = Depends(_get_actor)):
     """创建 API Key（owner/admin）。raw key 仅本次响应返回一次，此后不可再查。"""
+    _assert_human_write(actor, action="account.api_key_create")
     _assert_workspace(actor, workspace_id)
     from access_control import check_workspace_permission
     from external_api_v1 import seed_external_api_client
@@ -567,6 +681,7 @@ def create_api_key(workspace_id: str, body: ApiKeyCreateRequest, actor: dict = D
 @router.post("/workspaces/{workspace_id}/api-keys/{client_id}/revoke")
 def revoke_api_key(workspace_id: str, client_id: str, actor: dict = Depends(_get_actor)):
     """吊销 API Key（置为 disabled，不可恢复）。"""
+    _assert_human_write(actor, action="account.api_key_revoke")
     _assert_workspace(actor, workspace_id)
     from access_control import check_workspace_permission
 
@@ -671,11 +786,19 @@ class SubscriptionUpdateRequest(BaseModel):
 # internal 为运营/内部专用（无限配额），不得自助切换；enterprise 同理排除（2026-08-14 代码审查）
 _UPDATABLE_PLANS = {"starter", "growth", "pro"}
 
-# 进程内日计数缓存：workspace_id → (day, agent_runs, api_units)，60s TTL，
-# 避免每次查订阅都聚合查库（B 视角性能设计）
-_quota_cache: dict[str, tuple[str, int, int]] = {}
-_QUOTA_CACHE_TTL_SECONDS = 60
-_quota_cache_ts: dict[str, float] = {}
+# 日计数缓存（P0.7，2026-09-05）：workspace_id → (day, agent_runs, api_units)，60s TTL。
+# 原先是两个进程内 dict（值 + 时间戳），多 worker 下每台各查各的：同一时刻两个请求
+# 打到不同 worker 会拿到不同的"今日用量"，而软配额的 over_quota 标记正是从这里算出
+# —— 配额展示不一致会在收费就绪时直接变成对账纠纷。外置到 shared_state（Redis 优先、
+# 回落进程内），并把 day 一起存进值里：TTL 60s 跨过零点时不能拿昨天的计数报今天。
+_QUOTA_CACHE_SCOPE = "quota_usage"
+_QUOTA_CACHE_TTL_SECONDS = int(os.environ.get("AUS_ELE_QUOTA_CACHE_TTL_SECONDS", "60"))
+
+
+def _state_store():
+    from shared_state import get_state_store
+
+    return get_state_store()
 
 
 def _today_key() -> str:
@@ -683,14 +806,15 @@ def _today_key() -> str:
 
 
 def _today_usage(db, workspace_id: str) -> tuple[int, int]:
-    """今日 Agent 运行数 + API units（带 60s 进程内缓存）。"""
-    import time as _time
-
+    """今日 Agent 运行数 + API units（带 TTL 的跨 worker 共享缓存）。"""
     day = _today_key()
-    cached = _quota_cache.get(workspace_id)
-    ts = _quota_cache_ts.get(workspace_id, 0.0)
-    if cached and cached[0] == day and (_time.time() - ts) < _QUOTA_CACHE_TTL_SECONDS:
-        return cached[1], cached[2]
+    cached = _state_store().recall(_QUOTA_CACHE_SCOPE, workspace_id)
+    if (
+        isinstance(cached, (list, tuple))
+        and len(cached) == 3
+        and cached[0] == day
+    ):
+        return int(cached[1]), int(cached[2])
 
     day_start = f"{day}T00:00:00Z"
     agent_runs = 0
@@ -721,8 +845,13 @@ def _today_usage(db, workspace_id: str) -> tuple[int, int]:
         logger.debug("quota usage query skipped: %s", exc)
         return agent_runs, api_units  # 异常路径不缓存，下次重算（2026-08-14 代码审查）
 
-    _quota_cache[workspace_id] = (day, agent_runs, api_units)
-    _quota_cache_ts[workspace_id] = _time.time()
+    # 值里带 day：跨零点时旧缓存的 day 对不上，读侧直接判为未命中重算（见上方注释）。
+    _state_store().remember(
+        _QUOTA_CACHE_SCOPE,
+        workspace_id,
+        [day, agent_runs, api_units],
+        _QUOTA_CACHE_TTL_SECONDS,
+    )
     return agent_runs, api_units
 
 
@@ -764,6 +893,7 @@ def get_subscription(workspace_id: str, actor: dict = Depends(_get_actor)):
 @router.post("/workspaces/{workspace_id}/subscription")
 def update_subscription(workspace_id: str, body: SubscriptionUpdateRequest, actor: dict = Depends(_get_actor)):
     """切换套餐（仅 owner，内部调套用；payment_provider 记为 manual）。"""
+    _assert_human_write(actor, action="account.subscription_update")
     _assert_workspace(actor, workspace_id)
     if actor["membership"]["role"] != "owner":
         raise HTTPException(status_code=403, detail="Only workspace owner can change subscription")
@@ -780,7 +910,8 @@ def update_subscription(workspace_id: str, body: SubscriptionUpdateRequest, acto
             "payment_ref": None,
         }
     )
-    _quota_cache.pop(workspace_id, None)
-    _quota_cache_ts.pop(workspace_id, None)
+    # 失效跨 worker 生效（P0.7）：原先只 pop 本进程 dict，切套餐后其他 worker 仍会
+    # 拿旧计数报旧配额的视图最长 60s。
+    _state_store().forget(_QUOTA_CACHE_SCOPE, workspace_id)
     logger.info("subscription updated: ws=%s plan=%s", workspace_id, plan)
     return updated

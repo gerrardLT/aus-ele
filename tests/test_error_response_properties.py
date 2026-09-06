@@ -11,13 +11,14 @@ with exactly those three fields and the correct HTTP status code.
 
 import sys
 import os
-import types
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
+from tests.support import stub_optional_dep
+
 # Stub heavy optional dependencies that may not be installed in test env
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st

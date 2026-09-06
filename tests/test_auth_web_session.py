@@ -10,15 +10,20 @@ import types
 import unittest
 from unittest import mock
 
-from tests.support import ensure_repo_import_paths
+from tests.support import (
+    ensure_repo_import_paths,
+    offline_state_store,
+    stub_optional_dep,
+)
 
 ensure_repo_import_paths()
 
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from fastapi import HTTPException
 
+from shared_state import reset_state_store_for_tests
 from routes import auth_routes
 
 
@@ -36,8 +41,11 @@ class WebSessionGateTests(unittest.TestCase):
         # 确保测试起点不带相关 env
         os.environ.pop("AUS_ELE_WEB_BOOTSTRAP_SECRET", None)
         os.environ.pop("AUS_ELE_WEB_ALLOWED_ORIGINS", None)
-        # 清理限流窗口状态，避免用例间相互污染
-        auth_routes._bootstrap_attempts.clear()
+        # 清理限流窗口状态，避免用例间相互污染。
+        # P0.7（2026-09-05）：窗口已外置到 shared_state（Redis + 进程内回落）→ 这里
+        # 注入一个永不连 Redis 的 store，测试不能依赖本机是否有 Redis。
+        self._state_store = reset_state_store_for_tests(offline_state_store())
+        self.addCleanup(reset_state_store_for_tests)
         self._orig_rate_max = auth_routes._BOOTSTRAP_RATE_LIMIT_MAX
         self.addCleanup(self._env_patch.stop)
         self.addCleanup(self._restore_rate_max)

@@ -44,20 +44,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 # 引导身份固定 ID（upsert 幂等，避免每次请求新建 org/ws/principal）
+# principal_id 与 access_control.BOOTSTRAP_PRINCIPAL_ID 同源：账户写端点的匿名守卫
+# （P0.1）按该常量判定，两处漂移会让守卫静默失效（有测试锁定，见
+# tests/test_bootstrap_privilege_guard.py）。
+from access_control import BOOTSTRAP_PRINCIPAL_ID
+from shared_state import get_state_store
+
 _BOOTSTRAP_ORG = "org_webbootstrap"
 _BOOTSTRAP_WS = "ws_default"
-_BOOTSTRAP_PR = "pr_websession"
+_BOOTSTRAP_PR = BOOTSTRAP_PRINCIPAL_ID
 
-# ── 签发限流（L3 加固，2026-08-09）──────────────────────────────────
+# ── 签发限流（L3 加固，2026-08-09；P0.7 外置 2026-09-05）──────────────────
 # Origin 门控只防浏览器介导的跨站请求，非浏览器调用方可自设 Origin；
 # 叠加按 IP 滑动窗口限流，限制无凭据签发的滥用面（与 access_control 的
-# 登录限流同款机制）。单 worker 进程内内存即可；多 worker 下窗口不共享，
-# 上限按 worker 数线性放大，可接受。
+# 登录限流同款机制）。窗口存放已外置到 shared_state（Redis + 进程内回落），
+# 不再依赖 worker 数。
 _BOOTSTRAP_RATE_LIMIT_MAX = int(os.environ.get("AUS_ELE_WEB_SESSION_RATE_LIMIT", "30"))
 _BOOTSTRAP_RATE_LIMIT_WINDOW_SECONDS = int(
     os.environ.get("AUS_ELE_WEB_SESSION_RATE_LIMIT_WINDOW", "60")
 )
-_bootstrap_attempts: dict[str, list[datetime.datetime]] = {}
+_BOOTSTRAP_RATE_SCOPE = "web_session_bootstrap_rl"
 
 
 def _client_ip(request: Request) -> str:
@@ -75,18 +81,57 @@ def _client_ip(request: Request) -> str:
 
 
 def _check_bootstrap_rate_limit(ip: str) -> None:
-    """滑动窗口限流：超限抛 429。"""
-    now = datetime.datetime.now(datetime.timezone.utc)
-    attempts = _bootstrap_attempts.setdefault(ip, [])
-    while attempts and (now - attempts[0]).total_seconds() > _BOOTSTRAP_RATE_LIMIT_WINDOW_SECONDS:
-        attempts.pop(0)
-    if len(attempts) >= _BOOTSTRAP_RATE_LIMIT_MAX:
-        raise HTTPException(status_code=429, detail="Too many web-session bootstrap requests")
-    attempts.append(now)
+    """滑动窗口限流：超限抛 429。
+
+    P0.7（2026-09-05）：窗口外置到 Redis，多 worker 共享。原先每个 worker 各持一份
+    ``_bootstrap_attempts`` → 上限按 worker 数线性放大（30/分钟在 8 worker 下实际
+    是 240/分钟，等于没有）；而且 check-then-append 之间没有锁，同 worker 并发也能
+    穿过窗口。Redis 不可用时由 shared_state 回落为进程内窗口，行为不劣于外置之前。
+
+    限流键仍取 ``_client_ip``（优先 X-Real-IP、刻意不用 X-Forwarded-For 首段，
+    CWE-348）：外置不改变键的选取，否则会把可伪造性一起写进共享存储。
+    """
+    allowed, retry_after = get_state_store().register_attempt(
+        _BOOTSTRAP_RATE_SCOPE,
+        ip,
+        limit=_BOOTSTRAP_RATE_LIMIT_MAX,
+        window_seconds=_BOOTSTRAP_RATE_LIMIT_WINDOW_SECONDS,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many web-session bootstrap requests",
+            headers={"Retry-After": str(max(1, int(retry_after) + 1))},
+        )
 
 
 def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _bootstrap_role() -> str:
+    """匿名引导身份的 workspace 角色（P0.2，2026-09-05）。
+
+    默认 ``viewer``（权限集为空）。历史实现硬编码 ``owner``，使匿名访客在
+    ``ws_default`` 上获得 org_manage / workspace_manage / member_manage /
+    export / read_audit 全套权限位 → 可读他人审计日志（含邮箱）、可自升套餐。
+
+    回滚零代码：设 ``AUS_ELE_BOOTSTRAP_ROLE=owner`` 重启即可回到旧行为。
+    非法值回落 viewer（fail-closed，不因配错而意外提权）。
+
+    注：不需要「一次性降权 UPDATE」——``upsert_workspace_membership`` 是
+    ``ON CONFLICT(workspace_id, principal_id) DO UPDATE SET role=excluded.role``
+    （database.py:3517-3519），既有行会在下一次 bootstrap 请求时被自动对齐。
+    """
+    from access_control import ROLE_PERMISSIONS
+
+    raw = (os.environ.get("AUS_ELE_BOOTSTRAP_ROLE") or "viewer").strip().lower()
+    if raw not in ROLE_PERMISSIONS:
+        logger.warning(
+            "AUS_ELE_BOOTSTRAP_ROLE=%r is not a known role, falling back to viewer", raw
+        )
+        return "viewer"
+    return raw
 
 
 def _allowed_origins() -> set[str]:
@@ -130,8 +175,19 @@ def _same_site(request: Request) -> bool:
 
 
 def _ensure_bootstrap_identity(db) -> None:
-    """幂等创建引导身份链：org → workspace → principal → membership。"""
+    """幂等创建引导身份链：org → workspace → principal → membership。
+
+    role 由 ``_bootstrap_role()`` 决定（默认 viewer）。因为 ``authenticate_access_token``
+    每次请求都从 membership 现读角色，降权对已签发令牌**立即生效**，无需等 token 过期。
+    """
     now = _now_iso()
+    target_role = _bootstrap_role()
+    existing = db.fetch_workspace_membership(_BOOTSTRAP_WS, _BOOTSTRAP_PR)
+    if existing and existing.get("role") != target_role:
+        logger.info(
+            "bootstrap membership role realigned: %s -> %s",
+            existing.get("role"), target_role,
+        )
     db.upsert_organization(
         {"organization_id": _BOOTSTRAP_ORG, "name": "web-bootstrap",
          "created_at": now, "updated_at": now}
@@ -147,7 +203,7 @@ def _ensure_bootstrap_identity(db) -> None:
     )
     db.upsert_workspace_membership(
         {"membership_id": "m_webbootstrap", "workspace_id": _BOOTSTRAP_WS,
-         "principal_id": _BOOTSTRAP_PR, "role": "owner",
+         "principal_id": _BOOTSTRAP_PR, "role": target_role,
          "created_at": now, "updated_at": now}
     )
 

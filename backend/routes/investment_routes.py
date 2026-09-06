@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from typing import Dict, List, Optional
@@ -41,6 +42,19 @@ INVESTMENT_RESPONSE_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 # ---------------------------------------------------------------------------
 # Inflight deduplication
+#
+# P0.7（2026-09-05）：认领信号外置。原先 ``_ANALYSIS_INFLIGHT`` 是模块级 dict，
+# 去重只在单 worker 内成立 —— 而部署是 GUNICORN_WORKERS>1，同一份昂贵分析（20 年
+# 现金流 + 蒙特卡洛 + co-optimization MILP）会被并发打到不同 worker 各算一遍，
+# 去重形同建议。
+#
+# 分工刻意不对称：
+# - "谁在算"（认领）→ shared_state（Redis 优先、进程内回落）。这类信号只在秒级
+#   存活、需要原子性，正适合 Redis 的 SET NX；
+# - "算完的结果" → 沿用已有的共享 ``analysis_cache`` 表（``_analysis_cache_store``
+#   本来就会写，且早于响应缓存）。不再往状态命名空间复制一份大 payload。
+# 结果是：Redis 完全不可用时，认领退回单 worker 语义 —— 等价于外置之前的行为，
+# 不会出现"为了外置而引入新的失败模式"。
 # ---------------------------------------------------------------------------
 
 _ANALYSIS_INFLIGHT_LOCK = threading.Lock()
@@ -49,6 +63,13 @@ _ANALYSIS_INFLIGHT: Dict[str, dict] = {}
 # Max seconds a waiting request will block on an in-flight computation before
 # giving up with 503. Prevents indefinite hangs if the owner thread stalls.
 _ANALYSIS_INFLIGHT_WAIT_TIMEOUT_SECONDS = 60
+
+_INFLIGHT_CLAIM_SCOPE = "analysis_inflight_claim"
+# 认领 TTL 必须显著大于单次分析的正常耗时：属主还在算而认领先过期，等于去重失效。
+# 取等待超时的 2 倍，留出余量。
+_INFLIGHT_CLAIM_TTL_SECONDS = int(os.environ.get("AUS_ELE_ANALYSIS_INFLIGHT_CLAIM_TTL_SECONDS", "120"))
+# 跨 worker waiter 轮询共享结果缓存的间隔。
+_INFLIGHT_POLL_SECONDS = float(os.environ.get("AUS_ELE_ANALYSIS_INFLIGHT_POLL_SECONDS", "0.5"))
 
 # Hours in a (non-leap) calendar year. Used to annualize an implied FCAS
 # enablement power into equivalent full-power hours when estimating the extra
@@ -166,15 +187,112 @@ def _analysis_cache_store(
     return response_payload
 
 
-def _acquire_inflight_entry(cache_key: str) -> tuple[dict, bool]:
+def _state_store():
+    from shared_state import get_state_store
+
+    return get_state_store()
+
+
+def _acquire_inflight_entry(cache_key: str) -> tuple[Optional[dict], str]:
+    """尝试取得 ``cache_key`` 的分析属主身份。
+
+    返回 ``(entry, kind)``：
+
+    - ``("owner")``：本请求负责计算，``entry`` 已登记进本地表并带认领 token；
+    - ``("local")``：同 worker 已有属主，``entry`` 是它的对象，waiter 走 Event 干等
+      （比轮询便宜，保留原快路径）；
+    - ``("remote")``：其他 worker 持有认领，``entry`` 为 None，调用方改轮询共享结果缓存。
+
+    本地表先于认领检查：同 worker 的第二个请求必须走 Event 而不是去抢 Redis，
+    否则会在本地已有属主的情况下白丢一次认领。
+    """
+    store = _state_store()
     with _ANALYSIS_INFLIGHT_LOCK:
         entry = _ANALYSIS_INFLIGHT.get(cache_key)
         if entry is not None:
-            return entry, False
+            return entry, "local"
 
-        entry = {"event": threading.Event(), "response": None, "error": None}
+    token = store.acquire_claim(_INFLIGHT_CLAIM_SCOPE, cache_key, _INFLIGHT_CLAIM_TTL_SECONDS)
+    if token is None:
+        return None, "remote"
+
+    entry = {"event": threading.Event(), "response": None, "error": None, "claim_token": token}
+    with _ANALYSIS_INFLIGHT_LOCK:
+        rival = _ANALYSIS_INFLIGHT.get(cache_key)
+        if rival is not None:
+            # 极窄竞态：本地登记在 acquire 期间被别的线程插入。交回认领，
+            # 否则真实属主的后续 waiter 会被一把不属于任何人的锁挡住。
+            store.release_claim(_INFLIGHT_CLAIM_SCOPE, cache_key, token)
+            return rival, "local"
         _ANALYSIS_INFLIGHT[cache_key] = entry
-        return entry, True
+    return entry, "owner"
+
+
+def _release_inflight_entry(cache_key: str, entry: dict) -> None:
+    """清理本地登记并释放认领（只释放自己持有的那把）。"""
+    entry["event"].set()
+    with _ANALYSIS_INFLIGHT_LOCK:
+        # 按对象身份删除：属主超时后同名条目可能已被下一个请求重建，
+        # 无条件 pop 会把别人的登记抹掉，使其 waiter 永久干等。
+        if _ANALYSIS_INFLIGHT.get(cache_key) is entry:
+            _ANALYSIS_INFLIGHT.pop(cache_key, None)
+    token = entry.get("claim_token")
+    if token:
+        _state_store().release_claim(_INFLIGHT_CLAIM_SCOPE, cache_key, token)
+
+
+def _claim_inflight_after_owner_loss(cache_key: str) -> tuple[dict, str]:
+    """前一个属主离场后接管：登记本地属主，尽力补一次认领。
+
+    刻意**不再等待**：等过一轮才发现属主没了的请求已经付出了等待成本，让它直接算
+    比再等 60s 更合理。补认领只是为了让之后的第三个请求还能去重；万一这一步也失败
+    （极窄的三方竞态），后果是重复计算一次 —— 不影响正确性。
+    """
+    store = _state_store()
+    token = store.acquire_claim(_INFLIGHT_CLAIM_SCOPE, cache_key, _INFLIGHT_CLAIM_TTL_SECONDS)
+    entry = {"event": threading.Event(), "response": None, "error": None, "claim_token": token}
+    with _ANALYSIS_INFLIGHT_LOCK:
+        rival = _ANALYSIS_INFLIGHT.get(cache_key)
+        if rival is not None:
+            if token:
+                store.release_claim(_INFLIGHT_CLAIM_SCOPE, cache_key, token)
+            return rival, "local"
+        _ANALYSIS_INFLIGHT[cache_key] = entry
+    return entry, "owner"
+
+
+def _await_remote_analysis(
+    *,
+    inflight_key: str,
+    scope: str,
+    payload: dict,
+    data_version: str,
+) -> Optional[dict]:
+    """等待其他 worker 完成同一份分析，从共享 ``analysis_cache`` 取结果。
+
+    三种结局：
+
+    - 结果就绪 → 返回响应；
+    - 认领消失（属主崩溃/认领到期）→ 返回 None，调用方接管自算，不让用户干等；
+    - 等到超时而属主仍在算 → 抛 503（**沿用原同 worker 超时语义**，不降级为重复
+      计算：否则一次超过等待窗口的慢分析会把并发请求全部转成重复计算，反而放大负载）。
+    """
+    store = _state_store()
+    deadline = time.monotonic() + _ANALYSIS_INFLIGHT_WAIT_TIMEOUT_SECONDS
+    while True:
+        cached = _analysis_cache_lookup(
+            scope=scope, payload=payload, data_version=data_version, allow_response_cache=True
+        )
+        if cached is not None:
+            return cached
+        if not store.is_claimed(_INFLIGHT_CLAIM_SCOPE, inflight_key):
+            return None
+        if time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=503,
+                detail="Analysis request timed out waiting for an in-flight computation",
+            )
+        time.sleep(_INFLIGHT_POLL_SECONDS)
 
 
 def _effective_degradation_rate(params: InvestmentParams) -> float:
@@ -298,8 +416,20 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
             "request": request_payload,
             "data_version": data_version,
         })
-        inflight_entry, is_owner = _acquire_inflight_entry(inflight_key)
-        if not is_owner:
+        inflight_entry, inflight_kind = _acquire_inflight_entry(inflight_key)
+        if inflight_kind == "remote":
+            # 别的 worker 正在算同一份：等它写入共享 analysis_cache，而不是本地再算一遍
+            remote_response = _await_remote_analysis(
+                inflight_key=inflight_key,
+                scope=INVESTMENT_RESPONSE_CACHE_SCOPE,
+                payload=request_payload,
+                data_version=data_version,
+            )
+            if remote_response is not None:
+                return _enrich_with_degradation_model(remote_response, params)
+            # 属主已离场（崩溃/认领到期）：接管本地登记，自己算完
+            inflight_entry, inflight_kind = _claim_inflight_after_owner_loss(inflight_key)
+        if inflight_kind == "local":
             if not inflight_entry["event"].wait(timeout=_ANALYSIS_INFLIGHT_WAIT_TIMEOUT_SECONDS):
                 raise HTTPException(
                     status_code=503,
@@ -501,9 +631,7 @@ def investment_analysis(params: InvestmentParams, access_scope=None):
             inflight_entry["error"] = exc
             raise
         finally:
-            inflight_entry["event"].set()
-            with _ANALYSIS_INFLIGHT_LOCK:
-                _ANALYSIS_INFLIGHT.pop(inflight_key, None)
+            _release_inflight_entry(inflight_key, inflight_entry)
 
     except HTTPException:
         raise

@@ -1,18 +1,19 @@
+import contextlib
 import os
 import sys
 import tempfile
-import types
 import unittest
 import uuid
+from unittest import mock
 
 from fastapi import HTTPException
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, stub_optional_dep
 
 ensure_repo_import_paths()
 
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from database import DatabaseManager
 import server
@@ -20,10 +21,18 @@ import server
 
 class OidcAuthRouteTests(unittest.TestCase):
     """随机后缀隔离（2026-08-14 技术债修复）：DatabaseManager 为 PG-only，
-    temp path 被忽略直连共享库；邮箱/域名/OIDC subject 均带随机后缀，可重复运行。"""
+    temp path 被忽略直连共享库；邮箱/域名/OIDC subject 均带随机后缀，可重复运行。
+
+    P0.5（2026-09-05）：/api/auth/oidc/callback 默认关闭 → 本类断言本体不变，
+    只在 fixture 里显式开启 AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK。
+    默认关闭的行为由 LegacyOidcCallbackDisabledTests 单独锁定。
+    """
 
     def setUp(self):
         self._s = uuid.uuid4().hex[:8]
+        self._legacy_flag = mock.patch.dict(os.environ, {"AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK": "true"})
+        self._legacy_flag.start()
+        self.addCleanup(self._legacy_flag.stop)
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
@@ -105,6 +114,7 @@ class OidcAuthRouteTests(unittest.TestCase):
             {
                 **domain,
                 "join_mode": "domain_auto_join_org",
+                "verified_at": "2026-04-28T00:00:00Z",
             }
         )
         principal = server.create_principal_route(email=self._email("owner"), display_name="Owner")
@@ -166,6 +176,7 @@ class OidcAuthRouteTests(unittest.TestCase):
             {
                 **domain,
                 "join_mode": "domain_auto_join_org",
+                "verified_at": "2026-04-28T00:00:00Z",
             }
         )
         principal = server.create_principal_route(email=self._email("viewer"), display_name="Viewer")
@@ -200,6 +211,7 @@ class OidcAuthRouteTests(unittest.TestCase):
             {
                 **domain,
                 "join_mode": "domain_auto_join_org",
+                "verified_at": "2026-04-28T00:00:00Z",
             }
         )
         principal = server.create_principal_route(email=self._email("audit"), display_name="Audit")
@@ -228,6 +240,69 @@ class OidcAuthRouteTests(unittest.TestCase):
 
         self.assertIn("auth.oidc_login", actions)
         self.assertIn("auth.session_revoked", actions)
+
+
+class LegacyOidcCallbackDisabledTests(unittest.TestCase):
+    """P0.5：默认关闭的守卫本身。
+
+    刻意不搭 DB fixture —— 守卫必须在任何数据库查询之前触发，否则关闭只是
+    「查完库再拒绝」，仍然会泄露 provider/workspace 存在性。
+    """
+
+    def _call(self):
+        return server.complete_oidc_callback_route(
+            organization_id="org_missing",
+            provider_key="google",
+            subject="sub-x",
+            email="victim@example.com",
+            email_verified=True,
+            display_name="Victim",
+            workspace_id="ws_missing",
+            state="s",
+            expected_state="s",
+            nonce="n",
+            expected_nonce="n",
+        )
+
+    @contextlib.contextmanager
+    def _flag_unset(self):
+        """只摘掉这一个 key。
+
+        不用 ``patch.dict(..., clear=True)`` —— 那会连带清掉 PG/Redis/JWT 连接
+        环境变量，让「守卫先于任何 DB 查询」这一点失去可信的测试环境。
+        """
+        saved = os.environ.pop("AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK", None)
+        try:
+            yield
+        finally:
+            if saved is not None:
+                os.environ["AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK"] = saved
+            else:
+                os.environ.pop("AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK", None)
+
+    def test_callback_disabled_by_default(self):
+        with self._flag_unset():
+            with self.assertRaises(HTTPException) as ctx:
+                self._call()
+        self.assertEqual(ctx.exception.status_code, 501)
+
+    def test_falsy_env_values_keep_it_closed(self):
+        for raw in ("false", "0", "no", "off", ""):
+            with self.subTest(value=raw), mock.patch.dict(
+                os.environ, {"AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK": raw}
+            ):
+                with self.assertRaises(HTTPException) as ctx:
+                    self._call()
+                self.assertEqual(ctx.exception.status_code, 501)
+
+    def test_explicit_true_reopens_without_code_change(self):
+        # 回滚路径 = 设环境变量重启，零代码：开启后必须越过守卫、进到 provider 查询
+        with mock.patch.dict(
+            os.environ, {"AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK": "true"}
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                self._call()
+        self.assertEqual(ctx.exception.status_code, 404)
 
 
 if __name__ == "__main__":

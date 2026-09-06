@@ -4,7 +4,7 @@ import unittest
 
 from fastapi import HTTPException
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_access_control_tables
 
 ensure_repo_import_paths()
 
@@ -24,6 +24,8 @@ class OidcAuthDatabaseTests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        # 隔离（2026-09-05）：本文件用硬编码邮箱/组织 ID，而所有测试共享同一个 PG 库
+        reset_access_control_tables(self.db)
 
     def tearDown(self):
         if os.path.exists(self.db_path):
@@ -148,6 +150,8 @@ class OidcAccessControlTests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        # 隔离（2026-09-05）：本文件用硬编码邮箱/组织 ID，而所有测试共享同一个 PG 库
+        reset_access_control_tables(self.db)
         self.organization = self.db.upsert_organization(
             {
                 "organization_id": "org_acme",

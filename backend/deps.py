@@ -1,5 +1,5 @@
 """
-Dependency injection module for the AEMO Intelligence platform.
+Dependency injection module for the Tianshu platform.
 
 Provides singleton factory functions for shared infrastructure (database,
 cache, artifact lake, job orchestrator) and FastAPI Depends-compatible
@@ -129,6 +129,19 @@ def get_job_registry() -> JobRegistry:
     registry.register(
         "fingrid_daily_sync",
         lambda job, context: _server.run_fingrid_daily_sync(),
+    )
+
+    # R1.7 账户数据导出（自助行使数据权利）。必须在**这里**注册：``submit_as_job`` 走的
+    # 是本函数返回的 registry，漏注册的表现是作业永久停在 queued —— 用户点了「导出」，
+    # 页面一直转圈，而队列里躺着一行没人认领的任务。
+    # 惰性 import：routes → deps 已有依赖，顶层反向 import 会成环。
+    from services import data_rights as _data_rights
+
+    registry.register(
+        "account_data_export",
+        lambda job, context: _data_rights.run_export_job(
+            get_db(), export_id=job["payload_json"]["export_id"]
+        ),
     )
 
     return registry

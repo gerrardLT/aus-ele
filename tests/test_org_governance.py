@@ -335,6 +335,43 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
         self.assertEqual(membership["status"], "active")
         self.assertEqual(membership["role"], "org_member")
 
+    def test_accept_org_invite_can_set_password(self):
+        """R1.1 一致性：组织级邀请现在可选地带密码（与 workspace 级邀请同语义）。
+
+        锁两面：传了就真的落哈希（否则注册入口开放后「先被组织邀请、再来注册」的
+        用户会卡在「邮箱已被注册」且没有密码可用）；不传则行为照旧（既有调用方零影响）。
+        """
+        from access_control import _verify_password
+
+        accepted = accept_membership_invite(
+            self.db,
+            invite_token=self.pending_invite["invite_token"],
+            display_name="Invitee",
+            password="Maple-Drum-77!grid",
+        )
+        principal = self.db.fetch_principal(accepted["principal"]["principal_id"])
+        self.assertTrue(principal["password_hash"])
+        self.assertTrue(_verify_password("Maple-Drum-77!grid", principal))
+
+    def test_accept_org_invite_without_password_stays_passwordless_but_logs(self):
+        """默认路径必须保持「不设密码」——可选参数不能悄悄变成强制。"""
+        pending = create_membership_invite(
+            self.db,
+            actor=self.org_owner_actor,
+            organization_id=self.organization["organization_id"],
+            workspace_id=None,
+            target_scope_type="organization",
+            email=f"pwless-{self._s}@acme-{self._s}.com",
+            target_role="org_member",
+            expires_at="2027-05-10T00:00:00Z",
+        )
+        with self.assertLogs("access_control", level="WARNING") as captured:
+            accepted = accept_membership_invite(
+                self.db, invite_token=pending["invite_token"], display_name="NoPw")
+        principal = self.db.fetch_principal(accepted["principal"]["principal_id"])
+        self.assertIsNone(principal["password_hash"])
+        self.assertTrue(any("without a password" in line for line in captured.output))
+
     def test_accept_org_invite_rejects_expired_invite(self):
         expired_invite = create_membership_invite(
             self.db,
@@ -502,10 +539,12 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
     def test_domain_auto_join_org_creates_active_org_membership_without_workspace_membership(self):
         self.db.upsert_organization_domain(
             {
-                "domain_id": "dom_acme",
+                "domain_id": f"dom_acme_{self._s}",
                 "organization_id": self.organization["organization_id"],
                 "domain": f"acme-{self._s}.com",
-                "verified_at": None,
+                # P0.3（2026-09-05）：auto_join 要求域名已验证；验证流程本身在
+                # test_domain_trust_anchor.py 锁定，本文件只测成员资格语义。
+                "verified_at": "2026-04-28T00:00:00Z",
                 "join_mode": "domain_auto_join_org",
                 "created_at": "2026-04-28T00:00:00Z",
                 "updated_at": "2026-04-28T00:00:00Z",
@@ -528,10 +567,10 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
     def test_domain_join_reuses_existing_principal_when_password_matches(self):
         self.db.upsert_organization_domain(
             {
-                "domain_id": "dom_acme",
+                "domain_id": f"dom_acme_{self._s}",
                 "organization_id": self.organization["organization_id"],
                 "domain": f"acme-{self._s}.com",
-                "verified_at": None,
+                "verified_at": "2026-04-28T00:00:00Z",
                 "join_mode": "domain_auto_join_org",
                 "created_at": "2026-04-28T00:00:00Z",
                 "updated_at": "2026-04-28T00:00:00Z",
@@ -554,7 +593,7 @@ class OrganizationGovernanceAccessControlTests(unittest.TestCase):
     def test_domain_join_rejects_invite_only_policy(self):
         self.db.upsert_organization_domain(
             {
-                "domain_id": "dom_acme",
+                "domain_id": f"dom_acme_{self._s}",
                 "organization_id": self.organization["organization_id"],
                 "domain": f"acme-{self._s}.com",
                 "verified_at": None,

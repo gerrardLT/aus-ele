@@ -46,6 +46,7 @@ def _is_due(sub: dict, now: datetime.datetime) -> bool:
 
 
 def _compose_report_email(sub: dict, payload: dict) -> tuple[str, str]:
+    from brand import EMAIL_SUBJECT_PREFIX  # 函数内 import：本模块被多处惰性加载
     title = sub["title"]
     region = sub["region"]
     body_lines = [
@@ -56,7 +57,7 @@ def _compose_report_email(sub: dict, payload: dict) -> tuple[str, str]:
         "完整 JSON 载荷：",
         json.dumps(payload, ensure_ascii=False, indent=2)[:20000],
     ]
-    return f"[AEMO Intelligence] {title}（{region}）", "\n".join(body_lines)
+    return f"{EMAIL_SUBJECT_PREFIX} {title}（{region}）", "\n".join(body_lines)
 
 
 def dispatch_due_report_subscriptions(db, *, now: datetime.datetime | None = None) -> dict:

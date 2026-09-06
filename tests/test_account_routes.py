@@ -5,17 +5,17 @@
 测试直连开发库（随机后缀隔离 + tearDown 清理）。
 """
 
+import os
 import sys
-import types
 import unittest
 import uuid
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, offline_state_store, stub_optional_dep
 
 ensure_repo_import_paths()
 
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -563,6 +563,45 @@ class AccountRoutesTests(unittest.TestCase):
         self.assertEqual(r1.status_code, 200)
         self.assertEqual(r2.status_code, 200)
         self.assertEqual(r1.json(), r2.json())
+
+    def test_password_reset_request_link_is_absolute(self):
+        """既有 bug 回归锁：邮件里的相对 ``/reset?token=`` 在邮件客户端里点不开。"""
+        from unittest import mock
+
+        app = FastAPI()
+        app.include_router(account_routes.router)
+        client = TestClient(app)
+        captured = {}
+
+        def _capture(to, subject, body, **kwargs):
+            captured["body"] = body
+            return {"delivered": True, "degraded": False}
+
+        with mock.patch("services.email_sender.send_email", _capture), \
+                mock.patch.dict(os.environ, {"AUS_ELE_PUBLIC_BASE_URL": "https://app.example.test"}):
+            resp = client.post("/api/v1/account/password/reset-request",
+                               json={"email": self.owner["email"]})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIn("https://app.example.test/reset?token=", captured["body"])
+
+    def test_password_reset_request_is_rate_limited(self):
+        """R1 配套：注册入口一开，这个端点就是公开的「灌邮件 + 灌库表」开关。"""
+        from unittest import mock
+
+        from tests.support import offline_state_store
+
+        app = FastAPI()
+        app.include_router(account_routes.router)
+        client = TestClient(app)
+        ghost = f"ghost-{self._suffix}@nowhere.test"
+        store = offline_state_store()
+        with mock.patch("shared_state.get_state_store", lambda: store), \
+                mock.patch("services.email_sender.send_email",
+                           return_value={"delivered": True, "degraded": False}), \
+                mock.patch.dict(os.environ, {"AUS_ELE_RESET_REQ_EMAIL_LIMIT": "2"}):
+            codes = [client.post("/api/v1/account/password/reset-request",
+                                 json={"email": ghost}).status_code for _ in range(3)]
+        self.assertEqual(codes, [200, 200, 429])
 
     def test_legacy_admin_endpoints_require_bearer_over_http(self):
         """安全收紧：旧管理端点在 HTTP（带 request）调用时无令牌必须 401。"""

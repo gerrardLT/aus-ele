@@ -59,7 +59,14 @@ class RedisResponseCache:
         return f"{self.prefix}:{scope}:{cache_key}"
 
     def get_json(self, scope: str, cache_key: str):
-        client = self._get_client()
+        try:
+            client = self._get_client()
+        except Exception as exc:
+            # 构造客户端就能失败：redis.Redis.from_url 对畸形 URL 抛 ValueError，
+            # 而它抛在 _record_failure 之前 → 熔断器永不打开 → 每次读缓存都 500。
+            logger.warning("Redis client init failed for %s: %s", scope, exc)
+            self._record_failure()
+            return None
         if client is None:
             return None
 
@@ -72,7 +79,13 @@ class RedisResponseCache:
             return None
 
     def set_json(self, scope: str, cache_key: str, value, ttl_seconds: int):
-        client = self._get_client()
+        try:
+            client = self._get_client()
+        except Exception as exc:
+            # 同 get_json：把构造失败也计入熔断，而不是冒给调用方。
+            logger.warning("Redis client init failed for %s: %s", scope, exc)
+            self._record_failure()
+            return
         if client is None:
             return
 

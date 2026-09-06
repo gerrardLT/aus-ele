@@ -121,14 +121,17 @@ class FingridApiTests(unittest.TestCase):
             self.assertEqual(command[0], sys.executable)
             self.assertTrue(os.path.isabs(command[1]))
 
-        self.assertIn("--db", commands[0])
-        self.assertIn(server.DB_PATH, commands[0])
-        self.assertIn("--db", commands[1])
-        self.assertIn(server.DB_PATH, commands[1])
-        self.assertIn("--db-path", commands[2])
-        self.assertIn(server.DB_PATH, commands[2])
-        self.assertIn("--db", commands[3])
-        self.assertIn(server.DB_PATH, commands[3])
+        # PG 迁移后不再传 --db / --db-path：子进程靠 AUS_ELE_PG_* 环境变量连库，而 SQLite
+        # 时代的 ``server.DB_PATH`` 全局已随迁移删除。这里显式断言「没有 --db」，是为了让
+        # 「顺手加回去」这种回退在测试里当场失败，而不是悄悄把同步任务指回一个空库文件。
+        for command in commands:
+            self.assertNotIn("--db", command)
+            self.assertNotIn("--db-path", command)
+        self.assertIn("--start", commands[0])
+        self.assertIn("--end", commands[0])
+        self.assertIn("--days", commands[1])
+        self.assertIn("--fcas", commands[2])
+        self.assertIn("--days", commands[3])
 
     def test_database_system_lock_blocks_second_owner_until_release(self):
         self.assertTrue(self.db.acquire_system_lock("job:test", owner="one", ttl_seconds=60))

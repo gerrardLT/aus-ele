@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_job_tables
 
 ensure_repo_import_paths()
 
@@ -17,6 +17,7 @@ class JobFrameworkTests(unittest.TestCase):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        reset_job_tables(self.db)
         self.tmpdir = tempfile.TemporaryDirectory()
         self.lake = LocalArtifactLake(self.tmpdir.name)
 

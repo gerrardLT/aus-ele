@@ -1,7 +1,7 @@
 {
   "meta": {
     "schema_version": 1,
-    "updated_at": "2026-08-12",
+    "updated_at": "2026-09-06",
     "purpose": "统一参数与假设登记库（Assumptions Registry）：记录系统内所有影响分析结论的关键假设，支撑可审计性与快速调参。",
     "hard_rule": "参数变更必须同步更新本登记表并记录 modified_by / last_calibrated（AGENTS.md 硬性规则）",
     "status_legend": {
@@ -18,7 +18,9 @@
       "unit": "multiplier（乘在 FCAS 基线收入上）",
       "category": "revenue_model",
       "status": "wired",
-      "consumed_by": ["backend/agent/tools.py::_exec_investment_analysis"],
+      "consumed_by": [
+        "backend/agent/tools.py::_exec_investment_analysis"
+      ],
       "source": "2026-08-12 竞品调研：NEM BESS 收入中 FCAS 占比约 3%（同比 -43%），套利占约 97%",
       "rationale": "FCAS 供需比恶化（10/10 服务 collapsed），不再隐含全额计入 FCAS 基线",
       "boundary": "仅作用于 Agent 投资工具的 FCAS 基线下调；输出随 fcas_compression_factor 字段暴露",
@@ -57,7 +59,9 @@
       "unit": "ratio / AUD/MW/年 / 次",
       "category": "risk_model",
       "status": "audit_only",
-      "consumed_by": ["backend/engines/merchant_risk_engine.py"],
+      "consumed_by": [
+        "backend/engines/merchant_risk_engine.py"
+      ],
       "source": "约 $1.5M/MW capex、70% 债务、20 年期、~6% 利率的偿债近似",
       "boundary": "银行性分析（DSCR/LLCR 覆盖）的默认偿债线",
       "last_calibrated": "2026-08-12",
@@ -70,7 +74,9 @@
       "unit": "AUD/MW/年",
       "category": "revenue_model",
       "status": "audit_only",
-      "consumed_by": ["backend/engines/cannibalization_engine.py"],
+      "consumed_by": [
+        "backend/engines/cannibalization_engine.py"
+      ],
       "source": "AEMO 报告的历史 BESS 收入数据（建库时点）",
       "boundary": "收入稀释预测的起点基线；2026 年实际收入已远低于该基线，解释预测结果时需注意",
       "last_calibrated": "2026-08-12",
@@ -89,7 +95,9 @@
       "unit": "次/年 / ratio / 比例 / 小时 / 概率",
       "category": "revenue_model",
       "status": "audit_only",
-      "consumed_by": ["backend/agent/tools.py::_exec_investment_analysis"],
+      "consumed_by": [
+        "backend/agent/tools.py::_exec_investment_analysis"
+      ],
       "source": "简化窗口估算的工程近似（非回测）",
       "boundary": "方向参考级；正式投资分析走 /api/investment 主管线",
       "last_calibrated": "2026-08-12",
@@ -101,7 +109,10 @@
       "location": "data/regional_fee_defaults.json",
       "category": "cost_model",
       "status": "pointer",
-      "consumed_by": ["backend/network_fees.py", "backend/routes/revenue_routes.py"],
+      "consumed_by": [
+        "backend/network_fees.py",
+        "backend/routes/revenue_routes.py"
+      ],
       "source": "区域费默认配置（启动时加载，6 区域）",
       "last_calibrated": "2026-08-12",
       "modified_by": "agent-team"
@@ -121,6 +132,402 @@
       "boundary": "CIS 值为示例待替换；BRCP 为官方定价但实际可得需折减容量信用与盈余；输出一律带 caveat",
       "last_calibrated": "2026-08-13",
       "modified_by": "agent-team"
+    },
+    {
+      "id": "pbkdf2_iterations",
+      "name": "口令哈希 PBKDF2-SHA256 迭代次数",
+      "location": "backend/access_control.py (_hash_password / _pbkdf2_iterations)",
+      "category": "auth_security",
+      "status": "wired",
+      "value": 600000,
+      "previous_value": 120000,
+      "consumed_by": [
+        "backend/access_control.py:_hash_password",
+        "backend/access_control.py:login_with_password（透明重哈希判定）"
+      ],
+      "source": "2026-09-05 公测产品化规划 P0.6：原 120k 在 2026 年低于 OWASP 对 PBKDF2-HMAC-SHA256 的建议下限（600k）。环境变量 AUS_ELE_PBKDF2_ITERATIONS 可覆盖。不换算法（避免全库重哈希与登录风暴），登录成功后按 principal_identity.pw_iters < 当前 透明重哈希。",
+      "boundary": "仅影响新写入/重哈希的口令；存量 120k 哈希仍可验证（按行内 pw_iters 分派）。透明度量：单次登录 CPU 开销从约 40ms 升至约 200ms，需与 Redis 化限流一并评估。",
+      "last_calibrated": "2026-09-05",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "bootstrap_target_role",
+      "name": "匿名 web-session bootstrap 的 workspace 角色",
+      "location": "backend/routes/auth_routes.py (_BOOTSTRAP_ROLE / env AUS_ELE_BOOTSTRAP_ROLE)",
+      "category": "auth_security",
+      "status": "wired",
+      "value": "viewer",
+      "previous_value": "owner",
+      "consumed_by": [
+        "backend/routes/auth_routes.py:_ensure_bootstrap_identity",
+        "backend/routes/account_routes.py（写端点匿名守卫）"
+      ],
+      "source": "2026-09-05 规划 P0.1/P0.2：原实现把 pr_websession 授成 ws_default 的 owner，而同源 Origin 门控使任意浏览器同源请求即可取得该身份 → 匿名可越权改套餐/建邀请/重置他人密码。降为 viewer，写端点另有 principal 级守卫。",
+      "boundary": "必须配一次性降权 UPDATE（upsert 幂等会把既有部署的 owner 行固化）；回滚 = 设 AUS_ELE_BOOTSTRAP_ROLE=owner 重启，零代码。匿名 agent 对话与图表读取体验不得受影响（验收项）。",
+      "last_calibrated": "2026-09-05",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "domain_verification_required_for_auto_join",
+      "name": "组织域名作为授权信任锚的验证要求",
+      "location": "backend/database.py:organization_domain(+verified,+verification_token)",
+      "category": "auth_security",
+      "status": "wired",
+      "value": {
+        "verified_required_for": [
+          "domain_auto_join_org",
+          "oidc_auto_join",
+          "oauth_auto_join"
+        ],
+        "methods": [
+          "dns_txt",
+          "postmaster_email"
+        ],
+        "public_domain_blacklist": [
+          "gmail.com",
+          "outlook.com",
+          "hotmail.com",
+          "live.com",
+          "yahoo.com",
+          "icloud.com",
+          "qq.com",
+          "163.com",
+          "126.com",
+          "foxmail.com",
+          "proton.me",
+          "protonmail.com"
+        ]
+      },
+      "consumed_by": [
+        "backend/access_control.py:ensure_organization_membership_from_domain_policy",
+        "backend/access_control.py:join_organization_by_domain",
+        "backend/server.py:organization domain 管理端点"
+      ],
+      "source": "2026-09-05 规划 P0.3（设计级缺陷修复）：此前任意 org_owner 可登记任意域名且无所有权验证，而 join_mode=domain_auto_join_org 直接授予活跃成员资格 → 登记 gmail.com 即构成对任意 Gmail 用户的入组织路径。开放自助注册会把该缺陷激活为活攻击路径，故为注册硬前置。",
+      "boundary": "存量 94 行 organization_domain 无 verified 列 → 迁移后一律视为未验证（默认 false），需 owner 重新验证才能继续用于 auto_join；公共邮箱域名禁止登记。",
+      "last_calibrated": "2026-09-05",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "smtp_missing_auto_verify",
+      "name": "SMTP 未配置时的邮箱验证降级策略",
+      "location": "env AUS_ELE_AUTO_VERIFY_WHEN_NO_SMTP",
+      "category": "auth_onboarding",
+      "status": "wired",
+      "value": true,
+      "consumed_by": [
+        "backend/routes/registration_routes.py",
+        "backend/services/email_verification.py",
+        "backend/services/email_sender.py（delivered/degraded 返回值判定）"
+      ],
+      "source": "2026-09-05 规划 R1.1：email_sender.py:47-48 在 HOST 或 FROM 缺失时返回 delivered=False, degraded=True 且 best-effort 静默不抛。若不降级，SMTP 未配会锁死所有新注册用户。dev 默认 true，生产 compose 显式 false。2026-09-06 实施补记：判定收口在 email_verification._send_with_guard（强制读 degraded，不看异常），两个分支都 logger.warning；回归锁 tests/test_registration_routes.py::test_smtp_missing_*。",
+      "boundary": "仅当「发送邮件」这一步确实降级（degraded=true）才自动置验证；发送失败（degraded=false 且 delivered=false）不得放行 —— 后者会把已登记的挑战一起作废，不留无人可取的有效凭据。必须检查返回值 degraded 字段并记日志。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "email_link_base_url",
+      "name": "邮件内链接的绝对 URL 前缀",
+      "location": "env AUS_ELE_PUBLIC_BASE_URL",
+      "category": "auth_onboarding",
+      "status": "wired",
+      "value": "http://localhost:5173",
+      "consumed_by": [
+        "backend/services/email_verification.py",
+        "backend/routes/account_routes.py:密码重置链接",
+        "backend/routes/registration_routes.py"
+      ],
+      "source": "2026-09-05 规划 R1.1：account_routes.py:186 既有 reset_url 是相对路径 /reset?token=…，在邮件客户端里点不开（已核实为既有 bug）。所有邮件链接统一用该前缀拼绝对 URL，不复制相对路径模式。2026-09-06 实施补记：密码重置链接已改为复用同一 public_base_url()（不再新增第二份前缀解析），回归锁在 tests/test_account_routes.py::test_password_reset_request_link_is_absolute。",
+      "boundary": "生产必须显式配置为对外域名，否则邮件链接指向 localhost。缺省值是开发地址，属于「本地能跑、线上全错」的配置，部署清单必须核对。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "registration_password_policy",
+      "name": "注册侧密码策略（长度上界/下界与弱密判定）",
+      "location": "backend/services/password_policy.py (+ env AUS_ELE_PASSWORD_MIN_LENGTH / _MAX_LENGTH)",
+      "category": "auth_security",
+      "status": "wired",
+      "value": {
+        "min_length": 12,
+        "max_length": 256,
+        "min_character_classes": 2,
+        "user_token_match_min_fragment": 4,
+        "stem_weakness_max_length": 16,
+        "common_passwords": 48,
+        "common_word_stems": 28
+      },
+      "consumed_by": [
+        "backend/services/password_policy.py:assert_registration_password",
+        "backend/routes/registration_routes.py:create_account"
+      ],
+      "source": "2026-09-06 实施 R1.1：只作用于注册端点。既有三条设密入口（邀请接受/自助改密/重置确认）的 pydantic 仍是 min_length=8 且有测试锁文案 —— 一起抬高会在同一 commit 同时动代码与既有测试，破坏归因；注册是新增账户的唯一入口，把住源头即阻止弱密码继续流入。max_length 不是排版考虑：PBKDF2 代价与长度线性相关，不设上限等于允许别人免费放大 600k 迭代的哈希成本。词干表（COMMON_WORD_STEMS）是必要的：只做整串小写比对时 \"Password123!\" 这类人类最常见变体全部放行，名单的实际保护力接近零。",
+      "boundary": "刻意保留的不一致：注册 12 位 / 既有三条入口 8 位，收敛它们需要与既有测试同 commit 原子改。env 下界钳在模块默认（floor=DEFAULT_MIN_LENGTH）—— 安全参数的危险配错方向是「配小」，写成 1 等于关掉开关还留了个看起来在生效的假象。不引入 zxcvbn：公测期不加新依赖，判定是保守下界（只拒明显弱的）。存量弱密码由 P0.6 哈希升级 + 后续引导覆盖。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "email_verification_token_ttl",
+      "name": "邮箱验证链接有效期与一次性语义",
+      "location": "backend/services/email_verification.py (+ env AUS_ELE_EMAIL_VERIFY_TTL_SECONDS)",
+      "category": "auth_onboarding",
+      "status": "wired",
+      "value": {
+        "ttl_seconds": 86400,
+        "token_bytes": 32,
+        "stored_as": "sha256_hex",
+        "single_use": true,
+        "resend_invalidates_previous": true,
+        "bound_to_email_at_request": true
+      },
+      "consumed_by": [
+        "backend/services/email_verification.py:request_verification",
+        "backend/services/email_verification.py:complete_verification",
+        "backend/database.py:insert_email_verification",
+        "backend/routes/registration_routes.py:verify_email"
+      ],
+      "source": "2026-09-06 实施 R1.1：与 password_reset 同族（一次性 token 存 SHA-256 摘要）。重发作废旧挑战的理由：用户点重发通常正因为收不到上一封，旧链接可能已落在共享设备/转发记录里，留着它等于让已被放弃的凭据继续有效。",
+      "boundary": "token 绝不出现在 API 响应或日志（同 P0.3 对域名验证 token 的处置）。所有失败结局（无效/已用/过期/邮箱已变更）返回同一句话，不做区分，否则变成 token 存在性探针。脏 expires_at 按不可用处理（fail-closed）。/verify 不设限流：32 字节 urlsafe + 比对摘要 + 24h TTL 使爆破不可行，而真实威胁（拿到他人邮件链接）限流也拦不住。env 下界 300 秒：配成 0/负数会让每封验证邮件在发出瞬间就过期，表现为「用户点链接永远失败」这种极难归因的故障。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "self_service_registration_gate",
+      "name": "自助注册总开关与未验证状态的软限制",
+      "location": "env AUS_ELE_ENABLE_SELF_SERVICE_REGISTER (backend/routes/registration_routes.py)",
+      "category": "auth_onboarding",
+      "status": "wired",
+      "value": true,
+      "consumed_by": [
+        "backend/routes/registration_routes.py:_assert_registration_open",
+        "backend/routes/registration_routes.py:create_account",
+        "backend/routes/registration_routes.py:resend_verification"
+      ],
+      "source": "2026-09-06 实施 R1.1。计划唯一强顺序约束是「P0 未全部发布不得开放自助注册」，默认 true 的前提是 P0.1~P0.7 已全部落地；这个 env 是出事时的 C 类回滚（零代码、重启生效）。",
+      "boundary": "关闭时注册与重发一律 403，但 /verify 保持可用 —— 否则已发出的邮件链接全部作废，把回滚变成对存量用户的伤害。未验证是**软限制**：注册当场签发与普通登录同形的会话，约束只落在新端点与前端 banner；刻意不改 authenticate_access_token，否则 SMTP 故障会被放大成全平台不可登录。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "rate_limit_state_backend",
+      "name": "登录/签发/邀请限流与 in-flight 去重的状态存储",
+      "location": "backend/shared_state.py (Redis 优先 + 有界进程内回落)",
+      "category": "scalability",
+      "status": "wired",
+      "value": {
+        "redis_key_prefix": "aemo_state",
+        "login_max_attempts_per_window": 5,
+        "window_seconds": 60,
+        "invite_accept_max_attempts_per_window": 10,
+        "invite_accept_window_seconds": 600,
+        "inflight_claim_ttl_seconds": 120,
+        "inflight_wait_timeout_seconds": 60,
+        "register_ip_max_attempts_per_window": 10,
+        "register_ip_window_seconds": 3600,
+        "resend_verify_email_max_attempts_per_window": 3,
+        "resend_verify_email_window_seconds": 900,
+        "resend_verify_ip_max_attempts_per_window": 20,
+        "reset_request_ip_max_attempts_per_window": 20,
+        "reset_request_email_max_attempts_per_window": 5,
+        "fallback": "in_process",
+        "fallback_max_keys": 4096,
+        "circuit_breaker_cooldown_seconds": 60
+      },
+      "consumed_by": [
+        "backend/access_control.py:_check_login_rate_limit",
+        "backend/routes/auth_routes.py:_check_bootstrap_rate_limit",
+        "backend/routes/account_routes.py:check_invite_accept_rate_limit",
+        "backend/routes/account_routes.py:_enforce_reset_request_limits",
+        "backend/routes/registration_routes.py:_enforce_rate_limit",
+        "backend/routes/investment_routes.py:_acquire_inflight_entry",
+        "backend/routes/coopt_routes.py:_COOPT_CACHE_SCOPE",
+        "backend/routes/account_routes.py:_today_usage",
+        "backend/services/pipeline_knowledge.py:_load_capacity_data"
+      ],
+      "source": "2026-09-05 规划 P0.7：6 处进程内内存态在 GUNICORN_WORKERS>1 时按 worker 数线性放大（限流被绕过 N 倍、去重失效、配额视图分裂）。开放自助注册的容量前提。Redis 容错复用 response_cache.py 已有 circuit breaker，不新造机制。2026-09-06 实施补记：in-flight 的「结果」仍走共享 analysis_cache 表，Redis 只承担认领信号 —— 避免把大 payload 复制进状态命名空间。",
+      "boundary": "Redis 不可用时回落进程内并记 degraded（不阻断请求、也不放行）。回落是「打折」不是「失效」：每台仍各自限额，但跨机合计按 worker 数放大。X-Real-IP 优先、刻意不用 XFF 首段的实践（CWE-348）必须保留。inflight_claim_ttl 必须大于单次分析正常耗时，否则属主还在算认领先过期、去重失效。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "state_cache_ttl_policy",
+      "name": "外置状态缓存的 TTL 上限（陈旧度预算）",
+      "location": "backend/shared_state.py + 三个调用点 scope",
+      "category": "scalability",
+      "status": "wired",
+      "value": {
+        "coopt_result_ttl_seconds": 900,
+        "capacity_knowledge_ttl_seconds": 300,
+        "capacity_negative_ttl_seconds": 30,
+        "quota_usage_ttl_seconds": 60
+      },
+      "consumed_by": [
+        "AUS_ELE_COOPT_CACHE_TTL_SECONDS",
+        "AUS_ELE_CAPACITY_CACHE_TTL_SECONDS",
+        "AUS_ELE_QUOTA_CACHE_TTL_SECONDS"
+      ],
+      "source": "2026-09-05 规划 P0.7：_COOPT_CACHE 原为 max 50 且**无 TTL**、pipeline_knowledge 的模块级 _cache **永不失效**（改 JSON 必须重启）。TTL 是「运维改了数据后最坏多久生效」的上限，不是性能参数：MILP 结果 15min、容量假设 5min、用量计数 60s。负缓存 30s 只为抑制重复磁盘读，不能更长（否则补上 JSON 后仍长时间报缺失）。",
+      "boundary": "quota 缓存值内嵌 day 标记：TTL 跨过 UTC 零点时读侧按 day 不匹配直接重算，不得只依赖 TTL。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "legacy_oidc_callback_disabled",
+      "name": "既有 OIDC callback 默认关闭开关",
+      "location": "backend/server.py:_legacy_oidc_callback_enabled",
+      "category": "auth_onboarding",
+      "status": "wired",
+      "value": false,
+      "consumed_by": [
+        "AUS_ELE_ENABLE_LEGACY_OIDC_CALLBACK"
+      ],
+      "source": "2026-09-05 规划 P0.5：该端点的 subject/email/email_verified/state/nonce 全部来自客户端 query，state/nonce 两侧都由客户端提供（自证式），且无 code exchange、无 JWKS 验签 → 不存在任何能通过它的真实 IdP。关闭零合法功能损失，回滚 = 设环境变量为 true 重启（零代码）。守卫置于任何 DB 查询之前，否则关闭仍会泄露 provider/workspace 存在性。",
+      "boundary": "空串 FLAG= 必须等同未设（回落 default=False）：docker-compose 里「声明但留空」若被当作真值，会打开每一个 default=False 的安全开关（含 CORS credentials）。已在 server.py 与 app.py 的 _env_flag 同步修复。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "analytics_self_hosted_minimal",
+      "name": "反馈埋点方案（自建极简，不引入 PostHog）",
+      "location": "backend/routes/analytics_routes.py + web/src/lib/analytics.js",
+      "category": "product_feedback",
+      "status": "wired",
+      "value": {
+        "provider": "self_hosted_minimal",
+        "retention_days": 365,
+        "session_replay": false,
+        "event_ingest_batch_limit": 20
+      },
+      "consumed_by": [
+        "web/src/lib/analytics.js",
+        "backend/routes/analytics_routes.py",
+        "backend/routes/console_routes.py（激活指标）"
+      ],
+      "source": "2026-09-05 用户决策：不引入 PostHog。决定性理由是生产 mem_limit 合计仅约 4.5-4.7GB，PostHog 完整栈需 ≥4GB → 同机必然 OOM；且往主 compose 加 5 个服务会让 deploy.sh 的 120s 四服务 running 验证失败并触发 rollback 门控。Cloud 方案另有数据出境与 DPA 负担。",
+      "boundary": "不做会话回放（平台展示投资决策数据，泄露项目名/财务数字的代价高于回放价值）。埋点不落 PII 原文，email 只落哈希。原规划的 PostHog 独立 compose 迁移路径保留在 docs/deployment/ 以备未来切换。",
+      "last_calibrated": "2026-09-05",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "entry_bundle_budget_headroom",
+      "name": "入口 chunk 体积预算与实测余量",
+      "location": "web/scripts/check_bundle_budget.mjs",
+      "category": "frontend_performance",
+      "status": "audit_only",
+      "value": {
+        "entry_raw_budget_kb": 850,
+        "entry_raw_measured_kb": 790.0,
+        "measured_at": "2026-09-05",
+        "gate_is_blocking_in_ci": false
+      },
+      "consumed_by": [
+        "web/scripts/check_bundle_budget.mjs",
+        ".github/workflows/ci.yml（bundle budget step）"
+      ],
+      "source": "2026-09-05 R0 基线实测：npm run build 入口 7 个 chunk raw 790.0KB，PASS。预算口径为 raw 而非 gzip。ci.yml:119 该步骤为 `|| echo` 非阻断（唯一硬阻断门是 node --test src/lib/*.test.js）。",
+      "boundary": "虽非阻断门，但脚本注释写明「稳定后移除 || echo 转强制」→ 仍须守住 850KB，新依赖（⌘K/图表壳/埋点 SDK）必须动态 import。",
+      "last_calibrated": "2026-09-05",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "entry_account_deletion_grace_days",
+      "name": "账户删除宽限期（30 天）",
+      "location": "backend/services/data_rights.py:DEFAULT_GRACE_DAYS",
+      "category": "product_policy",
+      "status": "audit_only",
+      "value": {
+        "grace_days": 30,
+        "revocable_within_grace": true,
+        "sessions_revoked_on_request": true,
+        "relogin_allowed_within_grace": true
+      },
+      "consumed_by": [
+        "backend/services/data_rights.py:request_account_deletion",
+        "web/src/lib/dataRights.js:dataRightsStatement（隐私页第 5 条法律陈述）",
+        "web/src/components/account/DataPrivacyPanel.jsx（提交前说明 + 二次确认勾选）"
+      ],
+      "source": "2026-09-06 R1.7 实施。三处面向用户的「30 天」全部是抄自该常量的字面量，由 web/src/lib/dataRightsApi.test.js 的『every user-facing grace period matches the number the backend schedules』拿后端源码正则比对钉住；改常量不改进文案会直接变红。",
+      "boundary": "宽限期 <1 天在后端被 ValueError 拒绝：一次网络抖动就能让『可撤销』变成纸面承诺。物理删除由 app.py:run_account_deletion_sweep 每小时执行，实际擦除可滞后排期时刻≤1 小时。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "entry_account_deletion_sweep_schedule",
+      "name": "删除排期周期任务的频率与去重口径",
+      "location": "backend/app.py:run_account_deletion_sweep",
+      "category": "operations",
+      "status": "wired",
+      "value": {
+        "cron": "hourly at :15",
+        "env_flag": "AUS_ELE_ENABLE_ACCOUNT_DELETION_SWEEP(default true)",
+        "env_minute": "AUS_ELE_ACCOUNT_DELETION_SWEEP_MINUTE(default 15)",
+        "dedup": "shared_state claim: scope=scheduler, key=account-deletion-sweep:<YYYY-MM-DDTHH>, ttl=3700s",
+        "prod_scheduler_host": "worker 容器（backend 容器 AUS_ELE_ENABLE_SCHEDULER=false）"
+      },
+      "consumed_by": [
+        "backend/app.py:lifespan",
+        ".env.docker.example"
+      ],
+      "source": "2026-09-06 R1.7 实施。生产为 gunicorn app:app --workers N 且 worker 容器同样跑该 CMD，每个进程都有独立 AsyncIOScheduler，故必须跨进程认领去重；沿用 P0.7 的 acquire_claim。锁成功不释放（该小时已完成），仅整体抛错时释放以便同小时补做。",
+      "boundary": "全系统唯一物理删除数据的周期任务，因此刻意不复用 AUS_ELE_ENABLE_SCHEDULER。server.py 里另有一套 legacy scheduler 分支，部署不走它（Dockerfile CMD=app:app）；若将来改回 server:app，此任务必须同步注册，否则删除排期无人执行。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "entry_data_rights_export_scope",
+      "name": "账户导出/清除的表白名单与凭据剔除列",
+      "location": "backend/services/data_rights.py:EXPORT_SCOPE / PURGE_TARGETS / CREDENTIAL_COLUMNS",
+      "category": "security_compliance",
+      "status": "wired",
+      "value": {
+        "export_tables": 17,
+        "purge_derived_from_export": true,
+        "redacted_columns": [
+          "session_token",
+          "token",
+          "token_hash",
+          "invite_token",
+          "api_key",
+          "verification_token",
+          "password_hash",
+          "password_salt",
+          "pw_iters"
+        ],
+        "unknown_table_policy": "default deny"
+      },
+      "consumed_by": [
+        "backend/services/data_rights.py:fetch_account_rows",
+        "backend/services/data_rights.py:purge_account",
+        "tests/test_data_rights_routes.py",
+        "web/src/lib/dataRightsApi.test.js（CREDENTIAL_COLUMNS 源码断言）"
+      ],
+      "source": "2026-09-06 R1.7 实施。库里 7 类列直接是活凭据或可离线爆破的一次性令牌哈希，因此导出为白名单而非 SELECT *；PURGE_TARGETS 由 EXPORT_SCOPE 派生，保证『能导出的』与『会被删掉的』是同一集合。测试断言真实凭据**值**不出现在产物里（字段名可改，值改不了）。",
+      "boundary": "新增带 principal 归属列的表若未进 EXPORT_SCOPE，tests/test_data_rights_routes.py::test_export_scope_covers_every_principal_bearing_table 变红。已知例外：feedback 以 email 归属，无 principal_id。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "entry_frontend_flag_data_rights_ui",
+      "name": "R1.7 自助数据权利入口的 feature flag 与部署顺序",
+      "location": "web/src/lib/dataRights.js:isDataRightsEnabled",
+      "category": "rollout_control",
+      "status": "wired",
+      "value": {
+        "flag_env": "VITE_DATA_RIGHTS_UI",
+        "enabled_only_when": "literal 'true'",
+        "default": "off",
+        "legal_page_probes_endpoint": false,
+        "panel_probes_endpoint": true
+      },
+      "consumed_by": [
+        "web/src/pages/LegalPage.jsx（隐私页第 5 条）",
+        "web/src/pages/AccountPage.jsx（tab）",
+        "web/src/components/account/DataPrivacyPanel.jsx"
+      ],
+      "source": "2026-09-06 R1.7 实施。只认字面量 'true'：拼错配置应退到『未上线』那一侧。账户面板额外按端点探测结果自行收起（404/405 → 隐藏），因为 ROUTE_MODULES 单模块 import 失败不阻断其余模块（Spec §234 点名的静默不上线风险）。",
+      "boundary": "法律页不做探测，所以 flag 翻 true 必须晚于后端路由上线，否则隐私政策成为不实陈述（Spec §232 的顺序约束）。这是运维顺序责任，不是代码能保证的。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
     }
   ]
 }

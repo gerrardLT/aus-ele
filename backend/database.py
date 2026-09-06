@@ -256,6 +256,8 @@ class DatabaseManager:
     MEMBERSHIP_INVITE_TABLE = "membership_invite"
     WORKSPACE_SUBSCRIPTION_TABLE = "workspace_subscription"
     PASSWORD_RESET_TABLE = "password_reset"
+    # R1.1 自助注册（2026-09-06）：邮箱验证挑战，与 password_reset 同族（一次性 token 存哈希）
+    EMAIL_VERIFICATION_TABLE = "email_verification"
     # P2 留存增值（2026-08-14）
     NOTIFICATION_TABLE = "notification"
     SAVED_REPORT_TABLE = "saved_report"
@@ -925,6 +927,16 @@ class DatabaseManager:
             cursor.execute(f"ALTER TABLE {self.PRINCIPAL_TABLE} ADD COLUMN password_hash TEXT")
         if "password_salt" not in principal_columns:
             cursor.execute(f"ALTER TABLE {self.PRINCIPAL_TABLE} ADD COLUMN password_salt TEXT")
+        # P0.6（2026-09-05）：PBKDF2 迭代数从 120k 提到 600k，但存量哈希仍是 120k 算出来的。
+        # 没有这一列就无法区分「新密码」与「待升级的旧密码」，只能全库重哈希（而无明文
+        # 密码可重算）。NULL = 迁移前的 120k 基线，登录成功后透明重哈希。
+        if "pw_iters" not in principal_columns:
+            cursor.execute(f"ALTER TABLE {self.PRINCIPAL_TABLE} ADD COLUMN pw_iters INTEGER")
+        # R1.1 自助注册（2026-09-06）：邮箱验证状态放在 principal 行上，而不是复用
+        # user_preference —— 鉴权侧与新端点要高频读它，跨表读会把「取 principal」
+        # 这一条最热路径变成两次查询。NULL = 从未验证（含本列之前注册的全部存量账户）。
+        if "email_verified_at" not in principal_columns:
+            cursor.execute(f"ALTER TABLE {self.PRINCIPAL_TABLE} ADD COLUMN email_verified_at TEXT")
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.AUTH_IDENTITY_TABLE} (
                 auth_identity_id TEXT PRIMARY KEY,
@@ -1056,6 +1068,19 @@ class DatabaseManager:
                 FOREIGN KEY(organization_id) REFERENCES {self.ORGANIZATION_TABLE}(organization_id)
             )
         """)
+        # 域名信任锚（P0.3，2026-09-05）：登记不等于授权，验证状态需要可持久化的
+        # 一次性挑战凭据。verified_at 早已存在但从未被任何代码读取，本轮起它成为
+        # 「是否已验证」的唯一事实来源（verified 为派生只读字段，不另设布尔列）。
+        domain_columns = self._get_column_names(cursor, self.ORGANIZATION_DOMAIN_TABLE)
+        if "verification_token" not in domain_columns:
+            cursor.execute(
+                f"ALTER TABLE {self.ORGANIZATION_DOMAIN_TABLE} ADD COLUMN verification_token TEXT"
+            )
+        if "verification_requested_at" not in domain_columns:
+            cursor.execute(
+                f"ALTER TABLE {self.ORGANIZATION_DOMAIN_TABLE} "
+                "ADD COLUMN verification_requested_at TEXT"
+            )
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.MEMBERSHIP_INVITE_TABLE} (
                 invite_id TEXT PRIMARY KEY,
@@ -3341,18 +3366,24 @@ class DatabaseManager:
     def upsert_principal(self, record: dict) -> dict:
         with self.get_connection() as conn:
             self.ensure_access_control_tables(conn)
+            # email_verified_at 用 COALESCE 而不是直接赋值：调用方分两类 —— 传「读后改」
+            # 的完整 principal（带该列），和 seed_principal 这类不带该列的构造。若直接
+            # 赋值，后者会把已验证账户悄悄打回未验证（验证状态倒退 = 权限/提示错乱）。
+            # 该列的语义因此是单调的：只有 mark_principal_email_verified 能写入。
             conn.execute(
                 f"""
                 INSERT INTO {self.PRINCIPAL_TABLE} (
-                    principal_id, email, display_name, password_hash, password_salt, created_at, updated_at
+                    principal_id, email, display_name, password_hash, password_salt, pw_iters, created_at, updated_at, email_verified_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(principal_id) DO UPDATE SET
                     email=excluded.email,
                     display_name=excluded.display_name,
                     password_hash=excluded.password_hash,
                     password_salt=excluded.password_salt,
-                    updated_at=excluded.updated_at
+                    pw_iters=excluded.pw_iters,
+                    updated_at=excluded.updated_at,
+                    email_verified_at=COALESCE(excluded.email_verified_at, {self.PRINCIPAL_TABLE}.email_verified_at)
                 """,
                 (
                     record["principal_id"],
@@ -3360,8 +3391,10 @@ class DatabaseManager:
                     record["display_name"],
                     record.get("password_hash"),
                     record.get("password_salt"),
+                    record.get("pw_iters"),
                     record["created_at"],
                     record["updated_at"],
+                    record.get("email_verified_at"),
                 ),
             )
             conn.commit()
@@ -3373,7 +3406,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 f"""
-                SELECT principal_id, email, display_name, password_hash, password_salt, created_at, updated_at
+                SELECT principal_id, email, display_name, password_hash, password_salt, pw_iters, created_at, updated_at, email_verified_at
                 FROM {self.PRINCIPAL_TABLE}
                 WHERE principal_id = ?
                 """,
@@ -3388,8 +3421,10 @@ class DatabaseManager:
             "display_name": row[2],
             "password_hash": row[3],
             "password_salt": row[4],
-            "created_at": row[5],
-            "updated_at": row[6],
+            "pw_iters": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+            "email_verified_at": row[8],
         }
 
     def fetch_principal_by_email(self, email: str) -> dict | None:
@@ -3398,7 +3433,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 f"""
-                SELECT principal_id, email, display_name, password_hash, password_salt, created_at, updated_at
+                SELECT principal_id, email, display_name, password_hash, password_salt, pw_iters, created_at, updated_at, email_verified_at
                 FROM {self.PRINCIPAL_TABLE}
                 WHERE email = ?
                 """,
@@ -3413,8 +3448,10 @@ class DatabaseManager:
             "display_name": row[2],
             "password_hash": row[3],
             "password_salt": row[4],
-            "created_at": row[5],
-            "updated_at": row[6],
+            "pw_iters": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+            "email_verified_at": row[8],
         }
 
     def upsert_auth_identity(self, record: dict) -> dict:
@@ -4224,6 +4261,120 @@ class DatabaseManager:
             )
             conn.commit()
 
+    # ------------------------------------------------------------------
+    # 邮箱验证挑战（R1.1 自助注册，2026-09-06）
+    # ------------------------------------------------------------------
+
+    def ensure_email_verification_table(self, conn) -> None:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.EMAIL_VERIFICATION_TABLE} (
+                verification_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                email TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                requested_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT
+            )
+        """)
+        conn.commit()
+
+    def insert_email_verification(self, record: dict) -> dict:
+        """登记一次邮箱验证挑战，并作废该 principal 所有未消费的旧挑战。
+
+        为什么必须作废旧的：用户点「重发验证邮件」通常正因为收不到上一封（旧链接
+        可能已泄露在共享设备/转发记录里）。留着它等于让一个已被放弃的凭据继续有效。
+        ``used_at`` 在这里充当「已消费」的通用位（成功验证与主动作废共用）。
+        """
+        with self.get_connection() as conn:
+            self.ensure_email_verification_table(conn)
+            conn.execute(
+                f"UPDATE {self.EMAIL_VERIFICATION_TABLE} SET used_at = ? "
+                "WHERE principal_id = ? AND used_at IS NULL",
+                (record["requested_at"], record["principal_id"]),
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {self.EMAIL_VERIFICATION_TABLE} (
+                    verification_id, principal_id, email, token_hash, requested_at, expires_at, used_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["verification_id"],
+                    record["principal_id"],
+                    record["email"],
+                    record["token_hash"],
+                    record["requested_at"],
+                    record["expires_at"],
+                    record.get("used_at"),
+                ),
+            )
+            conn.commit()
+        return self.fetch_email_verification(record["verification_id"])
+
+    def fetch_email_verification(self, verification_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_email_verification_table(conn)
+            row = conn.execute(
+                f"""
+                SELECT verification_id, principal_id, email, token_hash, requested_at, expires_at, used_at
+                FROM {self.EMAIL_VERIFICATION_TABLE} WHERE verification_id = ?
+                """,
+                (verification_id,),
+            ).fetchone()
+        return self._email_verification_from_row(row)
+
+    def fetch_email_verification_by_token_hash(self, token_hash: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_email_verification_table(conn)
+            row = conn.execute(
+                f"""
+                SELECT verification_id, principal_id, email, token_hash, requested_at, expires_at, used_at
+                FROM {self.EMAIL_VERIFICATION_TABLE} WHERE token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+        return self._email_verification_from_row(row)
+
+    @staticmethod
+    def _email_verification_from_row(row) -> dict | None:
+        if not row:
+            return None
+        return {
+            "verification_id": row[0],
+            "principal_id": row[1],
+            "email": row[2],
+            "token_hash": row[3],
+            "requested_at": row[4],
+            "expires_at": row[5],
+            "used_at": row[6],
+        }
+
+    def mark_email_verification_used(self, verification_id: str, used_at: str):
+        with self.get_connection() as conn:
+            self.ensure_email_verification_table(conn)
+            conn.execute(
+                f"UPDATE {self.EMAIL_VERIFICATION_TABLE} SET used_at = ? WHERE verification_id = ?",
+                (used_at, verification_id),
+            )
+            conn.commit()
+
+    def mark_principal_email_verified(self, principal_id: str, verified_at: str) -> None:
+        """单条 UPDATE 落验证时间，不做读-改-写：并发点两次链接不该互相覆盖其他列。
+
+        已验证的账户不会被本方法改回未验证（``AND email_verified_at IS NULL``），
+        与 upsert_principal 的 COALESCE 共同保证该列单调。
+        """
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            conn.execute(
+                f"UPDATE {self.PRINCIPAL_TABLE} SET email_verified_at = ?, updated_at = ? "
+                "WHERE principal_id = ? AND email_verified_at IS NULL",
+                (verified_at, verified_at, principal_id),
+            )
+            conn.commit()
+
     def list_auth_sessions_by_principal(self, principal_id: str) -> list[dict]:
         with self.get_connection() as conn:
             self.ensure_access_control_tables(conn)
@@ -4931,29 +5082,59 @@ class DatabaseManager:
         }
 
     def upsert_organization_domain(self, record: dict) -> dict:
+        """写入/更新组织域名登记。
+
+        P0.3（2026-09-05）保护：同一 ``domain_id`` 若改了域名字符串，验证状态与
+        一次性挑战 token 一并作废。否则「验证 A 域 → 就地改成 B 域」可以白拿
+        B 域的 auto_join 授权能力（``ON CONFLICT(domain_id) DO UPDATE`` 原本会把
+        ``verified_at`` 一起带过去）。
+        """
+        domain = (record["domain"] or "").strip().lower()
         with self.get_connection() as conn:
             self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT domain, verified_at, verification_token, verification_requested_at
+                FROM {self.ORGANIZATION_DOMAIN_TABLE}
+                WHERE domain_id = ?
+                """,
+                (record["domain_id"],),
+            )
+            current = cursor.fetchone()
+            verified_at = record.get("verified_at")
+            verification_token = record.get("verification_token")
+            verification_requested_at = record.get("verification_requested_at")
+            if current is not None and current[0] != domain:
+                verified_at = None
+                verification_token = None
+                verification_requested_at = None
             conn.execute(
                 f"""
                 INSERT INTO {self.ORGANIZATION_DOMAIN_TABLE} (
-                    domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at
+                    domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at,
+                    verification_token, verification_requested_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(domain_id) DO UPDATE SET
                     organization_id=excluded.organization_id,
                     domain=excluded.domain,
                     verified_at=excluded.verified_at,
                     join_mode=excluded.join_mode,
-                    updated_at=excluded.updated_at
+                    updated_at=excluded.updated_at,
+                    verification_token=excluded.verification_token,
+                    verification_requested_at=excluded.verification_requested_at
                 """,
                 (
                     record["domain_id"],
                     record["organization_id"],
-                    record["domain"],
-                    record.get("verified_at"),
+                    domain,
+                    verified_at,
                     record["join_mode"],
                     record["created_at"],
                     record["updated_at"],
+                    verification_token,
+                    verification_requested_at,
                 ),
             )
             conn.commit()
@@ -4965,24 +5146,15 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 f"""
-                SELECT domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at
+                SELECT domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at,
+                       verification_token, verification_requested_at
                 FROM {self.ORGANIZATION_DOMAIN_TABLE}
                 WHERE domain_id = ?
                 """,
                 (domain_id,),
             )
             row = cursor.fetchone()
-        if not row:
-            return None
-        return {
-            "domain_id": row[0],
-            "organization_id": row[1],
-            "domain": row[2],
-            "verified_at": row[3],
-            "join_mode": row[4],
-            "created_at": row[5],
-            "updated_at": row[6],
-        }
+        return self._organization_domain_from_row(row)
 
     def fetch_organization_domain_by_name(self, domain: str) -> dict | None:
         with self.get_connection() as conn:
@@ -4990,13 +5162,35 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 f"""
-                SELECT domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at
+                SELECT domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at,
+                       verification_token, verification_requested_at
                 FROM {self.ORGANIZATION_DOMAIN_TABLE}
                 WHERE domain = ?
                 """,
-                (domain,),
+                ((domain or "").strip().lower(),),
             )
             row = cursor.fetchone()
+        return self._organization_domain_from_row(row)
+
+    def list_organization_domains(self, organization_id: str) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_access_control_tables(conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT domain_id, organization_id, domain, verified_at, join_mode, created_at, updated_at,
+                       verification_token, verification_requested_at
+                FROM {self.ORGANIZATION_DOMAIN_TABLE}
+                WHERE organization_id = ?
+                ORDER BY created_at ASC
+                """,
+                (organization_id,),
+            )
+            rows = cursor.fetchall()
+        return [self._organization_domain_from_row(row) for row in rows]
+
+    @staticmethod
+    def _organization_domain_from_row(row) -> dict | None:
         if not row:
             return None
         return {
@@ -5007,7 +5201,12 @@ class DatabaseManager:
             "join_mode": row[4],
             "created_at": row[5],
             "updated_at": row[6],
+            "verification_token": row[7],
+            "verification_requested_at": row[8],
+            # 派生只读字段：verified_at 是唯一的验证事实来源，不另设布尔列以免双写漂移
+            "verified": bool(row[3]),
         }
+
 
     def insert_audit_log(self, record: dict):
         with self.get_connection() as conn:

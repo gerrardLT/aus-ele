@@ -1,5 +1,5 @@
 """
-Shared exception classes for the AEMO Intelligence platform.
+Shared exception classes for the Tianshu platform.
 
 MarketModuleError provides a structured error response format for all
 market analysis module endpoints (spike, saturation, ranking, co-opt, WEM).

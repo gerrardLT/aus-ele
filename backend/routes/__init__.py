@@ -1,5 +1,5 @@
 """
-Route registration module for the AEMO Intelligence platform.
+Route registration module for the Tianshu platform.
 
 Provides centralized route module loading with graceful degradation:
 individual module failures are logged but do not prevent other modules
@@ -47,6 +47,16 @@ ROUTE_MODULES = [
     "routes.narrative_routes",
     "routes.agent_routes",
     "routes.anomaly_routes",
+    # R1.1 自助注册：尾部追加（单模块 import 失败不阻断其余模块）。每批次验收必须
+    # curl 新端点确认真实注册 —— 该灰度安全网同时也是「静默不上线」风险源。
+    "routes.registration_routes",
+    "routes.oauth_routes",
+    # R1.4 组织自助管理（/api/v1/organizations/*，与 /api/admin/organizations/* 分离）
+    "routes.org_routes",
+    # R1.7 账户数据权利（沿用 /api/v1/account 前缀，但 /export 与 /delete 路径此前不存在）
+    "routes.data_rights_routes",
+    # R5.5 公测运营控制台（只读指标，零新表；刻意不加进 admin_routes —— 见该模块 docstring）
+    "routes.console_routes",
 ]
 
 # Module-level state tracking degraded modules for health reporting

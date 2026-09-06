@@ -6,7 +6,7 @@ import unittest
 
 from fastapi import HTTPException
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_access_control_tables
 
 ensure_repo_import_paths()
 
@@ -34,10 +34,17 @@ from database import DatabaseManager
 
 
 class AccessControlTests(unittest.TestCase):
+    """RBAC / 会话 / 令牌语义。
+
+    隔离（2026-09-05）：本文件用硬编码邮箱，而所有测试共享同一个 PG 库 →
+    不清库就会撞唯一约束并把历史残留算进审计计数。
+    """
+
     def setUp(self):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        reset_access_control_tables(self.db)
 
     def tearDown(self):
         if os.path.exists(self.db_path):

@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 
 from fastapi import APIRouter, HTTPException
 
@@ -26,12 +27,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/co-optimization", tags=["Co-Optimization"])
 
 # ---------------------------------------------------------------------------
-# In-memory cache for co-optimization results
+# Cache for co-optimization results
 # Key: hash of (region, year, month, resolution, power_mw, duration_hours, rte)
 # Value: CoOptimizationResponse dict
+#
+# P0.7（2026-09-05）：原先是模块级 dict + max 50 且**无 TTL**，两个独立问题：
+# 1. 无 TTL → 上游数据回填后仍会返回旧结论，且没有任何线索能看出它是多久前的；
+# 2. 进程内 → 每个 worker 各算一遍同一份 MILP（这是最贵的一类重复计算），
+#    而且 ``next(iter(dict))`` 淘汰的是最早插入项、不是最久未用项。
+# 现在走 shared_state：Redis 优先（跨 worker 共享），不可用时回落为带 TTL 的
+# 有界进程内影子缓存。淘汰改为按到期时间，语义上才真的是"丢最没用的"。
 # ---------------------------------------------------------------------------
-_COOPT_CACHE: dict[str, dict] = {}
-_COOPT_CACHE_MAX_SIZE = 50
+_COOPT_CACHE_SCOPE = "coopt_result"
+_COOPT_CACHE_TTL_SECONDS = int(os.environ.get("AUS_ELE_COOPT_CACHE_TTL_SECONDS", "900"))
+
+
+def _state_store():
+    from shared_state import get_state_store
+
+    return get_state_store()
 
 
 def _build_cache_key(params: CoOptimizationParams) -> str:
@@ -291,9 +305,10 @@ async def run_co_optimization(
 
     # --- Cache lookup ---
     cache_key = _build_cache_key(params)
-    if cache_key in _COOPT_CACHE:
+    cached = _state_store().recall(_COOPT_CACHE_SCOPE, cache_key)
+    if isinstance(cached, dict):
         logger.info(f"Co-optimization cache hit: {params.region}/{params.year}-{params.month} ({params.resolution})")
-        return CoOptimizationResponse(**_COOPT_CACHE[cache_key])
+        return CoOptimizationResponse(**cached)
     interval_minutes = get_settlement_interval(params.region)
 
     # Load energy prices
@@ -418,11 +433,14 @@ async def run_co_optimization(
 
     # --- Cache store ---
     if response.status in ("optimal", "feasible"):
-        if len(_COOPT_CACHE) >= _COOPT_CACHE_MAX_SIZE:
-            # Evict oldest entry
-            oldest_key = next(iter(_COOPT_CACHE))
-            del _COOPT_CACHE[oldest_key]
-        _COOPT_CACHE[cache_key] = response.model_dump()
+        # mode="json"：让顶层声明的字段先归一成 JSON 原生类型，Redis 侧才有真正
+        # 的跨 worker 命中（否则 numpy 标量会让 set_json 静默失败、只剩单 worker 影子）。
+        _state_store().remember(
+            _COOPT_CACHE_SCOPE,
+            cache_key,
+            response.model_dump(mode="json"),
+            _COOPT_CACHE_TTL_SECONDS,
+        )
         logger.info(f"Co-optimization cached: {params.region}/{params.year}-{params.month} ({params.resolution}) in {result.solve_time_seconds:.1f}s")
 
     return response

@@ -1,25 +1,31 @@
 import os
 import sys
 import tempfile
-import types
 import unittest
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, reset_access_control_tables, stub_optional_dep
 
 ensure_repo_import_paths()
 
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from database import DatabaseManager
 import server
 
 
 class AccessControlRouteTests(unittest.TestCase):
+    """路由层 RBAC 语义。
+
+    隔离（2026-09-05）：本文件用硬编码邮箱 owner@example.com，而所有测试共享同一个
+    PG 库 → 不清库就会撞 principal_identity_email_key（表现为 500）。
+    """
+
     def setUp(self):
         handle, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(handle)
         self.db = DatabaseManager(self.db_path)
+        reset_access_control_tables(self.db)
         self.original_db = server.db
         self.original_orchestrator_db = server.job_orchestrator.db
         server.db = self.db
@@ -70,9 +76,13 @@ class AccessControlRouteTests(unittest.TestCase):
             role="org_owner",
             status="active",
         )
-        server.set_password_route(principal_id=principal["principal_id"], password="Str0ngPass!")
+        server.set_password_route(
+            server.SetPasswordRequest(principal_id=principal["principal_id"], password="Str0ngPass!")
+        )
 
-        session = server.login_route(email="owner@example.com", password="Str0ngPass!", workspace_id=workspace["workspace_id"])
+        session = server.login_route(
+            server.LoginRequest(email="owner@example.com", password="Str0ngPass!", workspace_id=workspace["workspace_id"])
+        )
         actor = server.get_session_route(x_session_token=session["session_token"])
 
         self.assertEqual(actor["principal"]["principal_id"], principal["principal_id"])
@@ -91,8 +101,12 @@ class AccessControlRouteTests(unittest.TestCase):
             role="org_owner",
             status="active",
         )
-        server.set_password_route(principal_id=principal["principal_id"], password="Str0ngPass!")
-        session = server.login_route(email="owner@example.com", password="Str0ngPass!", workspace_id=workspace["workspace_id"])
+        server.set_password_route(
+            server.SetPasswordRequest(principal_id=principal["principal_id"], password="Str0ngPass!")
+        )
+        session = server.login_route(
+            server.LoginRequest(email="owner@example.com", password="Str0ngPass!", workspace_id=workspace["workspace_id"])
+        )
 
         payload = server.logout_route(x_session_token=session["session_token"])
 

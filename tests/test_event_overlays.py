@@ -15,17 +15,15 @@ import server
 
 @contextlib.contextmanager
 def patched_server_db(db_manager: DatabaseManager):
+    # 不再保存/覆写 server.DB_PATH：该 SQLite 全局已随 PG 迁移删除（见 test_grid_forecast 同名函数）
     original_db = server.db
-    original_db_path = server.DB_PATH
     original_cache = server.response_cache
     server.db = db_manager
-    server.DB_PATH = db_manager.db_path
     server.response_cache = FakeResponseCache()
     try:
         yield
     finally:
         server.db = original_db
-        server.DB_PATH = original_db_path
         server.response_cache = original_cache
 
 

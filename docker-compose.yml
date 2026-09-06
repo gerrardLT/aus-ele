@@ -104,6 +104,27 @@ services:
       args:
         VITE_API_BASE: ${VITE_API_BASE:-/api}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+        # 前端 feature flag（R5.4）。VITE_* 只在构建期生效，所以运维要能拧动它们就必须
+        # 出现在这里；默认值一律「关」，与 web/src/lib/flags.js 的注册表逐条对齐
+        # （flagsGuard.test.js 最后一道断言会检查这条链）。
+        VITE_DATA_RIGHTS_UI: ${VITE_DATA_RIGHTS_UI:-false}
+        VITE_SUPPORT_EMAIL: ${VITE_SUPPORT_EMAIL:-}
+        VITE_LEGAL_ENTITY_NAME: ${VITE_LEGAL_ENTITY_NAME:-}
+        VITE_LEGAL_ABN: ${VITE_LEGAL_ABN:-}
+        VITE_LEGAL_JURISDICTION: ${VITE_LEGAL_JURISDICTION:-}
+        # 启用分析前：先改 /legal/dpa 第 4 条与 /legal/cookies 第 7 条的「未启用」表述。
+        VITE_ANALYTICS_ENABLED: ${VITE_ANALYTICS_ENABLED:-false}
+        VITE_ANALYTICS_SDK_URL: ${VITE_ANALYTICS_SDK_URL:-}
+        VITE_ANALYTICS_TOKEN: ${VITE_ANALYTICS_TOKEN:-}
+        VITE_ANALYTICS_HOST: ${VITE_ANALYTICS_HOST:-}
+        VITE_ANALYTICS_SESSION_REPLAY: ${VITE_ANALYTICS_SESSION_REPLAY:-false}
+        VITE_ANALYTICS_MASK_ALL_TEXT: ${VITE_ANALYTICS_MASK_ALL_TEXT:-false}
+        VITE_ANALYTICS_MASK_ALL_INPUTS: ${VITE_ANALYTICS_MASK_ALL_INPUTS:-false}
+        # R3 new UI (URL state mirror / SPA nav / cmd-K palette / mobile drawer).
+        VITE_URL_STATE_UI: ${VITE_URL_STATE_UI:-false}
+        VITE_SPA_NAV_UI: ${VITE_SPA_NAV_UI:-false}
+        VITE_COMMAND_PALETTE_UI: ${VITE_COMMAND_PALETTE_UI:-false}
+        VITE_MOBILE_NAV_UI: ${VITE_MOBILE_NAV_UI:-false}
     restart: unless-stopped
     mem_limit: 384m
     ports:

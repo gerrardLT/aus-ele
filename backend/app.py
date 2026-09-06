@@ -1,5 +1,5 @@
 """
-AEMO Intelligence Platform — Clean Application Entry Point.
+Tianshu Platform — Clean Application Entry Point.
 
 Usage:  uvicorn app:app --host 0.0.0.0 --port 8085
 
@@ -8,6 +8,7 @@ Route modules in routes/ delegate to server.py as needed.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from zoneinfo import ZoneInfo
 
+from brand import BRAND_DISPLAY
 from deps import get_job_orchestrator
 from routes import register_all_routes
 from routes.health import router as health_router
@@ -48,7 +50,9 @@ install_structured_log_sink_if_configured()
 # --- Environment helpers ---
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
-    if raw is None:
+    if raw is None or not raw.strip():
+        # 与 server._env_flag 保持一致：空串回落到 default，避免 `FLAG=` 打开
+        # default=False 的安全开关（如 CORS credentials）。
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
@@ -108,6 +112,54 @@ def _job_worker_queue_names() -> list[str] | None:
     return items or None
 
 
+def _account_deletion_sweep_enabled() -> bool:
+    # 单独一个开关而不是复用 AUS_ELE_ENABLE_SCHEDULER：这是全系统唯一一个**物理删除数据**
+    # 的周期任务。运维想停它的时候，绝不能顺手把市场数据同步也停掉；反之亦然。
+    return _env_flag("AUS_ELE_ENABLE_ACCOUNT_DELETION_SWEEP", True)
+
+
+def run_account_deletion_sweep() -> int:
+    """执行所有宽限期已过的账户删除请求，返回成功清除的账户数。
+
+    没有这个任务，R1.7 的「30 天后永久删除」就只是一句写在界面和法律文件上的承诺：
+    端点只写入排期行，谁都不去读它，账户会永远停在 pending —— 那比不做删除更糟，因为
+    用户已经拿到了「已受理」的凭证。
+
+    每小时而不是每天一次：`scheduled_delete_at` 是给用户看过一个**精确时刻**，日级扫描
+    意味着实际删除可以比屏幕上那个日期晚将近一天。扫一次只是一条带索引的 SELECT。
+
+    生产是 `gunicorn app:app --workers N`，每个 worker 都跑着自己的 AsyncIOScheduler，
+    所以这个 tick 会被 N 个进程同时触发 —— 必须用 P0.7 的认领锁按「小时桶」去重，否则
+    两个 worker 会同时 purge 同一个 principal（互相撞行、把对方挤成 failed）。锁故意
+    **成功不释放**：这一小时已经有人干完了；只在整体抛错时释放，让同小时内的别的 worker
+    还有机会补做。
+    """
+    from deps import get_db
+    from services import data_rights
+    from shared_state import get_state_store
+
+    hour_bucket = datetime.datetime.now(_scheduler_timezone()).strftime("%Y-%m-%dT%H")
+    store = get_state_store()
+    token = store.acquire_claim("scheduler", f"account-deletion-sweep:{hour_bucket}", 3700)
+    if token is None:
+        return 0
+
+    try:
+        results = data_rights.execute_due_deletions(get_db())
+    except Exception:  # noqa: BLE001 - 锁要交还，本轮失败不能把这一小时锁死
+        store.release_claim("scheduler", f"account-deletion-sweep:{hour_bucket}", token)
+        raise
+
+    executed = [r for r in results if r.get("status") == "executed"]
+    failed = [r for r in results if r.get("status") != "executed"]
+    if results:
+        # 只记数量与状态，绝不记被删账户的内容：日志是比 API 更宽松的读取通道。
+        logger.info("Account deletion sweep: %d executed, %d failed", len(executed), len(failed))
+    if failed:
+        logger.warning("Account deletion sweep left %d failed request(s) pending for retry", len(failed))
+    return len(executed)
+
+
 # --- Lifespan (scheduler + job worker) ---
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -115,7 +167,7 @@ async def lifespan(application: FastAPI):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     import server as _server  # scheduler job functions live here during migration
 
-    logger.info("Starting AEMO Intelligence Platform...")
+    logger.info("Starting %s...", BRAND_DISPLAY)
 
     if _scheduler_enabled():
         tz = _scheduler_timezone()
@@ -145,6 +197,13 @@ async def lifespan(application: FastAPI):
                               id="monthly-reconciliation", max_instances=1, coalesce=True, misfire_grace_time=3600)
             logger.info("Monthly reconciliation job registered (day=1, hour=%02d, tz=%s)", rh, tz.key)
 
+        if _account_deletion_sweep_enabled():
+            sweep_minute = _cron_minute("AUS_ELE_ACCOUNT_DELETION_SWEEP_MINUTE", 15)
+            scheduler.add_job(run_account_deletion_sweep, "cron", minute=sweep_minute,
+                              id="account-deletion-sweep", max_instances=1, coalesce=True,
+                              misfire_grace_time=1800)
+            logger.info("Account deletion sweep registered (hourly at :%02d, tz=%s)", sweep_minute, tz.key)
+
         scheduler.start()
         application.state.scheduler = scheduler
         logger.info("Scheduler enabled (tz=%s, market=%02d:%02d, fingrid-hourly=:%02d, fingrid-daily=%02d:%02d, wem-ess=%02d:%02d)",
@@ -168,7 +227,7 @@ async def lifespan(application: FastAPI):
 
     yield
 
-    logger.info("Shutting down AEMO Intelligence Platform...")
+    logger.info("Shutting down %s...", BRAND_DISPLAY)
     if hasattr(application.state, "scheduler"):
         application.state.scheduler.shutdown()
     if hasattr(application.state, "job_worker"):
@@ -176,7 +235,7 @@ async def lifespan(application: FastAPI):
 
 
 # --- Application creation ---
-app = FastAPI(title="AEMO NEM Data API", lifespan=lifespan)
+app = FastAPI(title=f"{BRAND_DISPLAY} API", lifespan=lifespan)
 
 # CORS middleware
 app.add_middleware(

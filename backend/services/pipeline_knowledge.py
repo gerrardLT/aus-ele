@@ -33,18 +33,56 @@ _STALE_AFTER_DAYS = 120  # 数据超过 120 天未更新视为陈旧，提示走
 
 _cache: Optional[dict] = None
 
+# 缓存有效期（P0.7，2026-09-05）。原实现是模块级 ``_cache`` 且**永不失效**：
+# 运维按季度更新 capacity_data.json 后必须重启进程才生效，而多 worker 下每个
+# worker 各自持有一份不同年代的快照 —— 同一个查询会得到不同答案，且无人能从
+# 响应里看出来。这里同时修掉「无 TTL」和「不共享」两件事。
+_CAPACITY_CACHE_SCOPE = "capacity_data"
+_CAPACITY_CACHE_KEY = "v1"
+_CAPACITY_CACHE_TTL_SECONDS = int(os.environ.get("AUS_ELE_CAPACITY_CACHE_TTL_SECONDS", "300"))
+# 读不到数据时的负缓存 TTL：必须短，否则一次瞬时 IO 故障会被固化成整个季度周期
+# 内的「容量为 0」结论 —— 那比慢一点更危险。
+_CAPACITY_NEGATIVE_TTL_SECONDS = int(os.environ.get("AUS_ELE_CAPACITY_NEGATIVE_TTL_SECONDS", "30"))
+
+
+def _state_store():
+    from shared_state import get_state_store
+
+    return get_state_store()
+
+
+def clear_capacity_cache() -> dict[str, int]:
+    """显式失效（运维改完 JSON 后调用，无需重启）。返回被清的 TTL 配置便于核对。"""
+    _state_store().forget(_CAPACITY_CACHE_SCOPE, _CAPACITY_CACHE_KEY)
+    global _cache
+    _cache = None
+    return {
+        "cleared": 1,
+        "ttl_seconds": _CAPACITY_CACHE_TTL_SECONDS,
+        "negative_ttl_seconds": _CAPACITY_NEGATIVE_TTL_SECONDS,
+    }
+
 
 def _load_capacity_data() -> dict:
+    """容量假设数据：TTL + 跨 worker 共享，读失败沿用「warning + 空 dict」语义。"""
     global _cache
-    if _cache is not None:
-        return _cache
+    store = _state_store()
+    cached = store.recall(_CAPACITY_CACHE_SCOPE, _CAPACITY_CACHE_KEY)
+    if isinstance(cached, dict):
+        _cache = cached
+        return cached
     try:
         with open(_DATA_PATH, "r", encoding="utf-8") as f:
-            _cache = json.load(f)
+            payload = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         logger.warning(f"capacity_data.json unavailable: {exc}")
-        _cache = {}
-    return _cache
+        payload = {}
+        ttl = _CAPACITY_NEGATIVE_TTL_SECONDS
+    else:
+        ttl = _CAPACITY_CACHE_TTL_SECONDS
+    _cache = payload
+    store.remember(_CAPACITY_CACHE_SCOPE, _CAPACITY_CACHE_KEY, payload, ttl)
+    return payload
 
 
 def _freshness() -> dict[str, Any]:

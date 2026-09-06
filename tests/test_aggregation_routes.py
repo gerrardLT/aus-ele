@@ -10,18 +10,17 @@ Requirements: 6.2, 7.1, 7.2
 
 import hashlib
 import sys
-import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, stub_optional_dep
 
 ensure_repo_import_paths()
 
 # Stub heavy optional dependencies
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

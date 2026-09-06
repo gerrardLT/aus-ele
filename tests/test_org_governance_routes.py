@@ -1,18 +1,17 @@
 import os
 import sys
 import tempfile
-import types
 import unittest
 import uuid
 
 from fastapi import HTTPException
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, stub_optional_dep
 
 ensure_repo_import_paths()
 
-sys.modules.setdefault("pulp", types.SimpleNamespace())
-sys.modules.setdefault("numpy_financial", types.SimpleNamespace())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from database import DatabaseManager
 import server
@@ -255,10 +254,15 @@ class OrganizationGovernanceRouteTests(unittest.TestCase):
         self.assertTrue(all(item["status"] == "suspended" for item in payload["items"]))
 
     def test_domain_join_route_creates_org_membership_under_domain_auto_join_policy(self):
-        server.create_organization_domain_route(
+        domain_row = server.create_organization_domain_route(
             organization_id=self.organization["organization_id"],
             domain=self._domain(),
             join_mode="domain_auto_join_org",
+        )
+        # P0.3（2026-09-05）：auto_join 的硬前提是域名所有权已验证。
+        # 验证流程本身在 test_domain_trust_anchor.py 锁定，此处直接置位。
+        self.db.upsert_organization_domain(
+            {**domain_row, "verified_at": "2026-04-28T00:00:00Z"}
         )
 
         payload = server.domain_join_route(

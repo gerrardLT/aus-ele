@@ -39,6 +39,7 @@ except Exception:  # noqa: BLE001
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.strip())
 
+from brand import BRAND_NAME_ZH  # noqa: E402
 from database import DatabaseManager  # noqa: E402
 from access_control import (  # noqa: E402
     seed_organization,
@@ -66,7 +67,7 @@ def main() -> int:
     parser.add_argument("--password", default=None, help="初始密码（缺省自动生成；建议改用 --password-stdin，避免进 shell history）")
     parser.add_argument("--password-stdin", dest="password_stdin", action="store_true",
                         help="从标准输入读取密码（不回显）")
-    parser.add_argument("--org", default="AEMO Intelligence", help="组织名")
+    parser.add_argument("--org", default=BRAND_NAME_ZH, help="组织名")
     parser.add_argument("--workspace", default="main", help="工作空间名")
     args = parser.parse_args()
 

@@ -16,19 +16,18 @@ import random
 import sqlite3
 import sys
 import tempfile
-import types
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-from tests.support import ensure_repo_import_paths
+from tests.support import ensure_repo_import_paths, stub_optional_dep
 
 ensure_repo_import_paths()
 
 # Stub heavy optional dependencies that may not be installed in test env
-sys.modules.setdefault("pulp", MagicMock())
-sys.modules.setdefault("numpy_financial", MagicMock())
+stub_optional_dep("pulp")
+stub_optional_dep("numpy_financial")
 
 from fastapi.testclient import TestClient
 pytestmark = pytest.mark.xfail(reason="SQLite removed; needs PG test fixtures", run=False)
