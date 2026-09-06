@@ -57,6 +57,8 @@ ROUTE_MODULES = [
     "routes.data_rights_routes",
     # R5.5 公测运营控制台（只读指标，零新表；刻意不加进 admin_routes —— 见该模块 docstring）
     "routes.console_routes",
+    # R4.1 项目/资产实体（/api/v1/projects）：版本化挂载 7 阶段结果，诊断 §2 的核心业务对象
+    "routes.project_routes",
 ]
 
 # Module-level state tracking degraded modules for health reporting

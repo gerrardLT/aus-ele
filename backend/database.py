@@ -260,6 +260,11 @@ class DatabaseManager:
     EMAIL_VERIFICATION_TABLE = "email_verification"
     # P2 留存增值（2026-08-14）
     NOTIFICATION_TABLE = "notification"
+    # R4 资产化（2026-09-06）：项目/资产实体。诊断 §2 的最高价值单点改造——把 7 阶段
+    # 结果从「一次性的 HTTP 响应」变成「版本化的项目资产」。版本链存输入参数快照 +
+    # data_version，让「三个月后重算并与旧版对比」可复现、可归因（上游数据变没变能查证）。
+    ASSET_PROJECT_TABLE = "asset_project"
+    ASSET_PROJECT_VERSION_TABLE = "asset_project_version"
     SAVED_REPORT_TABLE = "saved_report"
     USER_PREFERENCE_TABLE = "user_preference"
     FEEDBACK_TABLE = "feedback"
@@ -4756,6 +4761,260 @@ class DatabaseManager:
             )
             conn.commit()
             return (getattr(cur, "rowcount", None) or 0) > 0
+
+    # --- asset_project（R4，2026-09-06）---
+
+    def ensure_asset_project_tables(self, conn) -> None:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ASSET_PROJECT_TABLE} (
+                project_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                market TEXT,
+                region TEXT,
+                config_json TEXT NOT NULL DEFAULT '{{}}',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_{self.ASSET_PROJECT_TABLE}_ws
+            ON {self.ASSET_PROJECT_TABLE} (workspace_id, status, updated_at)
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.ASSET_PROJECT_VERSION_TABLE} (
+                project_id TEXT NOT NULL,
+                version_no INTEGER NOT NULL,
+                label TEXT,
+                data_version TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{{}}',
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (project_id, version_no)
+            )
+        """)
+        conn.commit()
+
+    @staticmethod
+    def _asset_project_from_row(row) -> dict | None:
+        if not row:
+            return None
+        return {
+            "project_id": row[0],
+            "workspace_id": row[1],
+            "created_by": row[2],
+            "name": row[3],
+            "description": row[4],
+            "market": row[5],
+            "region": row[6],
+            "config": json.loads(row[7] or "{}"),
+            "status": row[8],
+            "created_at": row[9],
+            "updated_at": row[10],
+        }
+
+    _ASSET_PROJECT_COLS = (
+        "project_id, workspace_id, created_by, name, description, market, region, "
+        "config_json, status, created_at, updated_at"
+    )
+
+    def insert_asset_project(self, record: dict) -> dict:
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {self.ASSET_PROJECT_TABLE} (
+                    project_id, workspace_id, created_by, name, description, market, region,
+                    config_json, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["project_id"],
+                    record["workspace_id"],
+                    record["created_by"],
+                    record["name"],
+                    record.get("description"),
+                    record.get("market"),
+                    record.get("region"),
+                    json.dumps(record.get("config") or {}, ensure_ascii=False),
+                    record.get("status") or "active",
+                    record["created_at"],
+                    record["updated_at"],
+                ),
+            )
+            conn.commit()
+        return self.fetch_asset_project(record["project_id"])
+
+    def list_asset_projects(
+        self, workspace_id: str, *, include_archived: bool = False, limit: int = 200
+    ) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            if include_archived:
+                rows = conn.execute(
+                    f"""
+                    SELECT {self._ASSET_PROJECT_COLS}
+                    FROM {self.ASSET_PROJECT_TABLE}
+                    WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ?
+                    """,
+                    (workspace_id, max(1, min(int(limit), 500))),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT {self._ASSET_PROJECT_COLS}
+                    FROM {self.ASSET_PROJECT_TABLE}
+                    WHERE workspace_id = ? AND status = 'active'
+                    ORDER BY updated_at DESC LIMIT ?
+                    """,
+                    (workspace_id, max(1, min(int(limit), 500))),
+                ).fetchall()
+        return [self._asset_project_from_row(row) for row in rows]
+
+    def fetch_asset_project(self, project_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT {self._ASSET_PROJECT_COLS}
+                FROM {self.ASSET_PROJECT_TABLE} WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchone()
+        return self._asset_project_from_row(row)
+
+    def update_asset_project(
+        self, project_id: str, workspace_id: str, *, fields: dict, updated_at: str
+    ) -> dict | None:
+        """只更新调用方显式给出的字段；fields 为空时不动行（调用方负责 422）。"""
+        allowed = ("name", "description", "market", "region")
+        sets: list[str] = []
+        params: list = []
+        for key in allowed:
+            if key in fields:
+                sets.append(f"{key} = ?")
+                params.append(fields[key])
+        if "config" in fields:
+            sets.append("config_json = ?")
+            params.append(json.dumps(fields["config"] or {}, ensure_ascii=False))
+        if not sets:
+            return self.fetch_asset_project(project_id)
+        sets.append("updated_at = ?")
+        params.append(updated_at)
+        params.append(project_id)
+        params.append(workspace_id)
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            conn.execute(
+                f"""
+                UPDATE {self.ASSET_PROJECT_TABLE} SET {', '.join(sets)}
+                WHERE project_id = ? AND workspace_id = ?
+                """,
+                tuple(params),
+            )
+            conn.commit()
+        return self.fetch_asset_project(project_id)
+
+    def archive_asset_project(
+        self, project_id: str, workspace_id: str, *, archived: bool, updated_at: str
+    ) -> bool:
+        """删除是归档不是物理删：版本链是用户的工作成果，误删不可逆比占点空间贵得多。"""
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            cur = conn.execute(
+                f"""
+                UPDATE {self.ASSET_PROJECT_TABLE}
+                SET status = ?, updated_at = ?
+                WHERE project_id = ? AND workspace_id = ?
+                """,
+                ("archived" if archived else "active", updated_at, project_id, workspace_id),
+            )
+            conn.commit()
+            return (getattr(cur, "rowcount", None) or 0) > 0
+
+    def insert_asset_project_version(self, record: dict) -> dict:
+        """version_no 在同一事务内取 max+1：挂版本是单用户显式动作，不做并发编排；
+        主键 (project_id, version_no) 冲突时由 IntegrityError 兜底，绝不覆盖既有版本。"""
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            row = conn.execute(
+                f"SELECT COALESCE(MAX(version_no), 0) FROM {self.ASSET_PROJECT_VERSION_TABLE} WHERE project_id = ?",
+                (record["project_id"],),
+            ).fetchone()
+            version_no = int(row[0] or 0) + 1
+            conn.execute(
+                f"""
+                INSERT INTO {self.ASSET_PROJECT_VERSION_TABLE} (
+                    project_id, version_no, label, data_version, payload_json, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["project_id"],
+                    version_no,
+                    record.get("label"),
+                    record.get("data_version"),
+                    json.dumps(record.get("payload") or {}, ensure_ascii=False),
+                    record.get("created_by"),
+                    record["created_at"],
+                ),
+            )
+            conn.execute(
+                f"UPDATE {self.ASSET_PROJECT_TABLE} SET updated_at = ? WHERE project_id = ?",
+                (record["created_at"], record["project_id"]),
+            )
+            conn.commit()
+        return self.fetch_asset_project_version(record["project_id"], version_no)
+
+    def list_asset_project_versions(self, project_id: str, *, limit: int = 100) -> list[dict]:
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT project_id, version_no, label, data_version, payload_json, created_by, created_at
+                FROM {self.ASSET_PROJECT_VERSION_TABLE}
+                WHERE project_id = ? ORDER BY version_no DESC LIMIT ?
+                """,
+                (project_id, max(1, min(int(limit), 500))),
+            ).fetchall()
+        return [
+            {
+                "project_id": row[0],
+                "version_no": row[1],
+                "label": row[2],
+                "data_version": row[3],
+                "payload": json.loads(row[4] or "{}"),
+                "created_by": row[5],
+                "created_at": row[6],
+            }
+            for row in rows
+        ]
+
+    def fetch_asset_project_version(self, project_id: str, version_no: int) -> dict | None:
+        with self.get_connection() as conn:
+            self.ensure_asset_project_tables(conn)
+            row = conn.execute(
+                f"""
+                SELECT project_id, version_no, label, data_version, payload_json, created_by, created_at
+                FROM {self.ASSET_PROJECT_VERSION_TABLE}
+                WHERE project_id = ? AND version_no = ?
+                """,
+                (project_id, int(version_no)),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "project_id": row[0],
+            "version_no": row[1],
+            "label": row[2],
+            "data_version": row[3],
+            "payload": json.loads(row[4] or "{}"),
+            "created_by": row[5],
+            "created_at": row[6],
+        }
 
     # --- user_preference ---
 
