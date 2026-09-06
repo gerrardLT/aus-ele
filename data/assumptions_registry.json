@@ -544,8 +544,17 @@
         "measured_wall_time": {
           "date": "2026-09-06",
           "dataset": "NSW1 2024-2025 两年 5min 真实结算价（years_used=2）",
-          "fast_seconds": {"n": 5, "min": 137.57, "p50": 140.19, "p95": 164.81, "max": 164.64},
-          "precise_seconds": {"n": 1, "value": 1250.67},
+          "fast_seconds": {
+            "n": 5,
+            "min": 137.57,
+            "p50": 140.19,
+            "p95": 164.81,
+            "max": 164.64
+          },
+          "precise_seconds": {
+            "n": 1,
+            "value": 1250.67
+          },
           "speedup": "≈7.6×（高于线性 6×，MILP 超线性成分）"
         }
       },
@@ -555,6 +564,48 @@
       ],
       "source": "2026-09-06 R4.2 实施。投资分析 co_optimized 路径原先绕过降采样、全年逐 5min 数据直接进 MILP（~4400 变量/月 × 12 月）；降采样后问题规模 ~1/6。同日 R4.5 实测：precise 单次 1250.67s 远超交互预算，fast p95=164.81s。",
       "boundary": "仅 revenue_baseline_mode=co_optimized 或 coopt API resolution=fast 时生效；precise 默认数值零回归。30min 桶均值会平滑 5min 峰值，套利基线通常略降（负价/尖峰段被摊平），因此 fast 定位为响应速度换精度的显式选项，不作默认。coopt_resolution 已入 investment 响应缓存键，不同 resolution 不互串。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
+    },
+    {
+      "id": "domain_data_validation",
+      "name": "手工领域 JSON 校验层（R6.6）守护 data/ 5 份手工文件",
+      "location": "backend/services/domain_data_validation.py::validate_all",
+      "category": "operations",
+      "status": "wired",
+      "value": {
+        "files": [
+          "capacity_data.json",
+          "coal_retirement_schedule.json",
+          "regional_fee_defaults.json",
+          "contract_revenue_defaults.json",
+          "financial_evidence.json"
+        ],
+        "whitelists": {
+          "region": [
+            "NSW1",
+            "QLD1",
+            "SA1",
+            "TAS1",
+            "VIC1",
+            "WEM"
+          ],
+          "project_status": [
+            "committed",
+            "construction",
+            "planning",
+            "registered"
+          ]
+        },
+        "fee_schema_source": "models.cost_structure_models.RegionalFeeConfig（pydantic 真源，含 Field 值域；校验层不另写第二份口径）",
+        "health_mapping": "error → knowledge_health overdue（healthy=False）/ warning → due_soon / 干净 → ok"
+      },
+      "consumed_by": [
+        "backend/services/knowledge_health.py::check_domain_data_schemas",
+        "运营更新这 5 份 JSON 后的人工自查入口"
+      ],
+      "source": "2026-09-06 R6.6 实施。诊断 §4.4：5 份手工 JSON 无 schema 校验是静默污染源 —— regional_fee_defaults 解析失败时 cost_structure_engine 静默回退 hardcoded（运营修改无声丢失）。",
+      "boundary": "只做检查与报告，不改行为、不自动修复。pydantic extra=ignore 会静默吞未知键，未知键由校验层用 model_fields 比对补充抓取。新增 region/status 白名单值时校验会先变红，需先确认消费方真的会处理。",
       "last_calibrated": "2026-09-06",
       "modified_by": "qoder-agent"
     }
