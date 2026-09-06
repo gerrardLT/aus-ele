@@ -130,6 +130,32 @@
   }
 }
 
-/* 2026-08-24 设计漂移修复：.glow-line/.glow-kpi/.panel-glass/.panel-depth 已删除
-   （DESIGN-v2.md：flat tonal layering，禁投影/文字 glow/内容面板 blur）。
-   hover 反馈统一用 surface-hover 阶跃，见各组件 transition-colors 写法。 */
+/* 2026-08-24 WQS audit A11Y improvements */
+/* Focus outline — WCAG focus visible (3.2.1) */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Old input pattern fallback (replace ring-* defaults with explicit styles) */
+input:not([type="submit"]),
+textarea,
+select {
+  @apply focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-2 focus:ring-offset-transparent;
+}
+
+/* Respect reduced motion for users sensitive to animations */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Button contrast fix — dark theme primary button text must have ≥4.5:1 ratio */
+/* 2026-08-24 WQS audit P1-VA1-contrast: invert colors on dark theme */
+[data-theme="dark"] .bg-\[\(--color-primary\)\] {
+  background-color: var(--color-inverted);
+}

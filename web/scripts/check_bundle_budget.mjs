@@ -5,6 +5,9 @@
  *   ① index.html 静态引用的初始 JS chunk 总 raw 不超过预算；
  *   ② 不存在"同时含 PDF 导出栈标记（html2canvas/jspdf/html2pdf）且被 index.html
  *      静态引用"的 chunk —— 防止 pdf-vendor 回到关键路径。
+ *   ③ ⌘K 命令面板（R3.4）必须独立成 chunk 且其代码标记不得出现在任何被 index.html
+ *      静态引用的 chunk 里 —— Spec 要求「必须动态 import（不进 entry chunk）」。
+ *      注意标记不能用 `openapi.json`：flags.js 的中文说明里就有这个词，会误报。
  *
  * 预算基线（2026-08-20，manualChunks 外科后构建实测）：
  *   入口 JS raw ≈ 807KB（charts-vendor 457KB + react-vendor 206KB + motion-vendor 125KB + 入口/运行时 19KB）。
@@ -22,6 +25,9 @@ const INDEX_HTML = path.join(DIST, 'index.html');
 const ENTRY_JS_BUDGET_BYTES = 850 * 1024;
 // PDF 导出栈标记：任一出现在入口引用的 chunk 中即判定违规
 const PDF_MARKERS = ['html2canvas', 'jspdf', 'html2pdf'];
+// ⌘K 面板/端点索引标记：都取自面板链路上独有的字符串字面量。
+// 之所以不查 `openapi.json`：flags.js 的中文开关说明里就写着这个词，会稳定误报。
+const PALETTE_MARKERS = ['AUS_ELE_API_KEY', 'Meta+K Control+K'];
 
 function fail(msg) {
   console.error(`[bundle-budget] FAIL: ${msg}`);
@@ -62,6 +68,35 @@ for (const name of referenced) {
   const hit = PDF_MARKERS.filter(marker => content.includes(marker));
   if (hit.length > 0) {
     fail(`${name} 被 index.html 静态引用且包含 PDF 栈标记（${hit.join(', ')}），PDF 导出栈回到关键路径`);
+  }
+}
+
+// 断言③：⌘K 面板必须被切出去，且其代码不得混进入口静态引用的 chunk
+// （Spec §129「必须动态 import」）。这条只在构建产物上可证：源码里的 import 形态
+// 相同，但任何一处额外的静态引入都会把它拽回关键路径。
+const chunkNames = fs.existsSync(path.join(DIST, 'assets'))
+  ? fs.readdirSync(path.join(DIST, 'assets')).filter((n) => /^CommandPalette-.*\.js$/.test(n))
+  : [];
+if (chunkNames.length === 0) {
+  fail('dist/assets 下没有 CommandPalette-*.js chunk —— 动态 import 的分包已失效，面板被并入其它 chunk');
+}
+// 门本身是否失效：标记全是源码里的字符串字面量，源码改了措辞这里就变成恒真的空门。
+// 所以要求至少一个标记在整个产物里出现过（即面板代码确实被构建了）。
+const allChunks = fs.existsSync(path.join(DIST, 'assets'))
+  ? fs.readdirSync(path.join(DIST, 'assets')).filter((n) => n.endsWith('.js'))
+  : [];
+const liveMarkers = PALETTE_MARKERS.filter((marker) =>
+  allChunks.some((n) => fs.readFileSync(path.join(DIST, 'assets', n), 'utf8').includes(marker)));
+if (liveMarkers.length === 0) {
+  fail(`⌘K 面板标记在产物中一个都不存在（${PALETTE_MARKERS.join(' / ')}）—— 该门已失效，请同步更新标记`);
+}
+for (const name of referenced) {
+  const file = path.join(DIST, 'assets', name);
+  if (!fs.existsSync(file)) continue;
+  const content = fs.readFileSync(file, 'utf8');
+  const hit = PALETTE_MARKERS.filter((marker) => content.includes(marker));
+  if (hit.length > 0) {
+    fail(`${name} 被 index.html 静态引用且含 ⌘K 面板标记（${hit.join(', ')}），命令面板回到关键路径`);
   }
 }
 

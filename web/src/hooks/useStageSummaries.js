@@ -17,6 +17,7 @@ const API_BASE = getApiBase();
 export function useStageSummaries(market, region, year, bessParams) {
   const [summaries, setSummaries] = useState({});
   const [loading, setLoading] = useState({});
+  const [errors, setErrors] = useState({});
 
   useEffect(() => {
     if (!year || !region) return;
@@ -34,13 +35,15 @@ export function useStageSummaries(market, region, year, bessParams) {
         .then(data => {
           setSummaries(prev => ({ ...prev, [stageId]: data }));
           setLoading(prev => ({ ...prev, [stageId]: false }));
+          setErrors(prev => ({ ...prev, [stageId]: null }));
         })
-        .catch(() => {
+        .catch(error => {
           setSummaries(prev => ({ ...prev, [stageId]: null }));
           setLoading(prev => ({ ...prev, [stageId]: false }));
+          setErrors(prev => ({ ...prev, [stageId]: error.message || 'Network error' }));
         });
     });
   }, [market, region, year, bessParams.power_mw, bessParams.duration_hours, bessParams.round_trip_efficiency]);
 
-  return { summaries, loading };
+  return { summaries, loading, errors };
 }
