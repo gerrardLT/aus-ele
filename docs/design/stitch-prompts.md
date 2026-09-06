@@ -1,4 +1,4 @@
-# Stitch Prompt 包：AEMO Intelligence Agent 界面（2026-08-24 增补 v2）
+# Stitch Prompt 包：天枢 Tianshu Agent 界面（2026-08-24 增补 v2）
 
 > 用法：在 stitch.withgoogle.com 标准模式（Web 画布）逐屏生成；
 > 依据 Stitch 最佳实践：**英文 prompt 生成更稳**，生成后可用中文指令微调语言/细节；

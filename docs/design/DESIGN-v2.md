@@ -1,6 +1,6 @@
 ---
 version: 1.0
-name: AEMO Intelligence Terminal
+name: Tianshu Terminal
 description: Dark-first agentic analysis terminal for BESS investment decisions (NEM/WEM). Trust-engineered over decorative.
 colors:
   primary: "oklch(0.65 0.18 260)"
@@ -197,11 +197,11 @@ components:
     padding: "{spacing.md}"
 ---
 
-# AEMO Intelligence Terminal
+# Tianshu Terminal
 
 ## Overview
 
-AEMO Intelligence is a dark-first, professional analysis terminal for battery
+Tianshu is a dark-first, professional analysis terminal for battery
 energy storage (BESS) investors in Australian electricity markets (NEM/WEM).
 Its primary surfaces are an **agentic analysis workspace** (multi-turn chat
 driving a ReAct agent over 30+ analysis tools), a **market funnel**
