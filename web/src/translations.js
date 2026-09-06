@@ -1,7 +1,7 @@
 export const translations = {
   zh: {
     nav: {
-      brand: 'AEMO 澳洲电网智能观测站',
+      brand: '天枢 · 澳洲电网智能观测站',
       subtitle: '批发电力市场数据归档',
       toggleOptions: 'EN / 中',
     },
@@ -305,7 +305,7 @@ export const translations = {
 
   en: {
     nav: {
-      brand: 'AEMO INTELLIGENCE',
+      brand: 'TIANSHU · GRID INTELLIGENCE',
       subtitle: 'WHOLESALE ELECTRICITY DATA',
       toggleOptions: '中 / ENG',
     },

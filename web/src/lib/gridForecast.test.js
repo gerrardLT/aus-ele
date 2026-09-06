@@ -165,7 +165,7 @@ test('translations source keeps high-visibility Chinese literals readable', () =
 test('translations include readable Chinese labels for core dashboard and developer portal copy', async () => {
   const { translations } = await import('../translations.js');
 
-  assert.equal(translations.zh.nav.brand, 'AEMO 澳洲电网智能观测站');
+  assert.equal(translations.zh.nav.brand, '天枢 · 澳洲电网智能观测站');
   assert.equal(translations.zh.filters.yearSelect, '年份选择 (YEAR)');
   assert.equal(translations.zh.status.retry, '重新尝试');
   assert.equal(translations.zh.forecast.title, '市场展望');

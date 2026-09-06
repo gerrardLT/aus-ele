@@ -20,7 +20,19 @@ export const AUTH_STORAGE_KEY = 'aus_auth_v1';
  * @property {string} sessionToken - 用于 refresh/logout 的会话令牌
  * @property {string} workspaceId
  * @property {{principal_id:string, email:string, display_name?:string}} principal
- * @property {Array<{workspace_id:string, name:string, role:string, organization_name?:string}>} [workspaces]
+ * @property {Array<{
+ *   workspace_id: string,
+ *   name: string,
+ *   role: string,
+ *   organization_id?: string|null,
+ *   organization_name?: string|null,
+ *   organization_role?: string|null,
+ * }>} [workspaces] - 来自 GET /v1/account/me，逐工作空间一条
+ *
+ * `organization_role` 的意义（R1.4，2026-09-06）：后端两层 RBAC 各读各的角色，
+ * 组织管理入口必须按「当前这条 workspaces 记录的组织角色」门控 —— 所以它必须落在
+ * 每个空间条目上，而不是 principal 上的一份全局值。（同一个人在不同组织的角色不同。）
+ * 2026-09-06 之前签发的存储里没有这个字段，消费方一律按「未知」而非「无角色」处理。
  */
 
 export function readAuth() {

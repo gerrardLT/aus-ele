@@ -7,6 +7,7 @@
  * 注意：html2canvas 不支持 oklch() 颜色，导出文档全部使用显式 hex 内联样式，
  * 不依赖主题 CSS 变量（主题 token 为 oklch）。
  */
+import { reportEyebrow } from '../lib/brand.js';
 import { useEffect, useRef, useState } from 'react';
 
 // A4 @96dpi 宽度
@@ -241,7 +242,7 @@ export default function ExportPreviewModal({ report, answer, trace, kpis, onClos
               {/* 文档头 */}
               <div style={{ borderBottom: `2px solid ${C.primary}`, paddingBottom: 10 }}>
                 <div style={{ fontSize: 10, letterSpacing: '0.16em', color: C.muted, textTransform: 'uppercase' }}>
-                  AEMO Intelligence · 天枢 · AI 决策引擎
+                  {reportEyebrow(true)}
                 </div>
                 <div style={{ fontSize: 18, fontWeight: 700, margin: '6px 0 4px', lineHeight: '26px' }}>
                   {report.query || '分析执行报告'}

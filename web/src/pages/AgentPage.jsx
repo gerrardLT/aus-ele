@@ -13,6 +13,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { agentLabel, brandEyebrow } from '../lib/brand.js';
 import {
   streamAgentChat,
   listWorkflows,
@@ -619,9 +620,10 @@ function AgentLayout({
         {/* Brand */}
         <div className="relative border-b border-white/8 pb-4 mb-5">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/60">
-            AEMO Intelligence
+            {brandEyebrow(true)}
           </div>
-          <div className="mt-1 text-xs text-white/60">天枢 · AI 决策引擎</div>
+          {/* 字标唯一来源：lib/brand.js */}
+          <div className="mt-1 text-xs text-white/60">{agentLabel(true)}</div>
         </div>
 
         {/* Nav links back */}

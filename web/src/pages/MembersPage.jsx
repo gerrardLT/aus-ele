@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import { usePermissions } from '../hooks/usePermissions.js';
 import { getApiBase } from '../lib/apiBase.js';
 
 const API_BASE = getApiBase();
@@ -16,8 +17,13 @@ export default function MembersPage() {
   const lang = readLang();
   const zh = lang === 'zh';
   const workspaceId = auth?.workspaceId;
-  const role = auth?.workspaces?.find((w) => w.workspace_id === workspaceId)?.role || '';
-  const canManage = role === 'owner' || role === 'admin';
+  // 后端真值：invites 的 list/create/revoke 全部走 check_workspace_permission(actor,
+  // "member_manage")（account_routes.py:562、access_control.py:1807/1840）。
+  // 用 member_manage 而不是 workspace_manage，是因为这两组权限当前恰好同集合（owner/admin），
+  // 但「恰好相等」不是「同一个东西」：日后给 admin 摘掉 workspace_manage 时，
+  // 写死角色串的页面会一起变，而按权限名门控的页面只会在真正需要的那一项上收敛。
+  const { canInWorkspace } = usePermissions(auth);
+  const canManage = canInWorkspace('member_manage');
 
   const [members, setMembers] = useState([]);
   const [invites, setInvites] = useState([]);

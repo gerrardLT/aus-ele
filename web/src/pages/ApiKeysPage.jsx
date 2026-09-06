@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import { usePermissions } from '../hooks/usePermissions.js';
 import { getApiBase } from '../lib/apiBase.js';
 
 const API_BASE = getApiBase();
@@ -16,8 +17,10 @@ export default function ApiKeysPage() {
   const lang = readLang();
   const zh = lang === 'zh';
   const workspaceId = auth?.workspaceId;
-  const role = auth?.workspaces?.find((w) => w.workspace_id === workspaceId)?.role || '';
-  const canManage = role === 'owner' || role === 'admin';
+  // 后端真值：GET/POST api-keys 走 check_workspace_permission(actor, "workspace_manage")
+  // （account_routes.py:632/660/688）。
+  const { canInWorkspace } = usePermissions(auth);
+  const canManage = canInWorkspace('workspace_manage');
 
   const [keys, setKeys] = useState([]);
   const [name, setName] = useState('');

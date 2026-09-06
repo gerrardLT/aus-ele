@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from '../contexts/AuthContext.jsx';
+import { usePermissions } from '../hooks/usePermissions.js';
 import { getApiBase } from '../lib/apiBase.js';
 
 const API_BASE = getApiBase();
@@ -17,8 +18,11 @@ function ReportsHome() {
   const { auth, getToken, isLoggedIn } = useAuth();
   const zh = readLang() === 'zh';
   const workspaceId = auth?.workspaceId;
-  const role = auth?.workspaces?.find((w) => w.workspace_id === workspaceId)?.role || '';
-  const canDelete = role === 'owner' || role === 'admin';
+  // 后端真值：DELETE /v1/reports/saved/{id} 用裸角色判定 owner/admin（p2_routes.py:233）。
+  // 这里刻意只门控「删除」：报告生成与查看任何 workspace 成员都能做（:217 只查 _assert_workspace），
+  // 把它升级成更大的 canManage 会误伤只读成员。
+  const { canInWorkspace } = usePermissions(auth);
+  const canDelete = canInWorkspace('workspace_manage');
 
   const [items, setItems] = useState([]);
   const [subs, setSubs] = useState([]);

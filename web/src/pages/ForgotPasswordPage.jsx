@@ -1,6 +1,7 @@
 // web/src/pages/ForgotPasswordPage.jsx
 // 忘记密码（2026-08-14）：/forgot 请求重置邮件；/reset?token=xxx 设置新密码。
 
+import { brandEyebrow } from '../lib/brand.js';
 import { useState } from 'react';
 import { getApiBase } from '../lib/apiBase.js';
 
@@ -73,7 +74,7 @@ export default function ForgotPasswordPage() {
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)] px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-muted)]">AEMO Intelligence</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-muted)]">{brandEyebrow(zh)}</div>
           <h1 className="mt-1 font-serif text-2xl text-[var(--color-text)]">
             {isReset ? (zh ? '设置新密码' : 'Set new password') : (zh ? '忘记密码' : 'Forgot password')}
           </h1>

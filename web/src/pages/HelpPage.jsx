@@ -1,6 +1,7 @@
 // web/src/pages/HelpPage.jsx
 // 帮助与反馈（P2-4，2026-08-14）：FAQ 手风琴 + 反馈表单。路由 /help，公开访问。
 
+import { brandEyebrow } from '../lib/brand.js';
 import { useState } from 'react';
 import { getValidAccessToken, tryRefreshToken } from '../lib/authStore.js';
 import { getApiBase } from '../lib/apiBase.js';
@@ -73,7 +74,7 @@ export default function HelpPage() {
       <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
           <a href="/" className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-muted)] hover:text-[var(--color-text)]">
-            ← AEMO Intelligence
+            ← {brandEyebrow(zh)}
           </a>
           <h1 className="text-sm font-semibold text-[var(--color-text)]">{zh ? '帮助中心' : 'Help center'}</h1>
         </div>

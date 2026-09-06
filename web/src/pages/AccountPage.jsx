@@ -2,14 +2,23 @@
 // 账户中心（P0，2026-08-13）：总览（个人资料+工作空间+用量看板）+ 子页导航。
 // 子路由：/account（总览） /account/members（成员） /account/api-keys（API Key）
 
+import { brandEyebrow } from '../lib/brand.js';
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from '../contexts/AuthContext.jsx';
+import SessionsPanel from '../components/account/SessionsPanel.jsx';
 import { getApiBase } from '../lib/apiBase.js';
+import { isDataRightsEnabled } from '../lib/dataRights.js';
+import { DELETION_PENDING_NOTICE } from '../lib/dataRightsApi.js';
+import { currentOrganization, showOrgAdminEntry } from '../lib/orgAdmin.js';
 
 const MembersPage = lazy(() => import('./MembersPage.jsx'));
+// R1.7 面板与 lib/dataRightsApi.js 只在该 tab 被打开时才需要，按子页同款方式切出去：
+// 主包为 790/850KB，把一个只在 flag 开启时才出现的隐私面板打进主 chunk 不划算。
+const DataPrivacyPanel = lazy(() => import('../components/account/DataPrivacyPanel.jsx'));
 const ApiKeysPage = lazy(() => import('./ApiKeysPage.jsx'));
 const AlertRulesPage = lazy(() => import('./AlertRulesPage.jsx'));
 const AuditPage = lazy(() => import('./AuditPage.jsx'));
+const OrgAdminPage = lazy(() => import('./OrgAdminPage.jsx'));
 
 const API_BASE = getApiBase();
 
@@ -168,68 +177,6 @@ function PasswordChangeForm({ zh, getToken }) {
   );
 }
 
-function SessionsSection({ zh, getToken }) {
-  const [items, setItems] = useState([]);
-  const [currentId, setCurrentId] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    const token = await getToken();
-    try {
-      const res = await fetch(`${API_BASE}/v1/account/sessions`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const body = await res.json();
-        setItems(body.items || []);
-        setCurrentId(body.current_session_id);
-      }
-    } catch { /* best-effort */ }
-  }, [getToken]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const revokeOthers = async () => {
-    setBusy(true);
-    const token = await getToken();
-    try {
-      await fetch(`${API_BASE}/v1/account/sessions/revoke-others`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      await load();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[var(--color-text)]">{zh ? '活跃会话' : 'Active sessions'}</h3>
-        {items.length > 1 && (
-          <button type="button" onClick={revokeOthers} disabled={busy}
-            className="rounded-lg border border-[var(--color-status-error)]/50 px-2 py-1 text-[10px] text-[var(--color-status-error)] hover:opacity-80 disabled:opacity-50">
-            {zh ? '登出其他设备' : 'Sign out others'}
-          </button>
-        )}
-      </div>
-      <ul className="space-y-1.5">
-        {items.map((s) => (
-          <li key={s.session_id} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-2 py-1.5 text-[10px] text-[var(--color-muted)]">
-            <span>
-              {s.auth_method || 'password'} · ws: {(s.workspace_id || '').slice(0, 12)}…
-              {s.session_id === currentId && <span className="ml-1 text-[var(--color-status-success)]">{zh ? '（当前）' : '(current)'}</span>}
-            </span>
-            <span className="font-mono">{(s.last_seen_at || s.created_at || '').slice(0, 16).replace('T', ' ')}</span>
-          </li>
-        ))}
-        {items.length === 0 && <li className="text-xs text-[var(--color-muted)]">{zh ? '无会话信息' : 'No sessions'}</li>}
-      </ul>
-    </section>
-  );
-}
-
 function AccountHome() {
   const { auth, getToken } = useAuth();
   const lang = readLang();
@@ -237,6 +184,8 @@ function AccountHome() {
   const [usage, setUsage] = useState(null);
   const role = auth?.workspaces?.find((w) => w.workspace_id === auth?.workspaceId)?.role || '';
 
+  // AccountPage: React Compiler memoization conflict (build skips, harmless)
+  /* eslint-disable react-hooks/preserve-manual-memoization */
   const loadUsage = useCallback(async () => {
     if (!auth?.workspaceId) return;
     const token = await getToken();
@@ -245,6 +194,7 @@ function AccountHome() {
     });
     if (res.ok) setUsage(await res.json());
   }, [auth?.workspaceId, getToken]);
+  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   useEffect(() => { loadUsage(); }, [loadUsage]);
 
@@ -325,7 +275,7 @@ function AccountHome() {
         </section>
         <SubscriptionCard zh={zh} workspaceId={auth?.workspaceId} role={role} getToken={getToken} onPlanChanged={loadUsage} />
         <PasswordChangeForm zh={zh} getToken={getToken} />
-        <SessionsSection zh={zh} getToken={getToken} />
+        <SessionsPanel lang={lang} />
       </div>
 
       <UsageBars
@@ -363,11 +313,36 @@ function AccountShell() {
     { id: 'alerts', path: '/account/alerts', label: zh ? '告警规则' : 'Alerts' },
     { id: 'audit', path: '/account/audit', label: zh ? '审计' : 'Audit' },
   ];
+  // 组织管理入口按「组织层」权限判定（判据在 lib/orgAdmin.js，有 node:test 与后端源码
+  // 逐条比对）。不能用两层并集的 can()：工作空间 owner 在组织端点上一样是 403。
+  const org = currentOrganization(auth);
+  if (showOrgAdminEntry(org)) {
+    tabs.push({ id: 'org', path: '/account/org', label: zh ? '组织管理' : 'Organization' });
+  }
+  // R1.7「数据与隐私」：入口存在性由 flag 决定，面板自己再按端点是否在线收起一次
+  // （ROUTE_MODULES 的单模块降级会让端点静默缺席，那时隐私页也不该说「可自助导出」）。
+  if (isDataRightsEnabled(import.meta.env)) {
+    tabs.push({ id: 'privacy', path: '/account/privacy', label: zh ? '数据与隐私' : 'Data & privacy' });
+  }
   const activeTab = tabs.find((t) => (t.id === 'overview' ? path === '/account' || path === '/account/' : path.startsWith(t.path))) || tabs[0];
+  // 直达 /account/org 但没有入口时仍然渲染该页：静默回落到总览会让人以为链接坏了，
+  // 而页面自己有「无组织 / 角色未知 / 无管理权限」三种解释性空态。
+  const onOrgRoute = path === '/account/org' || path.startsWith('/account/org/');
+  const onPrivacyRoute = path.startsWith('/account/privacy');
 
   const handleLogout = async () => {
     await logout();
     globalThis.location.href = '/';
+  };
+
+  // R1.7：受理删除的后端会同步撤销全部会话与令牌，本地 auth 必须一起清掉 ——
+  // 否则其它页面带着一个已作废的令牌继续发请求，用户看到的是一连串 401。
+  // 落地到 /login 而不是 /：删除排期后唯一可做的事就是重新登录去撤销。
+  const handleDeletionAccepted = async () => {
+    await logout();
+    // notice 值取自 lib 常量而不是裸字符串：登录页那段横幅的触发条件就是它，写成字面量
+    // 早晚会在某一次重命名里变成「跳过去什么也没说」。
+    globalThis.location.href = `/login?notice=${DELETION_PENDING_NOTICE}`;
   };
 
   return (
@@ -375,7 +350,7 @@ function AccountShell() {
       <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-6 py-4">
           <a href="/" className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-muted)] hover:text-[var(--color-text)]">
-            ← AEMO Intelligence
+            ← {brandEyebrow(zh)}
           </a>
           <h1 className="font-serif text-lg text-[var(--color-text)]">{zh ? '账户中心' : 'Account'}</h1>
           <nav className="flex gap-1">
@@ -403,7 +378,7 @@ function AccountShell() {
       </header>
       <main className="mx-auto max-w-6xl px-6 py-8">
         <Suspense fallback={<div className="py-16 text-center text-sm text-[var(--color-muted)]">{zh ? '加载中…' : 'Loading…'}</div>}>
-          {activeTab.id === 'members' ? <MembersPage /> : activeTab.id === 'api-keys' ? <ApiKeysPage /> : activeTab.id === 'alerts' ? <AlertRulesPage /> : activeTab.id === 'audit' ? <AuditPage /> : <AccountHome />}
+          {activeTab.id === 'members' ? <MembersPage /> : activeTab.id === 'api-keys' ? <ApiKeysPage /> : activeTab.id === 'alerts' ? <AlertRulesPage /> : activeTab.id === 'audit' ? <AuditPage /> : onOrgRoute ? <OrgAdminPage /> : onPrivacyRoute ? <DataPrivacyPanel lang={lang} onSessionEnded={handleDeletionAccepted} /> : <AccountHome />}
         </Suspense>
       </main>
     </div>

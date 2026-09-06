@@ -3,6 +3,7 @@
 // 锚点：[data-tour] 属性（sidebar/stages/filters/ai/bell）；无依赖纯 React 实现。
 // 状态持久化 localStorage（aus_tour_v1）；/?tour=1 可强制重新开启。
 
+import { brandWelcome } from '../lib/brand.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const TOUR_KEY = 'aus_tour_v1';
@@ -24,7 +25,7 @@ function buildSteps(zh) {
     {
       id: 'welcome',
       target: null,
-      title: zh ? '欢迎使用 AEMO Intelligence' : 'Welcome to AEMO Intelligence',
+      title: brandWelcome(zh),
       body: zh
         ? '澳洲 NEM/WEM 储能市场进入与收益判断工作台：市场真相 → 前瞻机会 → 进入结论，每一步数值都可溯源。花 60 秒了解核心动线。'
         : 'Your workbench for Australia NEM/WEM storage market entry & revenue judgment. Every number is traceable. Take 60 seconds to see the core flow.',

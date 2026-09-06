@@ -8,6 +8,8 @@
  */
 
 import SidebarNavigation from './SidebarNavigation';
+import AnonymousNoticeBanner from './AnonymousNoticeBanner.jsx';
+import WorkspaceSwitcher from './WorkspaceSwitcher.jsx';
 import FilterBar from './FilterBar';
 import { useTheme } from '../contexts/ThemeContext';
 import { Sun, Moon } from 'lucide-react';
@@ -62,6 +64,10 @@ export default function PageShell({
                 })}
               </div>
             </nav>
+            {/* 账户状态提示（R1.9/R1.1）：匿名 → 引导注册；已登录未验证 → 引导验证。
+                判据集中在 lib/accountNotices.js，状态未知时整条横幅不渲染。 */}
+            <AnonymousNoticeBanner lang={lang} />
+
             {/* Header */}
             <div className="col-span-12 mt-4 mb-2 flex items-center justify-between">
               <div>
@@ -73,6 +79,9 @@ export default function PageShell({
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                {/* 工作空间切换（R1.5）：多空间用户的全局入口。只有一条空间或匿名时
+                    组件自行返回 null，故此处无需条件渲染。 */}
+                <WorkspaceSwitcher lang={lang} />
                 <button
                   onClick={toggleTheme}
                   className="p-2 border border-[var(--color-border)] rounded-full hover:border-[var(--color-text)] transition-colors"

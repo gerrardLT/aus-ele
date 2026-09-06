@@ -1,6 +1,6 @@
 """Agent Tool Registry.
 
-Wraps existing AEMO Intelligence analysis engines as callable tools
+Wraps existing Tianshu analysis engines as callable tools
 in OpenAI function-calling format. Each tool maps to an existing engine
 or route-level function, preserving the project's current architecture.
 

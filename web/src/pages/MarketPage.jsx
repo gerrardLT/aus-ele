@@ -152,7 +152,7 @@ export default function MarketPage({ market }) {
 
   // S6/F2: fetch stage summaries once at page level (not per-tab)
   const summaryMarket = filters.region === 'WEM' ? 'WEM' : 'NEM';
-  const { summaries, loading: summaryLoading } = useStageSummaries(
+  const { summaries, loading: summaryLoading, errors } = useStageSummaries(
     summaryMarket, filters.region, filters.year, DEFAULT_BESS_PARAMS
   );
 
@@ -255,6 +255,7 @@ export default function MarketPage({ market }) {
             onVisible={() => {}}
             conclusionData={summaries[activeStage.id] || null}
             isSummaryLoading={summaryLoading[activeStage.id] ?? false}
+            summaryError={errors[activeStage.id] || null}
           />
         </div>
       )}

@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import { usePermissions } from '../hooks/usePermissions.js';
 import { getApiBase } from '../lib/apiBase.js';
 
 const API_BASE = getApiBase();
@@ -27,8 +28,12 @@ export default function AlertRulesPage() {
   const { auth, getToken } = useAuth();
   const zh = readLang() === 'zh';
   const workspaceId = auth?.workspaceId;
-  const role = auth?.workspaces?.find((w) => w.workspace_id === workspaceId)?.role || '';
-  const canManage = role === 'owner' || role === 'admin';
+  // 后端真值：/api/alerts/rules 的写路径用裸角色判定 actor["membership"]["role"] in
+  // ("owner","admin")（p2_routes.py:124/156）。workspace_manage 当前恰好只授予 owner+admin
+  // （access_control.py:70-71），所以按权限名门控与现行为严格等价。
+  // 注意后端这里**没有**走 check_workspace_permission —— 见 R7 债务清单「权限模型双轨」。
+  const { canInWorkspace } = usePermissions(auth);
+  const canManage = canInWorkspace('workspace_manage');
 
   const [rules, setRules] = useState([]);
   const [showForm, setShowForm] = useState(false);
