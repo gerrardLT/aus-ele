@@ -598,14 +598,15 @@
           ]
         },
         "fee_schema_source": "models.cost_structure_models.RegionalFeeConfig（pydantic 真源，含 Field 值域；校验层不另写第二份口径）",
-        "health_mapping": "error → knowledge_health overdue（healthy=False）/ warning → due_soon / 干净 → ok"
+        "project_status_source": "models.capacity_models.CapacityProject.status 的 Literal 派生（2026-09-06 审查 #3：不另写第二份口径）；消费方红门（regional_timing_engine 只分桶 committed/construction/planning）由 tests/test_domain_data_validation.py::CapacityStatusWhitelistLockTests 锁住",
+        "health_mapping": "error → knowledge_health overdue（healthy=False）/ warning → due_soon / 干净 → ok / 校验层不可用（import 或执行报错）→ overdue（审查 #2：不击穿整份报告）"
       },
       "consumed_by": [
         "backend/services/knowledge_health.py::check_domain_data_schemas",
         "运营更新这 5 份 JSON 后的人工自查入口"
       ],
       "source": "2026-09-06 R6.6 实施。诊断 §4.4：5 份手工 JSON 无 schema 校验是静默污染源 —— regional_fee_defaults 解析失败时 cost_structure_engine 静默回退 hardcoded（运营修改无声丢失）。",
-      "boundary": "只做检查与报告，不改行为、不自动修复。pydantic extra=ignore 会静默吞未知键，未知键由校验层用 model_fields 比对补充抓取。新增 region/status 白名单值时校验会先变红，需先确认消费方真的会处理。",
+      "boundary": "只做检查与报告，不改行为、不自动修复。pydantic extra=ignore 会静默吞未知键，未知键由校验层用 model_fields 比对补充抓取。新增 region 白名单值时校验会先变红，需先确认消费方真的会处理；status 白名单从 CapacityProject Literal 自动跟随，红门在锁测试层。逐份 best-effort 隔离覆盖缺文件/坏 JSON/非 UTF-8 编码（UnicodeDecodeError 继承 ValueError 而非 OSError，已单独接住）/校验器内部异常四类。",
       "last_calibrated": "2026-09-06",
       "modified_by": "qoder-agent"
     }

@@ -26,7 +26,9 @@ import json
 import logging
 import os
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Optional, get_args
+
+from models.capacity_models import CapacityProject
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,12 @@ _DEFAULT_DATA_DIR = os.path.join(_ROOT, "data")
 # NEM/WEM 区域白名单（与 cost_structure_engine 的 hardcoded 六区域一致；
 # capacity_data 现值确认 2026-09-06：{NSW1, QLD1, SA1, TAS1, VIC1, WEM}）
 REGION_WHITELIST = {"NSW1", "QLD1", "SA1", "TAS1", "VIC1", "WEM"}
-# capacity_data projects[].status 白名单（现值确认 2026-09-06）。新状态出现时校验
-# 变红是刻意的：新状态必须先确认消费方（regional_timing_engine 按
-# committed/construction/planning 分桶）真的会处理它。
-PROJECT_STATUS_WHITELIST = {"committed", "construction", "planning", "registered"}
+# capacity_data projects[].status 白名单：从 pydantic 真源 CapacityProject 的
+# Literal 派生，不另写第二份口径（R6.6 审查 #3，2026-09-06）。
+# 消费方红门（regional_timing_engine 只分桶 committed/construction/planning，
+# registered 待确认）由测试层锁住：Literal 加新值 → 白名单自动跟随 → 锁测试红
+# → 强制先确认消费方再同步更新锁测试期望值。
+PROJECT_STATUS_WHITELIST = set(get_args(CapacityProject.model_fields["status"].annotation))
 
 
 def _parse_iso_date(value: Any) -> Optional[date]:
@@ -179,6 +183,7 @@ def validate_regional_fee_defaults(data: Any) -> dict:
     missing = REGION_WHITELIST - set(regions)
     if missing:
         _err(report, f"缺少区域配置：{sorted(missing)}（cost_structure_engine 将对其回退 hardcoded 值）")
+    known = RegionalFeeConfig.model_fields.keys()  # 循环不变量，不在内层重复求值（审查 #7）
     for key, value in regions.items():
         if not isinstance(value, dict):
             _err(report, f"{key}: 区域配置不是对象")
@@ -192,7 +197,6 @@ def validate_regional_fee_defaults(data: Any) -> dict:
             _err(report, f"{key}: 不满足 RegionalFeeConfig 契约：{exc}")
         # pydantic 默认 extra=ignore 会静默吞掉拼错的字段名 —— 手动比对已知键集
         for sub_name, sub in value.items():
-            known = RegionalFeeConfig.model_fields.keys()
             if sub_name not in known:
                 _err(report, f"{key}.{sub_name}: 未知字段（known={sorted(known)}；拼错的字段会被静默忽略并用默认值）")
                 continue
@@ -275,6 +279,15 @@ def validate_all(data_dir: Optional[str] = None) -> dict[str, dict]:
         except json.JSONDecodeError as exc:
             result[name] = {
                 "ok": False, "errors": [f"JSON 不可解析：{exc}"], "warnings": [], "item_count": 0,
+            }
+            continue
+        except (UnicodeDecodeError, ValueError) as exc:
+            # 非 UTF-8 文件（如中文 Windows 下误存 GBK/UTF-16）在 json.load 读取时
+            # 抛 UnicodeDecodeError —— 它继承 ValueError 而非 OSError，不在此前三分支
+            # 内会直接逃逸击穿「逐份 best-effort」契约，整份健康报告不可用（审查 #1）。
+            # json.JSONDecodeError 也是 ValueError 子类，故本分支必须排在它之后。
+            result[name] = {
+                "ok": False, "errors": [f"文件编码/解析异常：{exc}"], "warnings": [], "item_count": 0,
             }
             continue
         except OSError as exc:

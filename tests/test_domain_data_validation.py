@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the hand-maintained domain JSON validation layer (R6.6, 2026-09-06).
 
-覆盖三块：
+覆盖四块：
 1. 真实 data/ 下 5 份文件当前全部通过（结构演进/误编辑时这里先红）；
 2. 破损样本 —— 每类「会静默污染下游分析」的填错都必须被抓（诊断 §4.4）；
 3. knowledge_health.check_domain_data_schemas 的三态映射
-   （error → overdue / warning → due_soon / 干净 → ok）。
+   （error → overdue / warning → due_soon / 干净 → ok）；
+4. 审查修复回归（2026-09-06）：非 UTF-8 文件隔离 / 校验层不可用降级 / capacity
+   状态白名单与 CapacityProject Literal 的双向锁。
 """
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import get_args
 from unittest.mock import patch
 
 from tests.support import ensure_repo_import_paths
@@ -28,6 +32,8 @@ from services.domain_data_validation import (
     validate_regional_fee_defaults,
 )
 from services.knowledge_health import check_domain_data_schemas
+
+from models.capacity_models import CapacityProject
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +335,27 @@ class ValidateAllIoTests(unittest.TestCase):
             if name != "capacity_data.json":
                 self.assertTrue(result[name]["ok"], name)
 
+    def test_non_utf8_file_isolated(self):
+        """审查 #1：GBK/UTF-16 误存文件抛 UnicodeDecodeError（ValueError 子类而非
+        OSError），必须被隔离成单文件 error，不得击穿其余 4 份。"""
+        files = _all_minimal_files()
+        _write_files(self.data_dir, files)
+        # 纯 ASCII 的 GBK 字节 == UTF-8，不会触发解码错 —— 必须带非 ASCII 字符
+        payload = _minimal_capacity_data()
+        payload["projects"][0]["project_name"] = "测试电站-中文"
+        gbk_bytes = json.dumps(payload, ensure_ascii=False).encode("gbk")
+        (Path(self.data_dir) / "capacity_data.json").write_bytes(gbk_bytes)
+
+        result = validate_all(self.data_dir)
+        self.assertFalse(result["capacity_data.json"]["ok"])
+        self.assertTrue(
+            any("文件编码/解析异常" in e for e in result["capacity_data.json"]["errors"]),
+            result["capacity_data.json"]["errors"],
+        )
+        for name in result:
+            if name != "capacity_data.json":
+                self.assertTrue(result[name]["ok"], f"{name} 被坏编码文件串扰: {result[name]['errors']}")
+
 
 # ---------------------------------------------------------------------------
 # 4. knowledge_health 三态映射
@@ -366,6 +393,43 @@ class KnowledgeHealthMappingTests(unittest.TestCase):
             item = check_domain_data_schemas()
         self.assertEqual(item["status"], "ok")
         self.assertIn("运营节奏清单", item["sop_ref"])
+        # 审查 #6：份数文案跟随 VALIDATORS 注册数，不是字面量
+        self.assertIn(f"{len(domain_data_validation.VALIDATORS)} 份", item["detail"])
+
+    def test_validation_unavailable_maps_to_overdue(self):
+        """审查 #2：校验层 import/调用报错时必须降级为 overdue，
+        不得把整份健康报告带成「完全不可用」。"""
+        with patch.dict(sys.modules, {"services.domain_data_validation": None}):
+            item = check_domain_data_schemas()
+        self.assertEqual(item["status"], "overdue")
+        self.assertIn("校验层不可用", item["detail"])
+        self.assertIn("运营节奏清单", item["sop_ref"])
+
+
+# ---------------------------------------------------------------------------
+# 5. capacity 状态白名单与 pydantic 真源的双向锁（审查 #3）
+# ---------------------------------------------------------------------------
+
+
+class CapacityStatusWhitelistLockTests(unittest.TestCase):
+    """白名单从 CapacityProject.status 的 Literal 派生（不另写第二份口径），
+    消费方红门（regional_timing_engine 只分桶 committed/construction/planning，
+    registered 待确认）由本测试锁住：Literal 增删值 → 期望集红 → 必须先确认
+    消费方再同步更新 EXPECTED_STATUSES。"""
+
+    EXPECTED_STATUSES = {"committed", "construction", "planning", "registered"}
+
+    def test_whitelist_derives_from_literal_true_source(self):
+        literal_values = set(get_args(CapacityProject.model_fields["status"].annotation))
+        self.assertEqual(domain_data_validation.PROJECT_STATUS_WHITELIST, literal_values)
+
+    def test_literal_matches_consumer_confirmed_statuses(self):
+        literal_values = set(get_args(CapacityProject.model_fields["status"].annotation))
+        self.assertEqual(
+            literal_values, self.EXPECTED_STATUSES,
+            "CapacityProject.status Literal 变更：新状态必须先确认 regional_timing_engine "
+            "是否真的处理它（分桶逻辑），确认后同步更新 EXPECTED_STATUSES",
+        )
 
 
 if __name__ == "__main__":

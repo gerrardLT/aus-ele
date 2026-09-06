@@ -195,24 +195,35 @@ def check_domain_data_schemas() -> dict:
 
     诊断 §4.4：5 份手工 JSON 无 schema 校验，填错会静默污染下游分析。
     status 映射：error → overdue（healthy=False，强制人看）；warning → due_soon
-    （证据缺失级别，需关注但不阻断）。
+    （证据缺失级别，需关注但不阻断）；校验层自身不可用 → overdue（审查 #2：
+    其余检查项都经 _load_json 做 best-effort，本项不能因为 import/调用报错把
+    整份报告从「部分降级」带成「完全不可用」）。
     """
-    from services.domain_data_validation import validate_all
+    try:
+        from services.domain_data_validation import validate_all
 
-    result = validate_all()
+        result = validate_all()
+    except Exception as exc:  # noqa: BLE001 —— 兜底所有失败模式，降级为 overdue
+        logger.warning(f"knowledge health: domain data validation unavailable: {exc}")
+        return _item(
+            "domain_data_schema", "手工领域 JSON 结构校验", "随更新+周检",
+            "overdue", f"校验层不可用：{exc}（需人工排查 services.domain_data_validation）",
+            sop_section="§6",
+        )
     broken = {name: r for name, r in result.items() if r["errors"]}
     warned = [name for name, r in result.items() if r["warnings"]]
     if broken:
         detail = f"{len(broken)} 份文件校验失败：{', '.join(sorted(broken))}；详见 services.domain_data_validation.validate_all()"
         return _item("domain_data_schema", "手工领域 JSON 结构校验", "随更新+周检",
                      "overdue", detail, sop_section="§6")
+    file_count = len(result)  # 份数跟随 VALIDATORS 注册数，不写字面量（审查 #6）
     if warned:
         return _item("domain_data_schema", "手工领域 JSON 结构校验", "随更新+周检",
-                     "due_soon", f"5 份全部通过，但有 warnings：{', '.join(sorted(warned))}（证据缺失级别）",
+                     "due_soon", f"{file_count} 份全部通过，但有 warnings：{', '.join(sorted(warned))}（证据缺失级别）",
                      sop_section="§6")
     total_warnings = sum(len(r["warnings"]) for r in result.values())
     return _item("domain_data_schema", "手工领域 JSON 结构校验", "随更新+周检",
-                 "ok", f"5 份手工 JSON 全部通过结构校验（{total_warnings} warnings）",
+                 "ok", f"{file_count} 份手工 JSON 全部通过结构校验（{total_warnings} warnings）",
                  sop_section="§6")
 
 
