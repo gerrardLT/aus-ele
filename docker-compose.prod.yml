@@ -108,6 +108,11 @@ services:
       AUS_ELE_PG_MAX_CONNECTIONS: 10
       AUS_ELE_ENABLE_SCHEDULER: ${AUS_ELE_WORKER_ENABLE_SCHEDULER:-true}
       AUS_ELE_ENABLE_JOB_WORKER: ${AUS_ELE_WORKER_ENABLE_JOB_WORKER:-true}
+      # R7 注册开关透传 worker（审查 #8）：worker 与 backend 同镜像同 CMD（含
+      # /api/v1/register），一旦未来 worker 被接入流量，紧急回滚（=false → 403）
+      # 需两个进程同时生效。OAuth 凭据故意不透传：worker 不进 nginx upstream，
+      # 传密钥只会无谓扩大暴露面。
+      AUS_ELE_ENABLE_SELF_SERVICE_REGISTER: ${AUS_ELE_ENABLE_SELF_SERVICE_REGISTER:-true}
       AUS_ELE_RECONCILIATION_ENABLED: ${AUS_ELE_RECONCILIATION_ENABLED:-false}
       AUS_ELE_CORS_ALLOW_ORIGINS: ${AUS_ELE_CORS_ALLOW_ORIGINS:-http://localhost:${WEB_HOST_PORT:-18080},http://127.0.0.1:${WEB_HOST_PORT:-18080}}
       AUS_ELE_CORS_ALLOW_CREDENTIALS: ${AUS_ELE_CORS_ALLOW_CREDENTIALS:-false}
