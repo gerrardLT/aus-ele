@@ -14,6 +14,7 @@ stub_optional_dep("numpy_financial")
 
 from database import DatabaseManager
 import server
+import routes.investment_routes as inv
 
 
 class WorkspaceIsolationTests(unittest.TestCase):
@@ -434,5 +435,6 @@ class WorkspaceIsolationTests(unittest.TestCase):
         }
         params = server.InvestmentParams(region="WEM", power_mw=100, duration_hours=4, backtest_years=[2025])
         with self.assertRaises(HTTPException) as ctx:
-            server.investment_analysis(params, access_scope=scope)
+            # R4.3：直调生产入口 routes.investment_routes（scope 校验在缓存层之前）
+            inv.investment_analysis(params, access_scope=scope)
         self.assertEqual(ctx.exception.status_code, 403)

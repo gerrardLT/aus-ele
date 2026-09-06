@@ -10,6 +10,12 @@ ensure_repo_import_paths()
 from database import DatabaseManager
 from models.financial_params import FinancialAssumptions
 import server
+import routes.investment_routes as inv  # noqa: E402
+
+
+def _passthrough_store(**kwargs):
+    """不落盘的缓存 store 透传：隔离生产 PG 的 analysis_cache。"""
+    return kwargs["response_payload"]
 
 
 def make_interval(timestamp: str, price: float, interval_hours: float):
@@ -37,16 +43,22 @@ class InvestmentBacktestDriverTests(unittest.TestCase):
             os.remove(self.db_path)
 
     def test_investment_analysis_prefers_standardized_backtest_engine_when_intervals_exist(self):
-        with mock.patch(
-            "server._fetch_bess_backtest_intervals",
-            return_value=[
-                make_interval("2025-01-01 00:00:00", 10.0, 1.0),
-                make_interval("2025-01-01 01:00:00", 100.0, 1.0),
-                make_interval("2025-01-01 02:00:00", 10.0, 1.0),
-                make_interval("2025-01-01 03:00:00", 100.0, 1.0),
-            ],
+        # R4.3（2026-09-06）：生产入口是 routes.investment_routes（含 P0.7 缓存层），
+        # 原直调 server.investment_analysis 死副本；迁移后缓存层 mock 隔离 PG。
+        with (
+            mock.patch(
+                "server._fetch_bess_backtest_intervals",
+                return_value=[
+                    make_interval("2025-01-01 00:00:00", 10.0, 1.0),
+                    make_interval("2025-01-01 01:00:00", 100.0, 1.0),
+                    make_interval("2025-01-01 02:00:00", 10.0, 1.0),
+                    make_interval("2025-01-01 03:00:00", 100.0, 1.0),
+                ],
+            ),
+            mock.patch.object(inv, "_analysis_cache_lookup", return_value=None),
+            mock.patch.object(inv, "_analysis_cache_store", side_effect=_passthrough_store),
         ):
-            result = server.investment_analysis(
+            result = inv.investment_analysis(
                 server.InvestmentParams(
                     region="NSW1",
                     power_mw=1.0,
@@ -84,9 +96,13 @@ class InvestmentBacktestDriverTests(unittest.TestCase):
         self.assertFalse(result["backtest_fallback_used"])
 
     def test_investment_analysis_does_not_fall_back_to_legacy_backtest_when_standardized_path_is_unavailable(self):
-        with mock.patch("server._fetch_bess_backtest_intervals", return_value=[]), \
-                mock.patch("bess_backtest.backtest_arbitrage") as mock_legacy_backtest:
-            result = server.investment_analysis(
+        with (
+            mock.patch("server._fetch_bess_backtest_intervals", return_value=[]),
+            mock.patch("bess_backtest.backtest_arbitrage") as mock_legacy_backtest,
+            mock.patch.object(inv, "_analysis_cache_lookup", return_value=None),
+            mock.patch.object(inv, "_analysis_cache_store", side_effect=_passthrough_store),
+        ):
+            result = inv.investment_analysis(
                 server.InvestmentParams(
                     region="NSW1",
                     power_mw=100,
