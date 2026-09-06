@@ -253,6 +253,52 @@ def _load_fcas_prices(
         return {s: [] for s in fcas_services}
 
 
+def downsample_to_30min(
+    energy_prices: list[dict],
+    fcas_prices: dict[str, list[float]] | None,
+    *,
+    bucket_size: int = 6,
+    min_intervals: int = 2000,
+) -> tuple[list[dict], dict[str, list[float]]]:
+    """把 5min 价格序列桶均值为 30min，把 MILP 问题规模缩到 ~1/6。
+
+    R4.2（2026-09-06）从 coopt 路由的内联逻辑抽出，供投资分析 co_optimized
+    基线路径复用。能量按 ``interval_hours`` 计价（引擎约定）：均值价 × 0.5h
+    与原始 6 段 × 5min 收入一致 —— 收入守恒，仅峰值被平滑（对套利基线的
+    影响登记于 data/assumptions_registry.json::coopt_milp_resolution）。
+
+    以下情况原样返回（降采样不划算或已降过）：数据量不足 ``min_intervals``、
+    首点 ``interval_hours`` 已粗于 5min（WEM 30min 结算数据）。
+    """
+    if not energy_prices or len(energy_prices) <= min_intervals:
+        return energy_prices, fcas_prices or {}
+
+    first_interval_hours = float(energy_prices[0].get("interval_hours") or (5.0 / 60.0))
+    if first_interval_hours > (5.0 / 60.0) + 1e-9:
+        return energy_prices, fcas_prices or {}
+
+    downsampled: list[dict] = []
+    for i in range(0, len(energy_prices), bucket_size):
+        bucket = energy_prices[i:i + bucket_size]
+        downsampled.append({
+            "timestamp": bucket[0]["timestamp"],
+            "price": sum(p["price"] for p in bucket) / len(bucket),
+            "interval_hours": 0.5,  # 30 minutes
+        })
+
+    ds_fcas: dict[str, list[float]] = {}
+    for service, prices in (fcas_prices or {}).items():
+        if len(prices) > min_intervals:
+            ds_fcas[service] = [
+                sum(prices[i:i + bucket_size]) / len(prices[i:i + bucket_size])
+                for i in range(0, len(prices), bucket_size)
+            ]
+        else:
+            ds_fcas[service] = prices
+
+    return downsampled, ds_fcas
+
+
 # ---------------------------------------------------------------------------
 # Route: POST /backtest
 # ---------------------------------------------------------------------------
@@ -341,33 +387,16 @@ async def run_co_optimization(
 
     # Downsample to 30-minute intervals for MILP performance (fast mode only)
     # 5-min data → 30-min: reduces problem size by 6x (from ~9000 to ~1500 variables per month)
-    # In precise mode, keep original 5-min data for higher accuracy
-    if params.resolution == "fast" and len(energy_prices) > 2000 and interval_minutes <= 5:
-        downsampled = []
-        bucket_size = 6  # 6 × 5min = 30min
-        for i in range(0, len(energy_prices), bucket_size):
-            bucket = energy_prices[i:i + bucket_size]
-            avg_price = sum(p["price"] for p in bucket) / len(bucket)
-            downsampled.append({
-                "timestamp": bucket[0]["timestamp"],
-                "price": avg_price,
-                "interval_hours": 0.5,  # 30 minutes
-            })
-        energy_prices = downsampled
-        # Also downsample FCAS prices
-        if fcas_prices:
-            for service in list(fcas_prices.keys()):
-                prices = fcas_prices[service]
-                if len(prices) > 2000:
-                    ds_prices = []
-                    for i in range(0, len(prices), bucket_size):
-                        bucket = prices[i:i + bucket_size]
-                        ds_prices.append(sum(bucket) / len(bucket))
-                    fcas_prices[service] = ds_prices
-        logger.info(
-            f"Downsampled {params.region} {params.year}-{params.month} from "
-            f"{len(energy_prices) * bucket_size} to {len(energy_prices)} intervals (30-min)"
-        )
+    # In precise mode, keep original 5-min data for higher accuracy.
+    # R4.2（2026-09-06）：逻辑抽入 downsample_to_30min，与投资分析 co_optimized 基线共用。
+    if params.resolution == "fast":
+        original_count = len(energy_prices)
+        energy_prices, fcas_prices = downsample_to_30min(energy_prices, fcas_prices)
+        if len(energy_prices) != original_count:
+            logger.info(
+                f"Downsampled {params.region} {params.year}-{params.month} from "
+                f"{original_count} to {len(energy_prices)} intervals (30-min)"
+            )
     elif params.resolution == "precise":
         logger.info(
             f"Precise mode: keeping original {interval_minutes}-min data "

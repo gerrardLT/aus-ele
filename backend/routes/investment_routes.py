@@ -329,6 +329,7 @@ def _compute_co_optimized_baseline(params: InvestmentParams):
         FCAS_COLUMN_MAP,
         _load_energy_prices,
         _load_fcas_prices,
+        downsample_to_30min,
     )
     from services.investment_baseline import (
         DEFAULT_FCAS_SERVICES,
@@ -340,12 +341,18 @@ def _compute_co_optimized_baseline(params: InvestmentParams):
     interval_minutes = get_settlement_interval(params.region)
     fcas_services = [s for s in DEFAULT_FCAS_SERVICES if s in FCAS_COLUMN_MAP]
 
+    # R4.2（2026-09-06）：原先这里绕过降采样、全年逐 5min 数据直接进 MILP（每回
+    # ~4400 变量/月 × 12 月）。coopt_resolution=fast 时桶均值到 30min（~1/6），
+    # precise（默认）保持原行为，数值零回归。resolution 已入缓存键，不互串。
+    downsample = params.coopt_resolution == "fast"
     yearly_price_data: list[dict] = []
     for year in params.backtest_years:
         energy_prices = _load_energy_prices(db, params.region, year, None, interval_minutes)
         if not energy_prices:
             continue
         fcas_prices = _load_fcas_prices(db, params.region, year, None, fcas_services)
+        if downsample:
+            energy_prices, fcas_prices = downsample_to_30min(energy_prices, fcas_prices)
         yearly_price_data.append({"energy_prices": energy_prices, "fcas_prices": fcas_prices})
 
     if not yearly_price_data:

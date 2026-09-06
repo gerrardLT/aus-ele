@@ -142,6 +142,12 @@ class InvestmentParams(BaseModel):
     # single energy+FCAS jointly-optimized baseline from CoOptimizationEngine,
     # eliminating the power-capacity double-count of the additive path.
     revenue_baseline_mode: Literal["additive", "co_optimized"] = "additive"
+    # R4.2（2026-09-06）：co_optimized 基线的 MILP 求解粒度。precise（默认）逐原始
+    # 5min 数据求解，数值零回归；fast 桶均值到 30min（downsample_to_30min），
+    # 问题规模 ~1/6，全年联合优化显著提速。30min 平滑对套利基线的影响登记于
+    # data/assumptions_registry.json::coopt_milp_resolution。该字段已入缓存键
+    # （model_dump 参与 _stable_cache_key），不同 resolution 的结果不会互串。
+    coopt_resolution: Literal["fast", "precise"] = "precise"
     fcas_activation_probability: float = 0.15 # Real-world probability that FCAS is called and drains SoC
     
     dispatch_mode: DispatchMode = DispatchMode.HINDSIGHT_OPTIMIZED

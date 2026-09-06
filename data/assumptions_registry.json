@@ -528,6 +528,35 @@
       "boundary": "法律页不做探测，所以 flag 翻 true 必须晚于后端路由上线，否则隐私政策成为不实陈述（Spec §232 的顺序约束）。这是运维顺序责任，不是代码能保证的。",
       "last_calibrated": "2026-09-06",
       "modified_by": "qoder-agent"
+    },
+    {
+      "id": "coopt_milp_resolution",
+      "name": "co_optimized 基线 MILP 求解粒度与 30min 平滑",
+      "location": "backend/routes/coopt_routes.py::downsample_to_30min",
+      "category": "revenue_model",
+      "status": "wired",
+      "value": {
+        "default": "precise",
+        "fast_bucket_minutes": 30,
+        "fast_bucket_size": 6,
+        "min_intervals": 2000,
+        "energy_conservation": "均值价 × 0.5h = 6 × (原价 × 5min)，能量与 FCAS 收入均守恒，仅峰值被平滑",
+        "measured_wall_time": {
+          "date": "2026-09-06",
+          "dataset": "NSW1 2024-2025 两年 5min 真实结算价（years_used=2）",
+          "fast_seconds": {"n": 5, "min": 137.57, "p50": 140.19, "p95": 164.81, "max": 164.64},
+          "precise_seconds": {"n": 1, "value": 1250.67},
+          "speedup": "≈7.6×（高于线性 6×，MILP 超线性成分）"
+        }
+      },
+      "consumed_by": [
+        "backend/routes/investment_routes.py::_compute_co_optimized_baseline（params.coopt_resolution）",
+        "backend/routes/coopt_routes.py（resolution=fast 分支）"
+      ],
+      "source": "2026-09-06 R4.2 实施。投资分析 co_optimized 路径原先绕过降采样、全年逐 5min 数据直接进 MILP（~4400 变量/月 × 12 月）；降采样后问题规模 ~1/6。同日 R4.5 实测：precise 单次 1250.67s 远超交互预算，fast p95=164.81s。",
+      "boundary": "仅 revenue_baseline_mode=co_optimized 或 coopt API resolution=fast 时生效；precise 默认数值零回归。30min 桶均值会平滑 5min 峰值，套利基线通常略降（负价/尖峰段被摊平），因此 fast 定位为响应速度换精度的显式选项，不作默认。coopt_resolution 已入 investment 响应缓存键，不同 resolution 不互串。",
+      "last_calibrated": "2026-09-06",
+      "modified_by": "qoder-agent"
     }
   ]
 }
