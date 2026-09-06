@@ -186,6 +186,10 @@ export default function InvestmentAnalysis({ region, year, lang = 'en', t, scope
     try {
       const body = {
         region,
+        // R4.2（2026-09-06）：请求体带上 UI 筛选年份，否则后端按默认 backtest_years
+        // [2024, 2025] 计算，而界面 chips 显示的是用户所选年份 —— 展示与计算脱节。
+        // 顶栏筛选变化仍不自动重算（懒加载设计），仅在用户点击运行按钮时生效。
+        backtest_years: [year || nextParams.backtest_years[0]],
         battery: {
           power_mw: nextParams.power_mw,
           duration_hours: nextParams.duration_hours,
