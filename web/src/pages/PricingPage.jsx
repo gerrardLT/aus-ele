@@ -208,6 +208,20 @@ export default function PricingPage() {
             </a>
             {zh ? '。' : '.'}
           </p>
+          {/* R6.1（2026-09-06）：Pro 套餐承诺的「方法论白皮书」在此给出真实出处 —— 之前这是
+              一句没有出处的承诺（产品里不存在这份东西）。methodologyReachability.test.js
+              锁住：定价页必须含 /methodology 入口，否则承诺再次悬空时无测试会红。 */}
+          <p className="mt-3 text-[10px] text-[var(--color-muted)]">
+            {zh
+              ? 'Pro 套餐承诺的「方法论白皮书」：'
+              : 'The methodology whitepaper promised with Pro: '}
+            <a href="/methodology" className="underline hover:text-[var(--color-text)]">
+              {zh ? 'NEM BESS 收益基准指数方法论白皮书' : 'NEM BESS revenue benchmark methodology whitepaper'}
+            </a>
+            {zh
+              ? '（公测期公开，含计算口径、参考资产参数、覆盖边界与第三方校准记录）。'
+              : ' (public during the beta: calculation basis, reference asset parameters, coverage boundary and third-party calibration record).' }
+          </p>
         </div>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-[var(--color-muted)]">

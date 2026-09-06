@@ -23,6 +23,11 @@ export function resolveRootPage(pathname = '/') {
   if (pathname.startsWith('/legal')) {
     return 'legal';
   }
+  // R6.1（2026-09-06）：方法论白皮书公开页。与 /legal 同为「承诺的出处」类文档：
+  // 定价页 Pro 套餐承诺了白皮书，这里必须能真的到达，否则那是一句不实陈述。
+  if (pathname.startsWith('/methodology')) {
+    return 'methodology';
+  }
   if (pathname.startsWith('/reports')) {
     return 'reports';
   }

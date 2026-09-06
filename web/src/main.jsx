@@ -38,6 +38,9 @@ const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage.jsx'))
 const AccountPage = lazy(() => import('./pages/AccountPage.jsx'))
 const PricingPage = lazy(() => import('./pages/PricingPage.jsx'))
 const LegalPage = lazy(() => import('./pages/LegalPage.jsx'))
+// R6.1 方法论白皮书页（/methodology）：定价页「方法论白皮书」承诺的出处，lazy chunk
+// 而非入首屏 —— 入口预算余量已不足 6%，新公开页一律按需加载。
+const MethodologyPage = lazy(() => import('./pages/MethodologyPage.jsx'))
 const ReportsPage = lazy(() => import('./pages/ReportsPage.jsx'))
 const HelpPage = lazy(() => import('./pages/HelpPage.jsx'))
 // R3 全局外壳（移动抽屉 + ⌘K）。lazy 是硬性要求而不是优化：AppChrome 静态引 SidebarNavigation
@@ -77,15 +80,17 @@ function renderRoute(rootPage) {
                   ? <GlobalErrorBoundary><PricingPage /></GlobalErrorBoundary>
                   : rootPage === 'legal'
                     ? <GlobalErrorBoundary><LegalPage /></GlobalErrorBoundary>
-                    : rootPage === 'reports'
-                      ? <GlobalErrorBoundary><ReportsPage /></GlobalErrorBoundary>
-                      : rootPage === 'help'
-                        ? <GlobalErrorBoundary><HelpPage /></GlobalErrorBoundary>
-                        : rootPage === 'register'
-                          ? <GlobalErrorBoundary><RegisterPage /></GlobalErrorBoundary>
-                          : rootPage === 'verifyEmail'
-                            ? <GlobalErrorBoundary><VerifyEmailPage /></GlobalErrorBoundary>
-                            : <FilterProvider><GlobalErrorBoundary><MarketPage market="NEM" /></GlobalErrorBoundary></FilterProvider>
+                    : rootPage === 'methodology'
+                      ? <GlobalErrorBoundary><MethodologyPage /></GlobalErrorBoundary>
+                      : rootPage === 'reports'
+                        ? <GlobalErrorBoundary><ReportsPage /></GlobalErrorBoundary>
+                        : rootPage === 'help'
+                          ? <GlobalErrorBoundary><HelpPage /></GlobalErrorBoundary>
+                          : rootPage === 'register'
+                            ? <GlobalErrorBoundary><RegisterPage /></GlobalErrorBoundary>
+                            : rootPage === 'verifyEmail'
+                              ? <GlobalErrorBoundary><VerifyEmailPage /></GlobalErrorBoundary>
+                              : <FilterProvider><GlobalErrorBoundary><MarketPage market="NEM" /></GlobalErrorBoundary></FilterProvider>
 }
 
 /**
