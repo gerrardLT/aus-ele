@@ -31,7 +31,13 @@ test('result metadata supports decision-grade labels alongside preview and analy
 });
 
 test('backend descriptions and metadata text frame FCAS as reserve opportunity and investment as market-entry readiness', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../../../backend/server.py'), 'utf8');
+  // b3（2026-09-06）：FCAS/investment 端点随死副本清理迁入 routes/ 模块，文本真源
+  // 从 server.py 单文件变成「server.py + routes/*.py」served 合集 —— 改成合集扫描：
+  // 字符串必须存在于某个 served 模块，后续再拆 server.py 本断言也不会假红。
+  const backendRoot = path.resolve(__dirname, '../../../backend');
+  const targets = ['server.py',
+    ...fs.readdirSync(path.join(backendRoot, 'routes')).filter((f) => f.endsWith('.py')).map((f) => `routes/${f}`)];
+  const source = targets.map((rel) => fs.readFileSync(path.join(backendRoot, rel), 'utf8')).join('\n');
 
   assert.match(source, /Reserve Opportunity/);
   assert.match(source, /Market Entry Readiness/);

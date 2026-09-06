@@ -29,8 +29,10 @@ function readSource(relativeFromRepoRoot) {
 
 // ── 1. backend/server.py：P3 决策与 grade 语义 ────────────────────────────
 // 来源：web/src/lib/aemoConvergence.test.js:33-40、web/src/lib/aemoDecisionClosure.test.js:13-27
-// 含义：这两组断言把「契约字符串」锁死在 server.py 正文里 → 本轮不拆 server.py；
-//       品牌改名只允许动 server.py:2 的 docstring，绝不搬动这些字面量。
+// 含义：这两组断言把「契约字符串」锁死在后端 served 文本里。b3 死副本清理（2026-09-06）
+//       后真源分布在 server.py 与 routes/*.py（Reserve Opportunity → fcas_routes、
+//       Market Entry Readiness → investment_routes），扫描范围随真源扩成合集；
+//       品牌改名绝不搬动这些字面量，后续拆分时跟随真源同步范围。
 const SERVER_LOCKED_STRINGS = [
   'Reserve Opportunity',
   'Market Entry Readiness',
@@ -43,12 +45,17 @@ const SERVER_LOCKED_STRINGS = [
   'readiness_status',
 ];
 
-test('renameGuard: server.py keeps the 9 contract strings locked by frontend tests', () => {
-  const source = readSource('backend/server.py');
+test('renameGuard: backend served modules keep the 9 contract strings locked by frontend tests', () => {
+  // b3（2026-09-06）：扫描范围从 server.py 单文件扩成 server.py + routes/*.py 合集，
+  // 与 aemoConvergence 的同义迁移一致 —— 字符串必须存在于某个 served 模块。
+  const backendRoot = path.join(repoRoot, 'backend');
+  const targets = ['server.py',
+    ...fs.readdirSync(path.join(backendRoot, 'routes')).filter((f) => f.endsWith('.py')).map((f) => `routes/${f}`)];
+  const source = targets.map((rel) => fs.readFileSync(path.join(backendRoot, rel), 'utf8')).join('\n');
   for (const literal of SERVER_LOCKED_STRINGS) {
     assert.ok(
       source.includes(literal),
-      `backend/server.py 丢失了被前端测试锁死的字面量：${literal}（改名/拆分前先看 aemoConvergence.test.js 与 aemoDecisionClosure.test.js）`,
+      `后端 served 模块（server.py + routes/）丢失了被前端测试锁死的字面量：${literal}（改名/拆分前先看 aemoConvergence.test.js 与 aemoDecisionClosure.test.js）`,
     );
   }
 });
