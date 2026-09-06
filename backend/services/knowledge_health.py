@@ -190,6 +190,32 @@ def check_events_library(today: date) -> dict:
     return _item("events_library", "事件案例补录", "事件驱动", status, detail, sop_section="§3")
 
 
+def check_domain_data_schemas() -> dict:
+    """手工领域 JSON 的结构校验（R6.6，2026-09-06）。
+
+    诊断 §4.4：5 份手工 JSON 无 schema 校验，填错会静默污染下游分析。
+    status 映射：error → overdue（healthy=False，强制人看）；warning → due_soon
+    （证据缺失级别，需关注但不阻断）。
+    """
+    from services.domain_data_validation import validate_all
+
+    result = validate_all()
+    broken = {name: r for name, r in result.items() if r["errors"]}
+    warned = [name for name, r in result.items() if r["warnings"]]
+    if broken:
+        detail = f"{len(broken)} 份文件校验失败：{', '.join(sorted(broken))}；详见 services.domain_data_validation.validate_all()"
+        return _item("domain_data_schema", "手工领域 JSON 结构校验", "随更新+周检",
+                     "overdue", detail, sop_section="§6")
+    if warned:
+        return _item("domain_data_schema", "手工领域 JSON 结构校验", "随更新+周检",
+                     "due_soon", f"5 份全部通过，但有 warnings：{', '.join(sorted(warned))}（证据缺失级别）",
+                     sop_section="§6")
+    total_warnings = sum(len(r["warnings"]) for r in result.values())
+    return _item("domain_data_schema", "手工领域 JSON 结构校验", "随更新+周检",
+                 "ok", f"5 份手工 JSON 全部通过结构校验（{total_warnings} warnings）",
+                 sop_section="§6")
+
+
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
@@ -203,6 +229,8 @@ def build_health_report(today: Optional[date] = None) -> dict[str, Any]:
     items.extend(check_rule_reviews(today))
     items.append(check_benchmark_calibration(today))
     items.append(check_events_library(today))
+    # R6.6：手工领域 JSON 的结构校验 —— 5 份无 schema 的手工文件是静默污染源
+    items.append(check_domain_data_schemas())
 
     summary = {"overdue": 0, "due_soon": 0, "ok": 0, "informational": 0}
     for it in items:
